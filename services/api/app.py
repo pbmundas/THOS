@@ -199,9 +199,21 @@ def list_folder_files(folder_path):
         return f"❌ Could not list files: {e}"
 
 
-def run_hunt(message, history, hunter_name, siem_type, log_source_path, max_iterations):
-    """Generator: streams live progress into the chat, then appends the final summary."""
+def run_hunt(message, history, siem_type, log_source_path, max_iterations, request: gr.Request):
+    """Generator: streams live progress into the chat, then appends the final summary.
+
+    hunter_name is deliberately NOT a caller-supplied argument. It used
+    to be a free-text box anyone could type any name into, so every
+    audit record (audit.log_hunt_start, the report's cover page, the
+    per-hunter rate-limit bucket) trusted a string with no relationship
+    to who actually authenticated to this Gradio app. gr.Request carries
+    the username Gradio's own `auth=` login already verified for this
+    session (see demo.launch(auth=CHATUI_ACCOUNTS, ...) below) -- using
+    that instead means the audit trail reflects who really logged in,
+    not whatever they happened to type in a text box.
+    """
     history = history or []
+    hunter_name = (getattr(request, "username", None) or "unknown").strip() or "unknown"
     hyp_id = _extract_hypothesis_id(message) if " — " in (message or "") else None
     hyp_text = message if not hyp_id else None
 
@@ -211,7 +223,7 @@ def run_hunt(message, history, hunter_name, siem_type, log_source_path, max_iter
     yield history, ""
 
     payload = {
-        "hunter_name": hunter_name or "anonymous",
+        "hunter_name": hunter_name,
         "hypothesis_id": hyp_id,
         "hypothesis_text": hyp_text,
         "siem_type": siem_type,
@@ -393,6 +405,12 @@ def load_report(path):
         return f.read()
 
 
+def get_logged_in_user(request: gr.Request) -> str:
+    """Read back the username Gradio's own auth= login already verified
+    for this session, for the read-only 'Logged in as' display."""
+    return (getattr(request, "username", None) or "unknown")
+
+
 with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
     gr.Markdown(
         "# 🔥 THOS — On-Prem AI Threat Hunting\n"
@@ -402,7 +420,13 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
 
     with gr.Tab("Hunt"):
         with gr.Row():
-            hunter_name = gr.Textbox(label="Hunter name", value="analyst-1", scale=1)
+            # Read-only -- populated from the authenticated Gradio login
+            # session (see get_logged_in_user / demo.load below), not
+            # editable free text. run_hunt() ignores anything typed here
+            # (there's nothing to type) and derives the real hunter_name
+            # from gr.Request itself, so this is purely a "who am I"
+            # display, not the source of truth.
+            hunter_name_display = gr.Textbox(label="Logged in as", interactive=False, scale=1)
             siem_type = gr.Dropdown(
                 label="Target SIEM",
                 choices=["mock", "splunk", "qradar", "logrhythm", FOLDER_SIEM_VALUE],
@@ -453,7 +477,7 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
         hyp_dropdown.change(fn=lambda x: x, inputs=hyp_dropdown, outputs=msg_box)
         msg_box.submit(
             fn=run_hunt,
-            inputs=[msg_box, chatbot, hunter_name, siem_type, log_source_path, max_iterations],
+            inputs=[msg_box, chatbot, siem_type, log_source_path, max_iterations],
             outputs=[chatbot, report_view],
         ).then(lambda: "", outputs=msg_box)
 
@@ -512,6 +536,7 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
     demo.load(fn=lambda: gr.update(choices=fetch_hypotheses()), outputs=hyp_dropdown)
     demo.load(fn=lambda: gr.update(choices=list_reports()), outputs=report_dropdown)
     demo.load(fn=kb_list_documents, outputs=[kb_list_status, kb_table])
+    demo.load(fn=get_logged_in_user, outputs=hunter_name_display)
 
 
 if __name__ == "__main__":

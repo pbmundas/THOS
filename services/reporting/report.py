@@ -369,3 +369,36 @@ def list_reports() -> list[dict]:
         })
     entries.sort(key=lambda e: e["modified"], reverse=True)
     return entries
+
+
+class ReportPathError(Exception):
+    """Raised when a caller-supplied report path falls outside REPORTS_DIR."""
+
+
+def read_report(path: str) -> dict:
+    """Read a previously generated report's markdown content by path.
+
+    `path` is caller-supplied (arrives via the read_hunt_report MCP tool),
+    and this used to just `open()` it directly with no containment check
+    at all -- any MCP-authenticated caller could read any file readable
+    by this container (source code, mounted secrets, /etc/passwd, ...),
+    not just files THOS itself wrote to REPORTS_DIR. Mirrors the same
+    resolve-and-check-containment pattern
+    services/siem/file_log_parser.validate_log_source_path already uses
+    for folder-mode log paths, scoped to the single REPORTS_DIR root
+    (report paths are always exactly what list_reports()/write_report()
+    produced, so there's no multi-root config need here).
+    """
+    if not path or not str(path).strip():
+        raise ReportPathError("no path provided")
+    reports_root = os.path.realpath(REPORTS_DIR)
+    real = os.path.realpath(path)
+    if not (real == reports_root or real.startswith(reports_root + os.sep)):
+        raise ReportPathError(
+            f"'{path}' resolves outside the reports directory ({reports_root}); "
+            f"refusing to read arbitrary server-side paths."
+        )
+    if not os.path.isfile(real):
+        raise ReportPathError(f"'{path}' is not a file")
+    with open(real, "r", encoding="utf-8") as f:
+        return {"path": real, "content": f.read()}

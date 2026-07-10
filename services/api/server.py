@@ -300,10 +300,14 @@ def list_hunt_reports() -> list[dict]:
 
 @mcp.tool()
 def read_hunt_report(path: str) -> dict:
-    """Read the raw markdown content of a previously generated report by its path."""
+    """Read the raw markdown content of a previously generated report by
+    its path. Restricted to REPORTS_DIR — a path that resolves outside
+    it (e.g. via '..' traversal or an absolute path elsewhere on the
+    container) is rejected rather than read."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return {"path": path, "content": f.read()}
+        return report.read_report(path)
+    except report.ReportPathError as e:
+        return {"error": str(e)}
     except OSError as e:
         return {"error": str(e)}
 
