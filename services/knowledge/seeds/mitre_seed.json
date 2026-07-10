@@ -1,0 +1,9 @@
+[
+  {"id": "T1059.001", "name": "PowerShell", "tactic": "Execution", "description": "Adversaries may abuse PowerShell commands and scripts for execution.", "data_sources": ["Command Execution", "PowerShell Logs", "Process Creation"]},
+  {"id": "T1071.004", "name": "DNS", "tactic": "Command and Control", "description": "Adversaries may use DNS traffic as a channel for command and control or exfiltration.", "data_sources": ["DNS Logs", "Network Traffic"]},
+  {"id": "T1021.002", "name": "SMB/Windows Admin Shares", "tactic": "Lateral Movement", "description": "Adversaries may use SMB to interact with file shares, allowing remote access to systems using valid accounts.", "data_sources": ["Windows Security Logs", "Authentication Logs", "Network Traffic"]},
+  {"id": "T1053.005", "name": "Scheduled Task", "tactic": "Persistence", "description": "Adversaries may abuse the Windows Task Scheduler to perform task scheduling for initial or recurring execution.", "data_sources": ["Process Creation", "Scheduled Job Logs", "Windows Registry"]},
+  {"id": "T1558.003", "name": "Kerberoasting", "tactic": "Credential Access", "description": "Adversaries may abuse Kerberos ticket-granting service requests to obtain crackable service account credentials.", "data_sources": ["Authentication Logs (Event 4769)", "Kerberos Logs"]},
+  {"id": "T1204.002", "name": "Malicious File", "tactic": "Execution", "description": "Adversaries may rely on a user opening a malicious file to gain code execution.", "data_sources": ["Process Creation", "File Monitoring", "Email Gateway Logs"]},
+  {"id": "T1074.001", "name": "Local Data Staging", "tactic": "Collection", "description": "Adversaries may stage collected data in a central location prior to exfiltration.", "data_sources": ["File Monitoring", "Process Creation"]}
+]

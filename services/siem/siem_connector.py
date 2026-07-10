@@ -1,0 +1,168 @@
+"""
+SIEM connector tool.
+
+Phase 1: mock mode — returns synthetic log records so the whole
+pipeline (query -> fetch -> process -> reason -> report) can be
+exercised end-to-end without a real SIEM.
+
+Folder mode ("folder"): reads real log artifacts (EVTX, .log, syslog,
+CSV, CEF, JSON/ECS, XML, .txt, pcap) from a local directory — see
+file_log_parser.py — instead of calling a live SIEM API. This lets a
+hunter run a hypothesis against an evidence folder (e.g. logs pulled
+from an incident, or exported from a SIEM with no live API access) the
+same way they'd run it against a real SIEM.
+
+LogRhythm mode ("logrhythm"): implemented — talks to a real LogRhythm
+Web Console Search API using the documented two-step async pattern
+(submit -> poll -> retrieve). See logrhythm.py for connection settings
+and caveats.
+
+Splunk mode ("splunk"): implemented — talks to a real Splunk Search
+REST API using the documented async search-job pattern (submit job ->
+poll dispatchState -> retrieve results). See splunk.py for connection
+settings and caveats.
+
+QRadar mode ("qradar"): implemented — talks to a real QRadar Ariel
+Search REST API using the documented async pattern (submit AQL search
+-> poll status -> retrieve results). See qradar.py for connection
+settings and caveats.
+"""
+import os
+import random
+import datetime
+
+from services.siem import file_log_parser
+from services.siem import logrhythm as logrhythm_connector
+from services.siem import splunk as splunk_connector
+from services.siem import qradar as qradar_connector
+from services.observability import cache
+
+# Fallback default if a call doesn't specify siem_type explicitly
+# (kept for backward compatibility with any code still relying on the
+# container-level env var).
+DEFAULT_SIEM_TYPE = os.environ.get("SIEM_TYPE", "mock")
+DEFAULT_LOG_SOURCE_DIR = os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+
+
+def _mock_logs(query: str, limit: int) -> list[dict]:
+    now = datetime.datetime.utcnow()
+    sample_users = ["jdoe", "asmith", "svc_backup", "administrator"]
+    sample_hosts = ["WKS-2201", "WKS-1187", "SRV-DC01", "SRV-FILE02"]
+    logs = []
+    for i in range(min(limit, 25)):
+        logs.append({
+            "timestamp": (now - datetime.timedelta(minutes=i * 3)).isoformat() + "Z",
+            "host": random.choice(sample_hosts),
+            "user": random.choice(sample_users),
+            "event": "process_creation" if i % 2 == 0 else "dns_query",
+            "detail": f"synthetic record matching query: {query[:60]}",
+            "src_ip": f"10.10.{random.randint(1,254)}.{random.randint(1,254)}",
+        })
+    return logs
+
+
+def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
+                log_source_path: str = "") -> dict:
+    """
+    Execute a SIEM query and return matching log records.
+
+    - siem_type == "mock": generates synthetic but structurally
+      realistic records so downstream nodes (log processing, SOC tools,
+      reasoning) can be developed/tested without a live SIEM connection.
+    - siem_type == "folder": parses every supported log file under
+      `log_source_path` (or LOG_SOURCE_DIR) and returns records matching
+      the query.
+    - anything else: not yet implemented (Phase 2 real connectors).
+    """
+    siem_type = (siem_type or DEFAULT_SIEM_TYPE or "mock").lower()
+
+    if siem_type == "mock":
+        return {
+            "siem_type": "mock",
+            "query": query,
+            "record_count": min(limit, 25),
+            "logs": _mock_logs(query, limit),
+        }
+
+    if siem_type in ("folder", "local_folder", "file", "local"):
+        folder = log_source_path or DEFAULT_LOG_SOURCE_DIR
+        # cache.py's docstring calls out "repeated SIEM queries" as a
+        # target, but nothing called it — re-running the same hypothesis
+        # against the same evidence folder redid a full parse-and-filter
+        # pass over every file every time. Keyed on everything that
+        # determines the result: folder, query, and limit.
+        cache_payload = f"folder|{folder}|{query}|{limit}"
+        cached = cache.cache_get("siem_fetch", cache_payload)
+        if cached is not None:
+            return cached
+        result = file_log_parser.fetch_from_folder(folder, query=query, limit=limit)
+        cache.cache_set("siem_fetch", cache_payload, result)
+        return result
+
+    if siem_type == "logrhythm":
+        cache_payload = f"logrhythm|{query}|{limit}"
+        cached = cache.cache_get("siem_fetch", cache_payload)
+        if cached is not None:
+            return cached
+        try:
+            result = logrhythm_connector.fetch_logs(query, limit)
+            cache.cache_set("siem_fetch", cache_payload, result)
+            return result
+        except logrhythm_connector.LogRhythmConfigError as e:
+            # Missing/incomplete config is a caller-fixable setup issue,
+            # not a connector bug — surface it clearly instead of a raw
+            # stack trace bubbling up through the MCP tool call.
+            return {
+                "siem_type": "logrhythm",
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": str(e),
+            }
+
+    if siem_type == "splunk":
+        cache_payload = f"splunk|{query}|{limit}"
+        cached = cache.cache_get("siem_fetch", cache_payload)
+        if cached is not None:
+            return cached
+        try:
+            result = splunk_connector.fetch_logs(query, limit)
+            cache.cache_set("siem_fetch", cache_payload, result)
+            return result
+        except splunk_connector.SplunkConfigError as e:
+            # Missing/incomplete config is a caller-fixable setup issue,
+            # not a connector bug — surface it clearly instead of a raw
+            # stack trace bubbling up through the MCP tool call.
+            return {
+                "siem_type": "splunk",
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": str(e),
+            }
+
+    if siem_type == "qradar":
+        cache_payload = f"qradar|{query}|{limit}"
+        cached = cache.cache_get("siem_fetch", cache_payload)
+        if cached is not None:
+            return cached
+        try:
+            result = qradar_connector.fetch_logs(query, limit)
+            cache.cache_set("siem_fetch", cache_payload, result)
+            return result
+        except qradar_connector.QRadarConfigError as e:
+            # Missing/incomplete config is a caller-fixable setup issue,
+            # not a connector bug — surface it clearly instead of a raw
+            # stack trace bubbling up through the MCP tool call.
+            return {
+                "siem_type": "qradar",
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": str(e),
+            }
+
+    raise NotImplementedError(
+        f"SIEM_TYPE='{siem_type}' is not implemented yet. "
+        f"Supported: mock, folder, logrhythm, splunk, qradar."
+    )

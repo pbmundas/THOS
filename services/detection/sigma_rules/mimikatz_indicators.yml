@@ -1,0 +1,20 @@
+title: Mimikatz Credential Theft Indicators
+id: thos-0004
+status: experimental
+description: >
+  Detects literal Mimikatz / sekurlsa module strings (e.g.
+  sekurlsa::pth, sekurlsa::logonpasswords) appearing in log detail —
+  a very high-confidence indicator of active credential theft tooling.
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    detail|contains:
+      - "mimikatz"
+      - "sekurlsa"
+  condition: selection
+level: critical
+tags:
+  - attack.credential_access
+  - attack.t1003

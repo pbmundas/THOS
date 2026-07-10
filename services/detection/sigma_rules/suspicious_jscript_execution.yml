@@ -1,0 +1,20 @@
+title: Suspicious JScript Engine Load (Defense Evasion)
+id: thos-0009
+status: experimental
+description: >
+  Detects Sysmon ImageLoad events (Event ID 7) referencing the JScript9
+  scripting engine loaded by an unusual host process — often seen when
+  script-based payloads execute via mshta/wscript/cscript for evasion.
+logsource:
+  product: windows
+  category: image_load
+detection:
+  selection_event:
+    event|contains: "7"
+  selection_module:
+    detail|contains: "jscript"
+  condition: selection_event and selection_module
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1059.007

@@ -1,0 +1,23 @@
+title: Domain Admins Group Membership Enumeration
+id: thos-0012
+status: experimental
+description: >
+  Detects security group enumeration events (Event ID 4661/4799)
+  referencing the Domain Admins group — common discovery activity
+  preceding privilege escalation or lateral movement to a domain
+  controller.
+logsource:
+  product: windows
+  category: security
+detection:
+  selection_event:
+    event|contains:
+      - "4661"
+      - "4799"
+  selection_group:
+    detail|contains: "domain admin"
+  condition: selection_event and selection_group
+level: medium
+tags:
+  - attack.discovery
+  - attack.t1069.002

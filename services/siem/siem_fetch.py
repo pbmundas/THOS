@@ -1,0 +1,35 @@
+from services.mcp.mcp_client import call_tool
+from services.orchestration.state import HuntState
+
+
+async def fetch_logs_node(state: HuntState) -> dict:
+    query = state.get("follow_up_query") or state.get("query", "")
+    siem_type = state.get("siem_type", "mock")
+    # Folder-backed sources typically hold far more records than a
+    # hand-tuned mock/live query, so give them a larger default cap.
+    # Bumped from 200 -> 1000: with EVTX exports especially, a handful
+    # of hundred noise events (4663/5156/4799 etc.) can easily crowd out
+    # the rare event you actually care about (e.g. 4104 PowerShell
+    # script block logging) if the cap is too tight.
+    limit = state.get("log_limit") or (1000 if siem_type in
+                                        ("folder", "local_folder", "file", "local") else 25)
+    result = await call_tool("fetch_siem_logs", {
+        "query": query,
+        "limit": limit,
+        "siem_type": siem_type,
+        "log_source_path": state.get("log_source_path", "") or "",
+    })
+    existing = state.get("logs", []) or []
+    new_logs = result.get("logs", [])
+    return {
+        "logs": existing + new_logs,
+        "record_count": result.get("record_count", 0),
+        "follow_up_query": None,
+        # Diagnostics from file_log_parser.fetch_from_folder (folder mode
+        # only — absent/ignored for mock/live SIEM types) so we can
+        # verify, in the final report, exactly how many files/records
+        # were actually scanned vs. how many survived the query filter.
+        "files_scanned": result.get("files_scanned"),
+        "total_parsed": result.get("total_parsed"),
+        "used_fallback_unfiltered": result.get("used_fallback_unfiltered"),
+    }

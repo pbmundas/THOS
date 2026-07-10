@@ -1,0 +1,20 @@
+[
+  {"siem_type": "splunk", "normalized_field": "process_name", "vendor_field": "process_name", "notes": "Sysmon EventID 1 / Endpoint datamodel."},
+  {"siem_type": "splunk", "normalized_field": "command_line", "vendor_field": "process", "notes": "Full command line as indexed by the Endpoint datamodel."},
+  {"siem_type": "splunk", "normalized_field": "src_ip", "vendor_field": "src_ip", "notes": "Network datamodel source address."},
+  {"siem_type": "splunk", "normalized_field": "dst_ip", "vendor_field": "dest_ip", "notes": "Network datamodel destination address."},
+  {"siem_type": "splunk", "normalized_field": "user", "vendor_field": "user", "notes": "Authentication / Endpoint datamodel user field."},
+  {"siem_type": "splunk", "normalized_field": "dns_query", "vendor_field": "query", "notes": "Network_Resolution datamodel DNS query field."},
+  {"siem_type": "qradar", "normalized_field": "process_name", "vendor_field": "Process Name", "notes": "Custom property, requires Sysmon or Carbon Black DSM."},
+  {"siem_type": "qradar", "normalized_field": "command_line", "vendor_field": "Command", "notes": "Ariel command-line custom property."},
+  {"siem_type": "qradar", "normalized_field": "src_ip", "vendor_field": "Source IP", "notes": "Standard Ariel field."},
+  {"siem_type": "qradar", "normalized_field": "dst_ip", "vendor_field": "Destination IP", "notes": "Standard Ariel field."},
+  {"siem_type": "qradar", "normalized_field": "user", "vendor_field": "Username", "notes": "Standard Ariel field."},
+  {"siem_type": "qradar", "normalized_field": "dns_query", "vendor_field": "DNS Query", "notes": "Requires DNS log source (e.g. Infoblox, BIND)."},
+  {"siem_type": "logrhythm", "normalized_field": "process_name", "vendor_field": "vProcessName", "notes": "Verify against your LogRhythm MPE rule set — field can vary by log source."},
+  {"siem_type": "logrhythm", "normalized_field": "src_ip", "vendor_field": "srcIP", "notes": "Standard LogRhythm normalized field."},
+  {"siem_type": "logrhythm", "normalized_field": "dst_ip", "vendor_field": "destIP", "notes": "Standard LogRhythm normalized field."},
+  {"siem_type": "logrhythm", "normalized_field": "user", "vendor_field": "login", "notes": "Standard LogRhythm normalized field."},
+  {"siem_type": "logrhythm", "normalized_field": "dns_query", "vendor_field": "subject", "notes": "Placeholder — refine against your LWSAPI schema/log source."},
+  {"siem_type": "logrhythm", "normalized_field": "event_time", "vendor_field": "normalDateMin", "notes": "Standard LogRhythm normalized timestamp."}
+]

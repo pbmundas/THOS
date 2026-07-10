@@ -1,0 +1,51 @@
+[
+  {
+    "id": "H-001",
+    "title": "Suspicious PowerShell Encoded Command Execution",
+    "tactic": "Execution",
+    "technique": "T1059.001",
+    "text": "Adversaries may use base64-encoded PowerShell commands to evade detection while executing malicious payloads. Hunt for -EncodedCommand / -enc flags and decode the payload for review."
+  },
+  {
+    "id": "H-002",
+    "title": "Anomalous Outbound DNS Volume (Possible Tunneling)",
+    "tactic": "Command and Control",
+    "technique": "T1071.004",
+    "text": "A host generating an unusually high volume of DNS queries, especially to rare or newly-observed domains with long/high-entropy subdomains, may indicate DNS tunneling for C2 or exfiltration."
+  },
+  {
+    "id": "H-003",
+    "title": "Lateral Movement via Admin Shares (PsExec-like)",
+    "tactic": "Lateral Movement",
+    "technique": "T1021.002",
+    "text": "Adversaries may use valid accounts to connect to remote systems using SMB admin shares (ADMIN$, C$) to move laterally, often paired with service creation (T1569.002)."
+  },
+  {
+    "id": "H-004",
+    "title": "New Scheduled Task Created by Non-Admin Process",
+    "tactic": "Persistence",
+    "technique": "T1053.005",
+    "text": "Adversaries commonly abuse the Windows Task Scheduler to establish persistence. Hunt for schtasks.exe or COM-based task creation initiated by an unusual parent process (e.g. Office apps, script hosts)."
+  },
+  {
+    "id": "H-005",
+    "title": "Kerberoasting via Abnormal TGS Requests",
+    "tactic": "Credential Access",
+    "technique": "T1558.003",
+    "text": "A single account requesting an unusually large number of Kerberos service tickets (TGS, event 4769) with RC4 encryption in a short window may indicate a Kerberoasting attempt against service accounts."
+  },
+  {
+    "id": "H-006",
+    "title": "Rare Parent-Child Process Relationship (Office -> LOLBin)",
+    "tactic": "Execution",
+    "technique": "T1204.002",
+    "text": "Office applications (winword.exe, excel.exe) spawning command interpreters, scripting engines, or living-off-the-land binaries (cmd.exe, powershell.exe, mshta.exe, rundll32.exe) is a strong phishing-payload indicator."
+  },
+  {
+    "id": "H-007",
+    "title": "Data Staged in Unusual Directory Prior to Exfiltration",
+    "tactic": "Collection",
+    "technique": "T1074.001",
+    "text": "Large archives (zip/rar/7z) created in temp, public, or recycle-bin-adjacent directories shortly before outbound transfer spikes may indicate staged collection for exfiltration."
+  }
+]

@@ -1,0 +1,20 @@
+title: Remote PowerShell / WinRM Lateral Movement
+id: thos-0006
+status: experimental
+description: >
+  Detects remote PowerShell execution via WinRM/WS-Management (Event ID
+  169, or a wsmprovhost.exe child process from Sysmon), a common lateral
+  movement technique using legitimate remote-management channels.
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection_winrm_event:
+    event|contains: "169"
+  selection_wsmprovhost:
+    detail|contains: "wsmprovhost"
+  condition: selection_winrm_event or selection_wsmprovhost
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1021.006

@@ -1,0 +1,27 @@
+title: MSI Package Installed from Remote URL
+id: thos-0015
+status: experimental
+description: >
+  Detects MSI installer events (Event ID 1040 start, 1042 script/action)
+  where the package detail references an http/https source rather than
+  a local/trusted installer path — a common initial-access or
+  execution vector for delivering a malicious payload as a fake update.
+logsource:
+  product: windows
+  category: application
+detection:
+  selection_event:
+    event|contains:
+      - "1040"
+      - "1042"
+  selection_url:
+    detail|contains:
+      - "http://"
+      - "https://"
+  condition: selection_event and selection_url
+level: medium
+tags:
+  - attack.execution
+  - attack.initial_access
+  - attack.t1204.002
+  - attack.t1105

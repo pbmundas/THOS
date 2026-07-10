@@ -1,0 +1,21 @@
+title: Windows Defender Threat Detected / Blocked
+id: thos-0014
+status: experimental
+description: >
+  Detects Windows Defender detection and mitigation-action events
+  (Event ID 1116 detection found, 1117 action taken) — confirms AV/EDR
+  already flagged something, so these hunts should prioritize
+  understanding what else the same host/user did nearby in time.
+logsource:
+  product: windows
+  category: antivirus
+detection:
+  selection_event:
+    event|contains:
+      - "1116"
+      - "1117"
+  condition: selection_event
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001

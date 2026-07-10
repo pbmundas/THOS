@@ -1,0 +1,25 @@
+title: Token Duplication / UAC Bypass Indicators
+id: thos-0005
+status: experimental
+description: >
+  Detects logon events (Event ID 4624) combined with detail-blob
+  indicators of access token duplication or manipulation, commonly used
+  to bypass UAC or impersonate a higher-privileged token.
+logsource:
+  product: windows
+  category: security
+detection:
+  selection_logon:
+    event|contains: "4624"
+  selection_token:
+    detail|contains:
+      - "duplicatetoken"
+      - "token duplication"
+      - "impersonat"
+  condition: selection_logon and selection_token
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.t1134
+  - attack.t1548

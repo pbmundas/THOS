@@ -1,0 +1,2524 @@
+{
+  "T0847": {
+    "data_sources": [
+      "File Monitoring",
+      "Removable Media"
+    ],
+    "description": "Replication Through Removable Media (ICS). Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using USB devices with malicious payloads, such as Rubber Ducky, to gain initial access to air-gapped OT facilities and ICS \".",
+    "id": "T0847",
+    "name": "Replication Through Removable Media (ICS)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1003": {
+    "data_sources": [
+      "LSASS Memory",
+      "Security Account Manager",
+      "Authentication Logs"
+    ],
+    "description": "OS Credential Dumping. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using the print command to copy the Active Directory database (NTDS.dit) and SAM and SYSTEM registry hives from Volume Shado\".",
+    "id": "T1003",
+    "name": "OS Credential Dumping",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1003.001": {
+    "data_sources": [
+      "LSASS Memory",
+      "Security Account Manager",
+      "Authentication Logs"
+    ],
+    "description": "OS Credential Dumping. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is dumping credentials from the LSASS process memory using tools such as Mimikatz, procdump, comsvcs.dll MiniDump, or direct AP\".",
+    "id": "T1003.001",
+    "name": "OS Credential Dumping (sub-technique T1003.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1003.003": {
+    "data_sources": [
+      "LSASS Memory",
+      "Security Account Manager",
+      "Authentication Logs"
+    ],
+    "description": "OS Credential Dumping. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is extracting the Active Directory NTDS.dit database from a domain controller using built-in tools such as ntdsutil, wbadmin, v\".",
+    "id": "T1003.003",
+    "name": "OS Credential Dumping (sub-technique T1003.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1003.006": {
+    "data_sources": [
+      "LSASS Memory",
+      "Security Account Manager",
+      "Authentication Logs"
+    ],
+    "description": "OS Credential Dumping. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary successfully obtained AD password hashes by abusing replication permissions through a DC Sync operation.\".",
+    "id": "T1003.006",
+    "name": "OS Credential Dumping (sub-technique T1003.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1003.007": {
+    "data_sources": [
+      "LSASS Memory",
+      "Security Account Manager",
+      "Authentication Logs"
+    ],
+    "description": "OS Credential Dumping. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A malicious process on a Linux CI/CD runner is harvesting in-memory secrets from the GitHub Actions `Runner.Worker` process by locating its \".",
+    "id": "T1003.007",
+    "name": "OS Credential Dumping (sub-technique T1003.007)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1005": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Data from Local System. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are systematically enumerating and extracting sensitive data from cryptocurrency wallet browser extensions to support financia\".",
+    "id": "T1005",
+    "name": "Data from Local System",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1018": {
+    "data_sources": [
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote System Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is performing internal network reconnaissance by generating a spike in SMB connection attempts from a single host to many endpo\".",
+    "id": "T1018",
+    "name": "Remote System Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1020": {
+    "data_sources": [
+      "Network Traffic",
+      "File Monitoring"
+    ],
+    "description": "Automated Exfiltration. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are automatically exfiltrating email data using email forwarding rules.\".",
+    "id": "T1020",
+    "name": "Automated Exfiltration",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1021": {
+    "data_sources": [
+      "Authentication Logs",
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Services. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After compromising an initial asset, an adversary may attempt to pivot to access additional resources within a victim network.\".",
+    "id": "T1021",
+    "name": "Remote Services",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1021.001": {
+    "data_sources": [
+      "Authentication Logs",
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Build a per-source-host and per-account baseline of the normal internal RDP destination set over a rolling 30-day window, modeling each enti\".",
+    "id": "T1021.001",
+    "name": "Remote Services (sub-technique T1021.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1021.002": {
+    "data_sources": [
+      "Windows Security Logs",
+      "Authentication Logs",
+      "Network Traffic"
+    ],
+    "description": "Adversaries may use SMB to interact with file shares, allowing remote access to systems using valid accounts.",
+    "id": "T1021.002",
+    "name": "SMB/Windows Admin Shares",
+    "source": "curated",
+    "tactic": "Lateral Movement"
+  },
+  "T1021.003": {
+    "data_sources": [
+      "Authentication Logs",
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is executing commands on remote hosts via WMI or DCOM, indicated by wmiprvse.exe spawning unexpected child processes or remote \".",
+    "id": "T1021.003",
+    "name": "Remote Services (sub-technique T1021.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1021.004": {
+    "data_sources": [
+      "Authentication Logs",
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A privileged SSH session to an internal Linux host (Confluence, Tomcat, SSH bastion, or any domain-joined Linux server) is originating from \".",
+    "id": "T1021.004",
+    "name": "Remote Services (sub-technique T1021.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1027": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Obfuscated Files or Information. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are injecting malicious JavaScript code into legitimate websites that uses JSFireTruck obfuscation composed primarily of the s\".",
+    "id": "T1027",
+    "name": "Obfuscated Files or Information",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1027.002": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Obfuscated Files or Information. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are deploying modified UPX-packed ARM 32-bit Big Endian malware binaries to /usr/bin/iocontrol on Linux-based IoT/OT devices to \".",
+    "id": "T1027.002",
+    "name": "Obfuscated Files or Information (sub-technique T1027.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1027.004": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Obfuscated Files or Information. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using ClickFix social engineering via the Windows Terminal application targeting enterprise endpoints to deploy commodity lo\".",
+    "id": "T1027.004",
+    "name": "Obfuscated Files or Information (sub-technique T1027.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1027.010": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Obfuscated Files or Information. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"During the June 2026 DFIR Report Akira intrusion, operators who arrived via Bing/SEO-poisoned search (opmanager[.]pro \u2192 trojanized `ManageEn\".",
+    "id": "T1027.010",
+    "name": "Obfuscated Files or Information (sub-technique T1027.010)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1030": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Data Transfer Size Limits. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary has exfiltrated data off backup servers into small (1MB) .zip files.\".",
+    "id": "T1030",
+    "name": "Data Transfer Size Limits",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1036": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Masquerading. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"The Cisco AnyConnect Secure Mobility Client updates for macOS are distributed via a download from https://disthost.umbrella.com/roaming/upgr\".",
+    "id": "T1036",
+    "name": "Masquerading",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1036.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Masquerading. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"As part of its masquerading strategy (ESET maps this to T1036.001), the Gentlemen group ships its EDR-killer drivers and user-mode component\".",
+    "id": "T1036.001",
+    "name": "Masquerading (sub-technique T1036.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1036.002": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Masquerading. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A user receives a phishing email impersonating the Social Security Administration carrying a RAR archive whose payload abuses the right-to-l\".",
+    "id": "T1036.002",
+    "name": "Masquerading (sub-technique T1036.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1036.003": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Masquerading. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing the native Windows utility finger.exe by copying and renaming it to a temporary directory to retrieve remote payload\".",
+    "id": "T1036.003",
+    "name": "Masquerading (sub-technique T1036.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1036.005": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Masquerading. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using Punycode-encoded International Domain Names (IDNs) with the \"xn--\" prefix in DNS queries to masquerade visually simi\".",
+    "id": "T1036.005",
+    "name": "Masquerading (sub-technique T1036.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1037": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Boot or Logon Initialization Scripts. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (VerdantBamboo / UNC5221) establish persistence on EDR-blind edge appliances (Egnyte Storage Sync, pfSense/BSD firewalls, NAS) b\".",
+    "id": "T1037",
+    "name": "Boot or Logon Initialization Scripts",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1037.004": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Boot or Logon Initialization Scripts. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (VerdantBamboo / UNC5221) establish persistence on EDR-blind edge appliances (Egnyte Storage Sync, pfSense/BSD firewalls, NAS) b\".",
+    "id": "T1037.004",
+    "name": "Boot or Logon Initialization Scripts (sub-technique T1037.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1039": {
+    "data_sources": [
+      "File Monitoring",
+      "Network Traffic"
+    ],
+    "description": "Data from Network Shared Drive. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries may search for network shares on compromised systems to locate files of interest. Sensitive data can be gathered from remote sys\".",
+    "id": "T1039",
+    "name": "Data from Network Shared Drive",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1041": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over C2 Channel. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary abuses a SimpleHelp technician session to launch jquery.js through Node.js, then reads developer and cloud credential stores be\".",
+    "id": "T1041",
+    "name": "Exfiltration Over C2 Channel",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1046": {
+    "data_sources": [
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Network Service Discovery. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using AI-powered tools to autonomously scan network infrastructure and enumerate high-value databases by executing thousands\".",
+    "id": "T1046",
+    "name": "Network Service Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1047": {
+    "data_sources": [
+      "Process Creation",
+      "WMI Logs"
+    ],
+    "description": "Windows Management Instrumentation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using the Windows Management Instrumentation (WMI) system to execute PowerShell commands that establish a reverse shell, a\".",
+    "id": "T1047",
+    "name": "Windows Management Instrumentation",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1048": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over Alternative Protocol. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is utilizing DNS tunneling to exfiltrate data through DNS port 53.\".",
+    "id": "T1048",
+    "name": "Exfiltration Over Alternative Protocol",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1048.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over Alternative Protocol. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exfiltrating data using rclone tunneled through a local QEMU virtual machine to obscure the true source of network traffic, \".",
+    "id": "T1048.001",
+    "name": "Exfiltration Over Alternative Protocol (sub-technique T1048.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1048.002": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over Alternative Protocol. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A crypto-clipper/worm exfiltrates stolen wallet seed phrases, private keys, and screenshots over an asymmetrically-encrypted Tor onion-route\".",
+    "id": "T1048.002",
+    "name": "Exfiltration Over Alternative Protocol (sub-technique T1048.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1049": {
+    "data_sources": [
+      "Process Creation",
+      "Network Traffic"
+    ],
+    "description": "System Network Connections Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is creating unauthorized virtual network interface cards on VMware ESXi hosts to establish covert network paths targeting virtu\".",
+    "id": "T1049",
+    "name": "System Network Connections Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1052": {
+    "data_sources": [
+      "File Monitoring",
+      "Removable Media"
+    ],
+    "description": "Exfiltration Over Physical Medium. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth) posing as IT technicians physically enter the office and copy sensitive data directly from an endpoint ont\".",
+    "id": "T1052",
+    "name": "Exfiltration Over Physical Medium",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1052.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Removable Media"
+    ],
+    "description": "Exfiltration Over Physical Medium. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth) posing as IT technicians physically enter the office and copy sensitive data directly from an endpoint ont\".",
+    "id": "T1052.001",
+    "name": "Exfiltration Over Physical Medium (sub-technique T1052.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1053": {
+    "data_sources": [
+      "Process Creation",
+      "Scheduled Job Logs",
+      "Windows Registry"
+    ],
+    "description": "Scheduled Task/Job. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Silver Fox is persisting the ABCDoor backdoor on Windows hosts by registering both an HKCU Run key value \"AppClient\" and a Scheduled Task \"A\".",
+    "id": "T1053",
+    "name": "Scheduled Task/Job",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1053.003": {
+    "data_sources": [
+      "Process Creation",
+      "Scheduled Job Logs",
+      "Windows Registry"
+    ],
+    "description": "Scheduled Task/Job. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (VerdantBamboo / UNC5221) establish persistence on EDR-blind edge appliances (Egnyte Storage Sync, pfSense/BSD firewalls, NAS) b\".",
+    "id": "T1053.003",
+    "name": "Scheduled Task/Job (sub-technique T1053.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1053.005": {
+    "data_sources": [
+      "Process Creation",
+      "Scheduled Job Logs",
+      "Windows Registry"
+    ],
+    "description": "Adversaries may abuse the Windows Task Scheduler to perform task scheduling for initial or recurring execution.",
+    "id": "T1053.005",
+    "name": "Scheduled Task",
+    "source": "curated",
+    "tactic": "Persistence"
+  },
+  "T1055": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Process Injection. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Advanced threat actors are leveraging debugger entitlements and task_for_pid API calls to perform process injection on macOS systems, deploy\".",
+    "id": "T1055",
+    "name": "Process Injection",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1055.012": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Process Injection. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An operator gains initial access via a fake freeware installer that DLL-sideloads a loader and stands up ScreenConnect (`ScreenConnect.Clien\".",
+    "id": "T1055.012",
+    "name": "Process Injection (sub-technique T1055.012)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1056": {
+    "data_sources": [
+      "Process Creation",
+      "Driver/Module Load"
+    ],
+    "description": "Input Capture. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are abusing the Windows UI Automation (UIA) framework \u2014 loading UIAutomationCore.dll into a non-AT host process and polling th\".",
+    "id": "T1056",
+    "name": "Input Capture",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1056.002": {
+    "data_sources": [
+      "Process Creation",
+      "Driver/Module Load"
+    ],
+    "description": "Input Capture. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is claiming expired domains and deployment URLs of abandoned Microsoft Office add-ins to serve credential phishing pages inside\".",
+    "id": "T1056.002",
+    "name": "Input Capture (sub-technique T1056.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1056.003": {
+    "data_sources": [
+      "Process Creation",
+      "Driver/Module Load"
+    ],
+    "description": "Input Capture. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are abusing the Windows UI Automation (UIA) framework \u2014 loading UIAutomationCore.dll into a non-AT host process and polling th\".",
+    "id": "T1056.003",
+    "name": "Input Capture (sub-technique T1056.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1056.004": {
+    "data_sources": [
+      "Process Creation",
+      "Driver/Module Load"
+    ],
+    "description": "Input Capture. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is hooking credential APIs or injecting into browser processes to intercept authentication material in real-time, indicated by \".",
+    "id": "T1056.004",
+    "name": "Input Capture (sub-technique T1056.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1059": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 9 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After compromising a host, adversaries may attempt to execute malicious commands to complete additional tasks.\".",
+    "id": "T1059",
+    "name": "Command and Scripting Interpreter",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1059.001": {
+    "data_sources": [
+      "Command Execution",
+      "PowerShell Logs",
+      "Process Creation"
+    ],
+    "description": "Adversaries may abuse PowerShell commands and scripts for execution.",
+    "id": "T1059.001",
+    "name": "PowerShell",
+    "source": "curated",
+    "tactic": "Execution"
+  },
+  "T1059.002": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using AppleScript to download and execute malicious payloads, bypassing network detections by using legitimate websites li\".",
+    "id": "T1059.002",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1059.003": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth / Silent Ransom Group) are using the Windows command shell to download a remote monitoring and management (\".",
+    "id": "T1059.003",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1059.004": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is poisoning AI coding tool project configurations such as hooks, MCP servers, and environment variables in shared repositories\".",
+    "id": "T1059.004",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1059.005": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exploiting Microsoft Office OLE objects to fetch payloads over WebDAV and establish an Outlook VBA backdoor targeting defens\".",
+    "id": "T1059.005",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1059.006": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using a Python-based remote access trojan (RAT) called \"PylangGhost\" to target Windows systems of employees with experienc\".",
+    "id": "T1059.006",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1059.007": {
+    "data_sources": [
+      "Command Execution",
+      "Process Creation"
+    ],
+    "description": "Command and Scripting Interpreter. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are injecting malicious pre-install and post-install scripts into package.json files of compromised npm packages to execute in\".",
+    "id": "T1059.007",
+    "name": "Command and Scripting Interpreter (sub-technique T1059.007)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1068": {
+    "data_sources": [
+      "Process Creation",
+      "Application Logs"
+    ],
+    "description": "Exploitation for Privilege Escalation. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are exploiting memory safety issues in the Apache mod_lua module to execute arbitrary code with elevated privileges on Apache we\".",
+    "id": "T1068",
+    "name": "Exploitation for Privilege Escalation",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1069.001": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Permission Groups Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Akira operators, arriving via a Bumblebee loader that stages an AdaptixC2 beacon before hands-on-keyboard ransomware deployment, run a dense\".",
+    "id": "T1069.001",
+    "name": "Permission Groups Discovery (sub-technique T1069.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1069.002": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Permission Groups Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Akira operators, arriving via a Bumblebee loader that stages an AdaptixC2 beacon before hands-on-keyboard ransomware deployment, run a dense\".",
+    "id": "T1069.002",
+    "name": "Permission Groups Discovery (sub-technique T1069.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1069.003": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Permission Groups Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary using a stolen or compromised GCP service account token is performing a rapid enumeration sequence \u2014 listing projects, services\".",
+    "id": "T1069.003",
+    "name": "Permission Groups Discovery (sub-technique T1069.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1070": {
+    "data_sources": [
+      "Windows Event Logs",
+      "File Monitoring"
+    ],
+    "description": "Indicator Removal. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors with local-admin access to an AD CS Certification Authority are tampering with the CA `AuditFilter` registry value (via `certu\".",
+    "id": "T1070",
+    "name": "Indicator Removal",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1070.001": {
+    "data_sources": [
+      "Windows Event Logs",
+      "File Monitoring"
+    ],
+    "description": "Indicator Removal. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is clearing Windows event logs using wevtutil, Clear-EventLog, or similar utilities to destroy forensic evidence of their intru\".",
+    "id": "T1070.001",
+    "name": "Indicator Removal (sub-technique T1070.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1070.004": {
+    "data_sources": [
+      "Windows Event Logs",
+      "File Monitoring"
+    ],
+    "description": "Indicator Removal. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using Windows' built-in command-line tool, 'cipher.exe', with the '/w' option to overwrite free space on the victim's hard\".",
+    "id": "T1070.004",
+    "name": "Indicator Removal (sub-technique T1070.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1071": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Application Layer Protocol. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Kazuar operators (Microsoft Threat Intelligence, May 2026) are using Exchange Web Services (EWS) as a covert command-and-control channel \u2014 e\".",
+    "id": "T1071",
+    "name": "Application Layer Protocol",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1071.001": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Application Layer Protocol. Referenced by 5 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Kimsuky (DPRK) is persisting PebbleDash / AppleSeed implants on Windows hosts by creating scheduled tasks named `ChromeCheck` (elevated) or \".",
+    "id": "T1071.001",
+    "name": "Application Layer Protocol (sub-technique T1071.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1071.003": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Application Layer Protocol. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Kazuar operators (Microsoft Threat Intelligence, May 2026) are using Exchange Web Services (EWS) as a covert command-and-control channel \u2014 e\".",
+    "id": "T1071.003",
+    "name": "Application Layer Protocol (sub-technique T1071.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1071.004": {
+    "data_sources": [
+      "DNS Logs",
+      "Network Traffic"
+    ],
+    "description": "Adversaries may use DNS traffic as a channel for command and control or exfiltration.",
+    "id": "T1071.004",
+    "name": "DNS",
+    "source": "curated",
+    "tactic": "Exfiltration"
+  },
+  "T1074.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Adversaries may stage collected data in a central location prior to exfiltration.",
+    "id": "T1074.001",
+    "name": "Local Data Staging",
+    "source": "curated",
+    "tactic": "Collection"
+  },
+  "T1078": {
+    "data_sources": [
+      "Authentication Logs",
+      "Process Creation"
+    ],
+    "description": "Valid Accounts. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using compromised SonicWall VPN credentials to gain initial access to corporate networks.\".",
+    "id": "T1078",
+    "name": "Valid Accounts",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1078.001": {
+    "data_sources": [
+      "Authentication Logs",
+      "Process Creation"
+    ],
+    "description": "Valid Accounts. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"What does legitimate management-plane access to this org's EDR-blind edge appliances (firewalls, NAS, Egnyte Storage Sync, VPN concentrators\".",
+    "id": "T1078.001",
+    "name": "Valid Accounts (sub-technique T1078.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1078.004": {
+    "data_sources": [
+      "Authentication Logs",
+      "Process Creation"
+    ],
+    "description": "Valid Accounts. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors run Microsoft 365 AiTM phishing using fake \"code of conduct\" / \"internal regulatory\" lures that route victims through Cloudfla\".",
+    "id": "T1078.004",
+    "name": "Valid Accounts (sub-technique T1078.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1082": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Information Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using PowerShell's Get-CimInstance cmdlet to query Win32_OperatingSystem and ConvertTo-Csv to extract MainWindowTitle prop\".",
+    "id": "T1082",
+    "name": "System Information Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1083": {
+    "data_sources": [
+      "Process Creation",
+      "File Monitoring"
+    ],
+    "description": "File and Directory Discovery. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth) posing as IT technicians physically enter the office and copy sensitive data directly from an endpoint ont\".",
+    "id": "T1083",
+    "name": "File and Directory Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1087": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Account Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is enumerating Active Directory accounts and group memberships using built-in Windows utilities such as net group, net user, nl\".",
+    "id": "T1087",
+    "name": "Account Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1087.001": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Account Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Akira operators, arriving via a Bumblebee loader that stages an AdaptixC2 beacon before hands-on-keyboard ransomware deployment, run a dense\".",
+    "id": "T1087.001",
+    "name": "Account Discovery (sub-technique T1087.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1087.002": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Account Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is enumerating Active Directory accounts and group memberships using built-in Windows utilities such as net group, net user, nl\".",
+    "id": "T1087.002",
+    "name": "Account Discovery (sub-technique T1087.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1087.004": {
+    "data_sources": [
+      "Process Creation",
+      "Authentication Logs"
+    ],
+    "description": "Account Discovery. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An Entra ID user identity is performing post-AiTM Tycoon 2FA reconnaissance \u2014 issuing 4 or more distinct Microsoft Graph API recon categorie\".",
+    "id": "T1087.004",
+    "name": "Account Discovery (sub-technique T1087.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1090": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Proxy. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is leveraging Windows named pipes to establish covert command-and-control (C2) channels, enabling lateral movement and maintain\".",
+    "id": "T1090",
+    "name": "Proxy",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1090.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Proxy. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using Chisel, an open-source tunneling utility, to create SOCKS proxies on compromised hosts to bypass network security co\".",
+    "id": "T1090.001",
+    "name": "Proxy (sub-technique T1090.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1090.003": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Proxy. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A Windows host is running a multi-hop proxy implant (Webworm's ChainWorm / WormSocket, or a SoftEther VPN client under a renamed binary) tha\".",
+    "id": "T1090.003",
+    "name": "Proxy (sub-technique T1090.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1091": {
+    "data_sources": [
+      "File Monitoring",
+      "Removable Media"
+    ],
+    "description": "Replication Through Removable Media. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using USB devices with malicious payloads, such as Rubber Ducky, to gain initial access to air-gapped OT facilities and ICS \".",
+    "id": "T1091",
+    "name": "Replication Through Removable Media",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1092": {
+    "data_sources": [
+      "Removable Media"
+    ],
+    "description": "Communication Through Removable Media. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is deploying a malicious Ruby interpreter disguised as a legitimate USB utility on removable media targeting air-gapped network\".",
+    "id": "T1092",
+    "name": "Communication Through Removable Media",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1095": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Non-Application Layer Protocol. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A per-host, per-destination time-series model over outbound UDP (and low-data TCP) flows to non-standard high ports can surface Argamal-styl\".",
+    "id": "T1095",
+    "name": "Non-Application Layer Protocol",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1098": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Account Manipulation. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are exploiting insecure serverless functions in AWS, Azure, and Google Cloud to compromise serverless tokens, leading to privi\".",
+    "id": "T1098",
+    "name": "Account Manipulation",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1098.001": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Account Manipulation. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary with stolen Entra ID credentials is registering an attacker-controlled device in the tenant using **ROADtools `roadtx`** \u2014 visi\".",
+    "id": "T1098.001",
+    "name": "Account Manipulation (sub-technique T1098.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1098.003": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Account Manipulation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"What does legitimate Microsoft Entra Agent ID activity look like in this tenant \u2014 which agent identity blueprints exist, which apps they inh\".",
+    "id": "T1098.003",
+    "name": "Account Manipulation (sub-technique T1098.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1098.005": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Account Manipulation. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After a successful Self-Service Password Reset (SSPR) on an Entra ID account, an adversary is **removing the user's legitimate MFA methods**\".",
+    "id": "T1098.005",
+    "name": "Account Manipulation (sub-technique T1098.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1102": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Web Service. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exploiting Microsoft Office OLE objects to fetch payloads over WebDAV and establish an Outlook VBA backdoor targeting defens\".",
+    "id": "T1102",
+    "name": "Web Service",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1102.001": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Web Service. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Gamaredon hard-codes \"dead drop resolvers\" (DDRs) into its Pterodo-family loaders \u2014 the malware first reaches out to attacker-controlled con\".",
+    "id": "T1102.001",
+    "name": "Web Service (sub-technique T1102.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1102.002": {
+    "data_sources": [
+      "Network Traffic",
+      "DNS Logs"
+    ],
+    "description": "Web Service. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing legitimate cloud storage services as command-and-control channels delivering fileless payloads via weaponized Office\".",
+    "id": "T1102.002",
+    "name": "Web Service (sub-technique T1102.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1105": {
+    "data_sources": [
+      "Network Traffic",
+      "File Monitoring"
+    ],
+    "description": "Ingress Tool Transfer. Referenced by 7 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using PowerShell's Invoke-WebRequest cmdlet to download encrypted payloads from Discord CDN URLs ending in .dll or .exe to\".",
+    "id": "T1105",
+    "name": "Ingress Tool Transfer",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1106": {
+    "data_sources": [
+      "Process Creation",
+      "API Monitoring"
+    ],
+    "description": "Native API. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing Group Policy Objects for lateral deployment and using bring-your-own-vulnerable-driver techniques to terminate secur\".",
+    "id": "T1106",
+    "name": "Native API",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1110": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Brute Force. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is attempting to brute force the admin account on the externally facing VPN gateway.\".",
+    "id": "T1110",
+    "name": "Brute Force",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1110.003": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Brute Force. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are conducting password spray attacks against internet-exposed RDP servers by attempting to authenticate with the same passwor\".",
+    "id": "T1110.003",
+    "name": "Brute Force (sub-technique T1110.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1112": {
+    "data_sources": [
+      "Windows Registry"
+    ],
+    "description": "Modify Registry. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are redirecting DNS queries to an inappropriate or false DNS server IP, effectively blocking legitimate communications and poten\".",
+    "id": "T1112",
+    "name": "Modify Registry",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1114": {
+    "data_sources": [
+      "Application Logs",
+      "Email Gateway Logs"
+    ],
+    "description": "Email Collection. Referenced by 5 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using mailbox rules to hide their presence within compromised email accounts by automatically deleting, redirecting, or mark\".",
+    "id": "T1114",
+    "name": "Email Collection",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1114.001": {
+    "data_sources": [
+      "Application Logs",
+      "Email Gateway Logs"
+    ],
+    "description": "Email Collection. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using Outlook COM automation (Marshal.GetActiveObject(\"Outlook.Application\")) from a non-Office process to enumerate the v\".",
+    "id": "T1114.001",
+    "name": "Email Collection (sub-technique T1114.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1114.002": {
+    "data_sources": [
+      "Application Logs",
+      "Email Gateway Logs"
+    ],
+    "description": "Email Collection. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing Exchange mailbox permissions to gain broad access to organizational email, indicated by Add-MailboxPermission or App\".",
+    "id": "T1114.002",
+    "name": "Email Collection (sub-technique T1114.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1114.003": {
+    "data_sources": [
+      "Application Logs",
+      "Email Gateway Logs"
+    ],
+    "description": "Email Collection. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are creating domain-level content compliance rules with regular expression patterns matching strategic intelligence keywords to \".",
+    "id": "T1114.003",
+    "name": "Email Collection (sub-technique T1114.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1115": {
+    "data_sources": [
+      "Process Access"
+    ],
+    "description": "Clipboard Data. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Information stealers (Gremlin Stealer, Laplas Clipper, and variants) are running a persistent clipboard polling thread that scans for crypto\".",
+    "id": "T1115",
+    "name": "Clipboard Data",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1119": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Automated Collection. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is publishing typosquatted npm packages with MCP server injection targeting developer environments using AI coding assistants t\".",
+    "id": "T1119",
+    "name": "Automated Collection",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1127": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Trusted Developer Utilities Proxy Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Microsoft Playwright testing framework caches versions of various browsers for automated testing. In some version or configurations of this \".",
+    "id": "T1127",
+    "name": "Trusted Developer Utilities Proxy Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion (TA0005)"
+  },
+  "T1133": {
+    "data_sources": [
+      "Authentication Logs",
+      "Network Traffic"
+    ],
+    "description": "External Remote Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"What does legitimate external remote access actually look like in this org \u2014 which RMM / remote-support tools are sanctioned, from which hos\".",
+    "id": "T1133",
+    "name": "External Remote Services",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1134": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Access Token Manipulation. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using named pipe impersonation or token manipulation techniques such as Meterpreter's GetSystem command to escalate privileg\".",
+    "id": "T1134",
+    "name": "Access Token Manipulation",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1134.001": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Access Token Manipulation. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After establishing itself inside the SYSTEM-level Print Spooler context, FishMonger's SprySOCKS Windows loader manipulates access tokens to \".",
+    "id": "T1134.001",
+    "name": "Access Token Manipulation (sub-technique T1134.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1134.002": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Access Token Manipulation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After establishing itself inside the SYSTEM-level Print Spooler context, FishMonger's SprySOCKS Windows loader manipulates access tokens to \".",
+    "id": "T1134.002",
+    "name": "Access Token Manipulation (sub-technique T1134.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1134.003": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Access Token Manipulation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"ToddyCat's Umbrij tool escalates into a victim's user context to steal Gmail OAuth tokens by manufacturing and impersonating an access token\".",
+    "id": "T1134.003",
+    "name": "Access Token Manipulation (sub-technique T1134.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1134.005": {
+    "data_sources": [
+      "Process Access",
+      "Process Creation"
+    ],
+    "description": "Access Token Manipulation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using named pipe impersonation or token manipulation techniques such as Meterpreter's GetSystem command to escalate privileg\".",
+    "id": "T1134.005",
+    "name": "Access Token Manipulation (sub-technique T1134.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1135": {
+    "data_sources": [
+      "Process Creation",
+      "Network Traffic"
+    ],
+    "description": "Network Share Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are executing PowerShell scripts that enumerate all accessible network shares and local drives to identify files containing auth\".",
+    "id": "T1135",
+    "name": "Network Share Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1136": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Create Account. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Amadey's backdoor command `0x19` extracts attacker-supplied credentials and creates a new **local** user account, adds it to the local Admin\".",
+    "id": "T1136",
+    "name": "Create Account",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1136.001": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Create Account. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Amadey's backdoor command `0x19` extracts attacker-supplied credentials and creates a new **local** user account, adds it to the local Admin\".",
+    "id": "T1136.001",
+    "name": "Create Account (sub-technique T1136.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1136.002": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Create Account. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries may create domain accounts to maintain access to systems with Active Directory.\".",
+    "id": "T1136.002",
+    "name": "Create Account (sub-technique T1136.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1140": {
+    "data_sources": [
+      "Process Creation",
+      "File Monitoring"
+    ],
+    "description": "Deobfuscate/Decode Files or Information. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using PowerShell's Expand-Archive cmdlet to extract malicious CAB files containing encrypted DEMODEX rootkit configuration\".",
+    "id": "T1140",
+    "name": "Deobfuscate/Decode Files or Information",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1176": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Browser Extensions. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are leveraging suspicious browser extensions to collect and exfiltrate sensitive data.\".",
+    "id": "T1176",
+    "name": "Browser Extensions",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1185": {
+    "data_sources": [
+      "Process Access",
+      "Network Traffic"
+    ],
+    "description": "Browser Session Hijacking. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is deploying malicious browser extensions that impersonate AI productivity tools to steal session tokens and conversation data \".",
+    "id": "T1185",
+    "name": "Browser Session Hijacking",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1187": {
+    "data_sources": [
+      "Network Traffic",
+      "Authentication Logs"
+    ],
+    "description": "Forced Authentication. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An attacker on a compromised Linux host (Confluence or F5 BIG-IP) is performing NTLM relay coercion against an internal Windows domain contr\".",
+    "id": "T1187",
+    "name": "Forced Authentication",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1189": {
+    "data_sources": [
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Drive-by Compromise. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using SEO poisoning or malvertising to place trojanized software installers in search engine results, tricking users searchi\".",
+    "id": "T1189",
+    "name": "Drive-by Compromise",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1190": {
+    "data_sources": [
+      "Application Logs",
+      "Network Traffic"
+    ],
+    "description": "Exploit Public-Facing Application. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exploiting a known vulnerability in an internet-facing application such as Apache ActiveMQ (CVE-2023-46604) to achieve remot\".",
+    "id": "T1190",
+    "name": "Exploit Public-Facing Application",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1195": {
+    "data_sources": [
+      "File Monitoring",
+      "Application Logs"
+    ],
+    "description": "Supply Chain Compromise. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors publish PyPI packages (e.g., colorinal, termncolor, uuid32-utils) that execute on import \u2014 loading a packaged native DLL (term\".",
+    "id": "T1195",
+    "name": "Supply Chain Compromise",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1195.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Application Logs"
+    ],
+    "description": "Supply Chain Compromise. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is poisoning AI coding tool project configurations such as hooks, MCP servers, and environment variables in shared repositories\".",
+    "id": "T1195.001",
+    "name": "Supply Chain Compromise (sub-technique T1195.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1195.002": {
+    "data_sources": [
+      "File Monitoring",
+      "Application Logs"
+    ],
+    "description": "Supply Chain Compromise. Referenced by 8 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is registering typosquatted or trojanized MCP server packages in public registries and package managers targeting developers an\".",
+    "id": "T1195.002",
+    "name": "Supply Chain Compromise (sub-technique T1195.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1197": {
+    "data_sources": [
+      "Process Creation",
+      "Network Traffic"
+    ],
+    "description": "BITS Jobs. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is leveraging BITSAdmin jobs to download and execute payloads.\".",
+    "id": "T1197",
+    "name": "BITS Jobs",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1199": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Trusted Relationship. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering a malicious Network Provider DLL under `HKLM\\SYSTEM\\CurrentControlSet\\Services\\<svc>\\NetworkProvider` on Domai\".",
+    "id": "T1199",
+    "name": "Trusted Relationship",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1200": {
+    "data_sources": [
+      "Driver/Module Load"
+    ],
+    "description": "Hardware Additions. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using USB devices with malicious payloads, such as Rubber Ducky, to gain initial access to air-gapped OT facilities and ICS \".",
+    "id": "T1200",
+    "name": "Hardware Additions",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1203": {
+    "data_sources": [
+      "Process Creation",
+      "Application Logs"
+    ],
+    "description": "Exploitation for Client Execution. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing legitimate cloud storage services as command-and-control channels delivering fileless payloads via weaponized Office\".",
+    "id": "T1203",
+    "name": "Exploitation for Client Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1204": {
+    "data_sources": [
+      "Process Creation",
+      "File Monitoring"
+    ],
+    "description": "User Execution. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are leveraging Linux Executable and Linkage Format (ELF) files to deploy malware families on cloud infrastructure endpoints ru\".",
+    "id": "T1204",
+    "name": "User Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1204.002": {
+    "data_sources": [
+      "Process Creation",
+      "File Monitoring",
+      "Email Gateway Logs"
+    ],
+    "description": "Adversaries may rely on a user opening a malicious file to gain code execution.",
+    "id": "T1204.002",
+    "name": "Malicious File",
+    "source": "curated",
+    "tactic": "Initial Access"
+  },
+  "T1204.004": {
+    "data_sources": [
+      "Process Creation",
+      "File Monitoring"
+    ],
+    "description": "User Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors run macOS ClickFix lures that instruct users to copy a base64 blob into Terminal, where the decoded command pipes a curl-fetch\".",
+    "id": "T1204.004",
+    "name": "User Execution (sub-technique T1204.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1205.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Traffic Signaling. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is deploying iptables-based Single Packet Authorization on compromised Linux appliances to create port-knocking backdoors targe\".",
+    "id": "T1205.001",
+    "name": "Traffic Signaling (sub-technique T1205.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1211": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Exploitation for Defense Evasion. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Microsoft Playwright testing framework caches versions of various browsers for automated testing. In some version or configurations of this \".",
+    "id": "T1211",
+    "name": "Exploitation for Defense Evasion",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion (TA0005)"
+  },
+  "T1213": {
+    "data_sources": [
+      "Application Logs"
+    ],
+    "description": "Data from Information Repositories. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are sending unauthenticated HTTP GET requests to the WordPress REST API endpoint /wp-json/gravitysmtp/v1/tests/mock-data with \".",
+    "id": "T1213",
+    "name": "Data from Information Repositories",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1218": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"The Cisco AnyConnect Secure Mobility Client updates for macOS are distributed via a download from https://disthost.umbrella.com/roaming/upgr\".",
+    "id": "T1218",
+    "name": "System Binary Proxy Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion (TA0005)"
+  },
+  "T1218.004": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using InstallUtil.exe with the /u (uninstall) flag to proxy-execute a malicious .NET assembly from a Temp directory, bypassi\".",
+    "id": "T1218.004",
+    "name": "System Binary Proxy Execution (sub-technique T1218.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1218.005": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Attackers may exploit mshta.exe, a trusted Windows utility, to execute malicious .hta files as well as JavaScript or VBScript indirectly. Ms\".",
+    "id": "T1218.005",
+    "name": "System Binary Proxy Execution (sub-technique T1218.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1218.007": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing msiexec.exe to proxy execution of malicious code through crafted MSI packages or DLL loading, bypassing application \".",
+    "id": "T1218.007",
+    "name": "System Binary Proxy Execution (sub-technique T1218.007)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1218.010": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Kimsuky (DPRK) is persisting PebbleDash / AppleSeed implants on Windows hosts by creating scheduled tasks named `ChromeCheck` (elevated) or \".",
+    "id": "T1218.010",
+    "name": "System Binary Proxy Execution (sub-technique T1218.010)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1218.011": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "System Binary Proxy Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are exploiting the native Windows process Rundll32 in order to execute malicious code and bypass application control solutions.\".",
+    "id": "T1218.011",
+    "name": "System Binary Proxy Execution (sub-technique T1218.011)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1219": {
+    "data_sources": [
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Access Software. Referenced by 8 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are abusing response features included in EDR and other defensive tools that enable remote access.\".",
+    "id": "T1219",
+    "name": "Remote Access Software",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1219.002": {
+    "data_sources": [
+      "Network Traffic",
+      "Process Creation"
+    ],
+    "description": "Remote Access Software. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Amadey's backdoor command `0x19` extracts attacker-supplied credentials and creates a new **local** user account, adds it to the local Admin\".",
+    "id": "T1219.002",
+    "name": "Remote Access Software (sub-technique T1219.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1222": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "File and Directory Permissions Modification. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A compromised Linux web service (Confluence/Java, F5 management) is staging a payload in `/dev/shm` or `/tmp` by performing `chmod 777` on t\".",
+    "id": "T1222",
+    "name": "File and Directory Permissions Modification",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1222.002": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "File and Directory Permissions Modification. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A compromised Linux web service (Confluence/Java, F5 management) is staging a payload in `/dev/shm` or `/tmp` by performing `chmod 777` on t\".",
+    "id": "T1222.002",
+    "name": "File and Directory Permissions Modification (sub-technique T1222.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1482": {
+    "data_sources": [
+      "Process Creation",
+      "Active Directory Logs"
+    ],
+    "description": "Domain Trust Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"In the Deception.Pro multi-RAT intrusion, the operator performed SAMR and LSAD RPC enumeration against the domain controller to map domains,\".",
+    "id": "T1482",
+    "name": "Domain Trust Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1484.001": {
+    "data_sources": [
+      "Active Directory Logs",
+      "Windows Registry"
+    ],
+    "description": "Domain or Tenant Policy Modification. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing Group Policy Objects for lateral deployment and using bring-your-own-vulnerable-driver techniques to terminate secur\".",
+    "id": "T1484.001",
+    "name": "Domain or Tenant Policy Modification (sub-technique T1484.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1485": {
+    "data_sources": [
+      "File Monitoring"
+    ],
+    "description": "Data Destruction. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using compromised Microsoft Intune administrative credentials to issue remote wipe commands across enterprise-enrolled mob\".",
+    "id": "T1485",
+    "name": "Data Destruction",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1486": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Data Encrypted for Impact. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is executing ransomware that rapidly encrypts files across local and network-accessible storage, indicated by a high rate of fi\".",
+    "id": "T1486",
+    "name": "Data Encrypted for Impact",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1489": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Event Logs"
+    ],
+    "description": "Service Stop. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Following a Bing-search-driven Bumblebee loader infection and AdaptixC2 hands-on-keyboard activity, Akira ransomware operators inhibit syste\".",
+    "id": "T1489",
+    "name": "Service Stop",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1490": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Event Logs"
+    ],
+    "description": "Inhibit System Recovery. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Following a Bing-search-driven Bumblebee loader infection and AdaptixC2 hands-on-keyboard activity, Akira ransomware operators inhibit syste\".",
+    "id": "T1490",
+    "name": "Inhibit System Recovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1491.001": {
+    "data_sources": [
+      "File Monitoring"
+    ],
+    "description": "Defacement. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is modifying the desktop wallpaper, dropping ransom note files, or altering login screen settings via registry changes to displ\".",
+    "id": "T1491.001",
+    "name": "Defacement (sub-technique T1491.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1497": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Virtualization/Sandbox Evasion. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is creating temporary virtual network interfaces on ESXi-hosted virtual machines to pivot into internal networks and SaaS infra\".",
+    "id": "T1497",
+    "name": "Virtualization/Sandbox Evasion",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1497.001": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Virtualization/Sandbox Evasion. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is using environmental keying and pre-execution system checks to gate payload detonation, indicated by processes checking for t\".",
+    "id": "T1497.001",
+    "name": "Virtualization/Sandbox Evasion (sub-technique T1497.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1497.003": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Virtualization/Sandbox Evasion. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Sophisticated threat actors are querying display state using system_profiler before executing malicious commands to avoid detection when use\".",
+    "id": "T1497.003",
+    "name": "Virtualization/Sandbox Evasion (sub-technique T1497.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1505": {
+    "data_sources": [
+      "File Monitoring",
+      "Application Logs"
+    ],
+    "description": "Server Software Component. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Following CVE-2026-35273 exploitation (see [[H190]]), UNC6240 established persistence by writing JSP web shells and XMLDecoder-triggering XM\".",
+    "id": "T1505",
+    "name": "Server Software Component",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1505.003": {
+    "data_sources": [
+      "File Monitoring",
+      "Application Logs"
+    ],
+    "description": "Server Software Component. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary has deployed a web shell on a public-facing web server (IIS, Exchange, Tomcat) for persistent command execution, indicated by w\".",
+    "id": "T1505.003",
+    "name": "Server Software Component (sub-technique T1505.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1518.001": {
+    "data_sources": [
+      "Process Creation"
+    ],
+    "description": "Software Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Amadey fingerprints each victim by enumerating installed security software (antivirus/EDR) and reporting it to its C2 in the `av:` field of \".",
+    "id": "T1518.001",
+    "name": "Software Discovery (sub-technique T1518.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1526": {
+    "data_sources": [
+      "Cloud API Logs"
+    ],
+    "description": "Cloud Service Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary using a stolen or compromised GCP service account token is performing a rapid enumeration sequence \u2014 listing projects, services\".",
+    "id": "T1526",
+    "name": "Cloud Service Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1528": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Steal Application Access Token. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is deploying malicious browser extensions that impersonate AI productivity tools to steal session tokens and conversation data \".",
+    "id": "T1528",
+    "name": "Steal Application Access Token",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1531": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Account Access Removal. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Following EvilTokens/OAuth token theft against Microsoft 365 (as detailed in Talos's ARToken affiliate-panel report), an affiliate who has s\".",
+    "id": "T1531",
+    "name": "Account Access Removal",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Impact"
+  },
+  "T1534": {
+    "data_sources": [
+      "Email Gateway Logs"
+    ],
+    "description": "Internal Spearphishing. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using Outlook COM automation (Marshal.GetActiveObject(\"Outlook.Application\")) from a non-Office process to enumerate the v\".",
+    "id": "T1534",
+    "name": "Internal Spearphishing",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1537": {
+    "data_sources": [
+      "Cloud API Logs",
+      "Network Traffic"
+    ],
+    "description": "Transfer Data to Cloud Account. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary with stolen GCP credentials is exfiltrating BigQuery data by exporting query results or table contents to a Cloud Storage bucke\".",
+    "id": "T1537",
+    "name": "Transfer Data to Cloud Account",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1539": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Access"
+    ],
+    "description": "Steal Web Session Cookie. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors run Microsoft 365 AiTM phishing using fake \"code of conduct\" / \"internal regulatory\" lures that route victims through Cloudfla\".",
+    "id": "T1539",
+    "name": "Steal Web Session Cookie",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1543": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Create or Modify System Process. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors persist macOS infostealer loaders by writing a LaunchAgent plist to ~/Library/LaunchAgents/ that masquerades as Apple/Google s\".",
+    "id": "T1543",
+    "name": "Create or Modify System Process",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1543.001": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Create or Modify System Process. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary has established persistence on macOS by creating or modifying a Launch Agent plist in ~/Library/LaunchAgents/ that executes a h\".",
+    "id": "T1543.001",
+    "name": "Create or Modify System Process (sub-technique T1543.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1543.003": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Create or Modify System Process. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"ESET documents the Gentlemen group's in-house EDR-killer framework (GentleKiller, 8+ variants) which operates by installing and starting vul\".",
+    "id": "T1543.003",
+    "name": "Create or Modify System Process (sub-technique T1543.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1543.004": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Create or Modify System Process. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are establishing persistence on macOS systems using LaunchDaemons that impersonate legitimate messaging services (like \"Telegr\".",
+    "id": "T1543.004",
+    "name": "Create or Modify System Process (sub-technique T1543.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1546": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Event Triggered Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"The I-SOON-linked, China-nexus actor FishMonger upgraded its SprySOCKS toolset for Windows and establishes persistence by abusing Image File\".",
+    "id": "T1546",
+    "name": "Event Triggered Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1546.004": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Event Triggered Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is establishing persistence on Linux hosts by executing commands triggered by a user's shell via .bash_profile, .bashrc, and .b\".",
+    "id": "T1546.004",
+    "name": "Event Triggered Execution (sub-technique T1546.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1546.012": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Event Triggered Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"The I-SOON-linked, China-nexus actor FishMonger upgraded its SprySOCKS toolset for Windows and establishes persistence by abusing Image File\".",
+    "id": "T1546.012",
+    "name": "Event Triggered Execution (sub-technique T1546.012)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1546.015": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Event Triggered Execution. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exploiting Microsoft Office OLE objects to fetch payloads over WebDAV and establish an Outlook VBA backdoor targeting defens\".",
+    "id": "T1546.015",
+    "name": "Event Triggered Execution (sub-technique T1546.015)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1546.016": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Event Triggered Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using IDE plugins like \"Remote Code Runner\" or \"REST Client\" to launch unauthorized shells, scripts, or network connection\".",
+    "id": "T1546.016",
+    "name": "Event Triggered Execution (sub-technique T1546.016)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1547": {
+    "data_sources": [
+      "Windows Registry",
+      "Process Creation"
+    ],
+    "description": "Boot or Logon Autostart Execution. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Silver Fox is persisting the ABCDoor backdoor on Windows hosts by registering both an HKCU Run key value \"AppClient\" and a Scheduled Task \"A\".",
+    "id": "T1547",
+    "name": "Boot or Logon Autostart Execution",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1547.001": {
+    "data_sources": [
+      "Windows Registry",
+      "Process Creation"
+    ],
+    "description": "Boot or Logon Autostart Execution. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Silver Fox is persisting the ABCDoor backdoor on Windows hosts by registering both an HKCU Run key value \"AppClient\" and a Scheduled Task \"A\".",
+    "id": "T1547.001",
+    "name": "Boot or Logon Autostart Execution (sub-technique T1547.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1547.005": {
+    "data_sources": [
+      "Windows Registry",
+      "Process Creation"
+    ],
+    "description": "Boot or Logon Autostart Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering a malicious Password Filter DLL by appending it to `HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Notification Pac\".",
+    "id": "T1547.005",
+    "name": "Boot or Logon Autostart Execution (sub-technique T1547.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1547.010": {
+    "data_sources": [
+      "Windows Registry",
+      "Process Creation"
+    ],
+    "description": "Boot or Logon Autostart Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"FishMonger's upgraded SprySOCKS for Windows persists by registering a malicious print processor that the Print Spooler service (`spoolsv.exe\".",
+    "id": "T1547.010",
+    "name": "Boot or Logon Autostart Execution (sub-technique T1547.010)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1547.012": {
+    "data_sources": [
+      "Windows Registry",
+      "Process Creation"
+    ],
+    "description": "Boot or Logon Autostart Execution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"FishMonger's upgraded SprySOCKS for Windows persists by registering a malicious print processor that the Print Spooler service (`spoolsv.exe\".",
+    "id": "T1547.012",
+    "name": "Boot or Logon Autostart Execution (sub-technique T1547.012)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1548.003": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Abuse Elevation Control Mechanism. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A compromised npm dependency executing inside a self-hosted CI/CD runner (GitHub Actions) is granting itself passwordless root by writing a \".",
+    "id": "T1548.003",
+    "name": "Abuse Elevation Control Mechanism (sub-technique T1548.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1548.005": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Abuse Elevation Control Mechanism. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary holding a low-privilege GCP service account token is escalating privilege by impersonating a higher-privileged service account \".",
+    "id": "T1548.005",
+    "name": "Abuse Elevation Control Mechanism (sub-technique T1548.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1550": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Use Alternate Authentication Material. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering attacker-controlled cryptographic keys in the `msDS-KeyCredentialLink` attribute of privileged AD objects (via\".",
+    "id": "T1550",
+    "name": "Use Alternate Authentication Material",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1550.001": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Use Alternate Authentication Material. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are invalidating active user sessions by revoking OAuth refresh tokens or session cookies through compromised administrative acc\".",
+    "id": "T1550.001",
+    "name": "Use Alternate Authentication Material (sub-technique T1550.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1550.004": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Use Alternate Authentication Material. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are injecting HTTP headers X-SSL-CLIENT-VERIFY with value \"SUCCESS\" and X-SSL-CLIENT-CERT containing forged certificate chains\".",
+    "id": "T1550.004",
+    "name": "Use Alternate Authentication Material (sub-technique T1550.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1552": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Unsecured Credentials. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is performing automated scanning for unauthenticated AI agent API export endpoints (CVE-2026-25253 pattern), targeting cloud-ho\".",
+    "id": "T1552",
+    "name": "Unsecured Credentials",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access (T1552)"
+  },
+  "T1552.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Unsecured Credentials. Referenced by 5 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is injecting malicious preinstall scripts into npm packages using stolen developer tokens targeting software development organi\".",
+    "id": "T1552.001",
+    "name": "Unsecured Credentials (sub-technique T1552.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1552.005": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Unsecured Credentials. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary has chained a server-side request forgery (SSRF) vulnerability in a GCP-hosted web application with the GCP Instance Metadata S\".",
+    "id": "T1552.005",
+    "name": "Unsecured Credentials (sub-technique T1552.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1553": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Subvert Trust Controls. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"OceanLotus (APT32) repeatedly abuses *legitimately signed* Windows executables \u2014 renaming `Toolbox.exe` to Genuine.exe/Updater.exe/AutoCAD24\".",
+    "id": "T1553",
+    "name": "Subvert Trust Controls",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1553.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Subvert Trust Controls. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using compiled AppleScript (.scpt) files with fake document extensions like .docx.scpt and .pptx.scpt, combined with custo\".",
+    "id": "T1553.001",
+    "name": "Subvert Trust Controls (sub-technique T1553.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1553.002": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Subvert Trust Controls. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"OceanLotus (APT32) repeatedly abuses *legitimately signed* Windows executables \u2014 renaming `Toolbox.exe` to Genuine.exe/Updater.exe/AutoCAD24\".",
+    "id": "T1553.002",
+    "name": "Subvert Trust Controls (sub-technique T1553.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1553.005": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Subvert Trust Controls. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is exploiting MSHTML framework flaws in crafted Windows Shortcut files with embedded HTML to bypass Mark-of-the-Web and browser\".",
+    "id": "T1553.005",
+    "name": "Subvert Trust Controls (sub-technique T1553.005)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1554": {
+    "data_sources": [
+      "File Monitoring"
+    ],
+    "description": "Compromise Client Software Binary. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is abusing VS Code extension dependency mechanisms to turn initially benign marketplace extensions into transitive delivery veh\".",
+    "id": "T1554",
+    "name": "Compromise Client Software Binary",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1555": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Access"
+    ],
+    "description": "Credentials from Password Stores. Referenced by 6 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is publishing typosquatted npm packages with MCP server injection targeting developer environments using AI coding assistants t\".",
+    "id": "T1555",
+    "name": "Credentials from Password Stores",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1555.003": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Access"
+    ],
+    "description": "Credentials from Password Stores. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is harvesting stored browser credentials by spawning headless Chrome or Edge instances with --no-sandbox flags from an unexpect\".",
+    "id": "T1555.003",
+    "name": "Credentials from Password Stores (sub-technique T1555.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1555.006": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Access"
+    ],
+    "description": "Credentials from Password Stores. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A time-series and per-identity volumetric model over Azure Key Vault `SecretGet` / `SecretList` / `KeyGet` / `CertificateGet` operations can\".",
+    "id": "T1555.006",
+    "name": "Credentials from Password Stores (sub-technique T1555.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1556": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Modify Authentication Process. Referenced by 5 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering attacker-controlled cryptographic keys in the `msDS-KeyCredentialLink` attribute of privileged AD objects (via\".",
+    "id": "T1556",
+    "name": "Modify Authentication Process",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1556.002": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Modify Authentication Process. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering a malicious Network Provider DLL under `HKLM\\SYSTEM\\CurrentControlSet\\Services\\<svc>\\NetworkProvider` on Domai\".",
+    "id": "T1556.002",
+    "name": "Modify Authentication Process (sub-technique T1556.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1556.006": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Modify Authentication Process. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After a successful Self-Service Password Reset (SSPR) on an Entra ID account, an adversary is **removing the user's legitimate MFA methods**\".",
+    "id": "T1556.006",
+    "name": "Modify Authentication Process (sub-technique T1556.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1556.008": {
+    "data_sources": [
+      "Authentication Logs",
+      "Windows Registry"
+    ],
+    "description": "Modify Authentication Process. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering a malicious Network Provider DLL under `HKLM\\SYSTEM\\CurrentControlSet\\Services\\<svc>\\NetworkProvider` on Domai\".",
+    "id": "T1556.008",
+    "name": "Modify Authentication Process (sub-technique T1556.008)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1557": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Adversary-in-the-Middle. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An attacker on a compromised Linux host (Confluence or F5 BIG-IP) is performing NTLM relay coercion against an internal Windows domain contr\".",
+    "id": "T1557",
+    "name": "Adversary-in-the-Middle",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1558.003": {
+    "data_sources": [
+      "Authentication Logs (Event 4769)",
+      "Kerberos Logs"
+    ],
+    "description": "Adversaries may abuse Kerberos ticket-granting service requests to obtain crackable service account credentials.",
+    "id": "T1558.003",
+    "name": "Kerberoasting",
+    "source": "curated",
+    "tactic": "Credential Access"
+  },
+  "T1559": {
+    "data_sources": [
+      "Process Access"
+    ],
+    "description": "Inter-Process Communication. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is leveraging Windows named pipes to establish covert command-and-control (C2) channels, enabling lateral movement and maintain\".",
+    "id": "T1559",
+    "name": "Inter-Process Communication",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1560": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Archive Collected Data. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using PowerShell's Compress-Archive cmdlet to compress stolen victim data into ZIP archives for exfiltration to attacker-c\".",
+    "id": "T1560",
+    "name": "Archive Collected Data",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Collection"
+  },
+  "T1560.001": {
+    "data_sources": [
+      "File Monitoring",
+      "Process Creation"
+    ],
+    "description": "Archive Collected Data. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary has exfiltrated data off backup servers into small (1MB) .zip files.\".",
+    "id": "T1560.001",
+    "name": "Archive Collected Data (sub-technique T1560.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1562": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors with local-admin access to an AD CS Certification Authority are tampering with the CA `AuditFilter` registry value (via `certu\".",
+    "id": "T1562",
+    "name": "Impair Defenses",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1562.001": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 9 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are redirecting DNS queries to an inappropriate or false DNS server IP, effectively blocking legitimate communications and poten\".",
+    "id": "T1562.001",
+    "name": "Impair Defenses (sub-technique T1562.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1562.002": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors with local-admin access to an AD CS Certification Authority are tampering with the CA `AuditFilter` registry value (via `certu\".",
+    "id": "T1562.002",
+    "name": "Impair Defenses (sub-technique T1562.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1562.004": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors may abuse netsh.exe or PowerShell to create, modify, or delete Windows Firewall rules or profiles in order to weaken host-base\".",
+    "id": "T1562.004",
+    "name": "Impair Defenses (sub-technique T1562.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Tactic: Defense Evasion (TA0005) - Technique: Impair Defenses: Disable or Modify System Firewall (T1562.004)"
+  },
+  "T1562.006": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A legitimate .NET application (e.g., `setup.exe`, `update.exe`) is being hijacked via an attacker-planted `<appname>.exe.config` file that s\".",
+    "id": "T1562.006",
+    "name": "Impair Defenses (sub-technique T1562.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1562.008": {
+    "data_sources": [
+      "Windows Event Logs",
+      "Process Creation"
+    ],
+    "description": "Impair Defenses. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary with compromised AWS credentials or roles disables, deletes, or reconfigures CloudTrail to blind defenders immediately before p\".",
+    "id": "T1562.008",
+    "name": "Impair Defenses (sub-technique T1562.008)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1564": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Hide Artifacts. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using the 'attrib +h' command to hide files and directories in the compromised Windows system to maintain stealth and evad\".",
+    "id": "T1564",
+    "name": "Hide Artifacts",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1564.006": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Hide Artifacts. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is provisioning virtual machines through the vSphere API or web client targeting VMware virtualization infrastructure to deploy\".",
+    "id": "T1564.006",
+    "name": "Hide Artifacts (sub-technique T1564.006)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1564.008": {
+    "data_sources": [
+      "File Monitoring",
+      "Windows Registry"
+    ],
+    "description": "Hide Artifacts. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries are using mailbox rules to hide their presence within compromised email accounts by automatically deleting, redirecting, or mark\".",
+    "id": "T1564.008",
+    "name": "Hide Artifacts (sub-technique T1564.008)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1566": {
+    "data_sources": [
+      "Email Gateway Logs",
+      "File Monitoring"
+    ],
+    "description": "Phishing. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth) initiate access by voice phishing \u2014 calling employees while posing as internal IT help desk \u2014 and during t\".",
+    "id": "T1566",
+    "name": "Phishing",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1566.001": {
+    "data_sources": [
+      "Email Gateway Logs",
+      "File Monitoring"
+    ],
+    "description": "Phishing. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using the ClickFix social engineering technique to trick users into copying and pasting malicious PowerShell commands into\".",
+    "id": "T1566.001",
+    "name": "Phishing (sub-technique T1566.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1566.002": {
+    "data_sources": [
+      "Email Gateway Logs",
+      "File Monitoring"
+    ],
+    "description": "Phishing. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"BlueNoroff threat actors are delivering malicious AppleScript files (.scpt) via fake Zoom domains with oversized files containing >10,000 bl\".",
+    "id": "T1566.002",
+    "name": "Phishing (sub-technique T1566.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1566.003": {
+    "data_sources": [
+      "Email Gateway Logs",
+      "File Monitoring"
+    ],
+    "description": "Phishing. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is impersonating IT helpdesk personnel via Microsoft Teams external messaging to socially engineer users into launching remote \".",
+    "id": "T1566.003",
+    "name": "Phishing (sub-technique T1566.003)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Initial Access"
+  },
+  "T1566.004": {
+    "data_sources": [
+      "Email Gateway Logs",
+      "File Monitoring"
+    ],
+    "description": "Phishing. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth / Silent Ransom Group) are using the Windows command shell to download a remote monitoring and management (\".",
+    "id": "T1566.004",
+    "name": "Phishing (sub-technique T1566.004)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1567": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over Web Service. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Insiders may be using unauthorised AI chatbot platforms for exfiltration.\".",
+    "id": "T1567",
+    "name": "Exfiltration Over Web Service",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1567.002": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Exfiltration Over Web Service. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are using the Snowflake GET command to exfiltrate compressed GZIP files from temporary internal stages to locally specified di\".",
+    "id": "T1567.002",
+    "name": "Exfiltration Over Web Service (sub-technique T1567.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1568.002": {
+    "data_sources": [
+      "DNS Logs"
+    ],
+    "description": "Dynamic Resolution. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Dictionary-based DGAs are a rare threat that require a model-based approach. These domains are algorithmically generated based on a dictiona\".",
+    "id": "T1568.002",
+    "name": "Dynamic Resolution (sub-technique T1568.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1569": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Event Logs"
+    ],
+    "description": "System Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A Qilin operator stages a service-host lookalike named Svchosts.exe from a non-system path, then runs recovery impairment commands before ra\".",
+    "id": "T1569",
+    "name": "System Services",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Stealth"
+  },
+  "T1569.002": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Event Logs"
+    ],
+    "description": "System Services. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Adversaries (UNC3753 / Luna Moth / Silent Ransom Group) are using the Windows command shell to download a remote monitoring and management (\".",
+    "id": "T1569.002",
+    "name": "System Services (sub-technique T1569.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  },
+  "T1570": {
+    "data_sources": [
+      "Network Traffic",
+      "File Monitoring"
+    ],
+    "description": "Lateral Tool Transfer. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"SPECTRALVIPER's orchestrator instance distributes commands to other compromised hosts over named pipes (XGU::Pivot::StartLink / WaitNew_Remo\".",
+    "id": "T1570",
+    "name": "Lateral Tool Transfer",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1572": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Protocol Tunneling. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Evildoers might be using reverse ssh for Command and Control.\".",
+    "id": "T1572",
+    "name": "Protocol Tunneling",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1573": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Encrypted Channel. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"SPECTRALVIPER conceals C2 in HTTPS with encrypted host-profiling data embedded in HTTP Cookie headers (prefixes euconsent-v2= or zd_cs_pm=) \".",
+    "id": "T1573",
+    "name": "Encrypted Channel",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1573.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Encrypted Channel. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is encrypting command-and-control traffic using custom or non-standard AES encryption with application-layer key derivation (MD\".",
+    "id": "T1573.001",
+    "name": "Encrypted Channel (sub-technique T1573.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Command and Control"
+  },
+  "T1574": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Hijack Execution Flow. Referenced by 5 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are abusing signed Logitech \"Logi AI Prompt Builder\" (LogiAiPromptBuilder.exe) to sideload a malicious screen_retriever_plugin\".",
+    "id": "T1574",
+    "name": "Hijack Execution Flow",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1574.001": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Hijack Execution Flow. Referenced by 3 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is side-loading a malicious DLL (such as CRYPTBASE.dll) by placing it in the same directory as a legitimate signed executable, \".",
+    "id": "T1574.001",
+    "name": "Hijack Execution Flow (sub-technique T1574.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1574.002": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Hijack Execution Flow. Referenced by 8 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"For sideloading a DLL into vulnerable binary, a threat actors would be dropping (creating) EXE and DLL files under user writeable directorie\".",
+    "id": "T1574.002",
+    "name": "Hijack Execution Flow (sub-technique T1574.002)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1574.014": {
+    "data_sources": [
+      "Process Creation",
+      "Windows Registry"
+    ],
+    "description": "Hijack Execution Flow. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A legitimate .NET application (e.g., `setup.exe`, `update.exe`) is being hijacked via an attacker-planted `<appname>.exe.config` file that s\".",
+    "id": "T1574.014",
+    "name": "Hijack Execution Flow (sub-technique T1574.014)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1580": {
+    "data_sources": [
+      "Cloud API Logs"
+    ],
+    "description": "Cloud Infrastructure Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary using a stolen or compromised GCP service account token is performing a rapid enumeration sequence \u2014 listing projects, services\".",
+    "id": "T1580",
+    "name": "Cloud Infrastructure Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Discovery"
+  },
+  "T1583.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Acquire Infrastructure. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors register lookalike and brand-adjacent domains impersonating popular AI platforms (ChatGPT/OpenAI, Claude/Anthropic, DeepSeek, \".",
+    "id": "T1583.001",
+    "name": "Acquire Infrastructure (sub-technique T1583.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Resource Development"
+  },
+  "T1595.001": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Active Scanning. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are crafting TCP SYN packets with anomalous header values like 20-byte header length, zero window size, and zero initial seque\".",
+    "id": "T1595.001",
+    "name": "Active Scanning (sub-technique T1595.001)",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Reconnaissance"
+  },
+  "T1599": {
+    "data_sources": [
+      "Network Traffic"
+    ],
+    "description": "Network Boundary Bridging. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is creating unauthorized virtual network interface cards on VMware ESXi hosts to establish covert network paths targeting virtu\".",
+    "id": "T1599",
+    "name": "Network Boundary Bridging",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Lateral Movement"
+  },
+  "T1611": {
+    "data_sources": [
+      "Process Creation",
+      "Container Logs"
+    ],
+    "description": "Escape to Host. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A process running inside a Linux container is escaping to the host by one of the high-signal misconfiguration paths \u2014 writing a payload to a\".",
+    "id": "T1611",
+    "name": "Escape to Host",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Privilege Escalation"
+  },
+  "T1619": {
+    "data_sources": [
+      "Cloud API Logs"
+    ],
+    "description": "Cloud Storage Object Discovery. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary with stolen GCP credentials is exfiltrating BigQuery data by exporting query results or table contents to a Cloud Storage bucke\".",
+    "id": "T1619",
+    "name": "Cloud Storage Object Discovery",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Exfiltration"
+  },
+  "T1620": {
+    "data_sources": [
+      "Process Access",
+      "Driver/Module Load"
+    ],
+    "description": "Reflective Code Loading. Referenced by 2 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"An adversary is reflectively loading encrypted PE payloads directly into memory on Windows to avoid disk-based detection, indicated by Power\".",
+    "id": "T1620",
+    "name": "Reflective Code Loading",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Defense Evasion"
+  },
+  "T1621": {
+    "data_sources": [
+      "Authentication Logs"
+    ],
+    "description": "Multi-Factor Authentication Request Generation. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"After a successful Self-Service Password Reset (SSPR) on an Entra ID account, an adversary is **removing the user's legitimate MFA methods**\".",
+    "id": "T1621",
+    "name": "Multi-Factor Authentication Request Generation",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Persistence"
+  },
+  "T1649": {
+    "data_sources": [
+      "File Monitoring",
+      "Authentication Logs"
+    ],
+    "description": "Steal or Forge Authentication Certificates. Referenced by 4 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"Threat actors are registering attacker-controlled cryptographic keys in the `msDS-KeyCredentialLink` attribute of privileged AD objects (via\".",
+    "id": "T1649",
+    "name": "Steal or Forge Authentication Certificates",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Credential Access"
+  },
+  "T1651": {
+    "data_sources": [
+      "Cloud API Logs"
+    ],
+    "description": "Cloud Administration Command. Referenced by 1 hunting hypothesis(es) in this platform's HEARTH knowledge base, e.g.: \"A compromised Entra ID identity (user or service principal) with custom Contributor-level RBAC on a subscription is invoking Azure VM extens\".",
+    "id": "T1651",
+    "name": "Cloud Administration Command",
+    "source": "base-technique-table+hearth-grounded",
+    "tactic": "Execution"
+  }
+}

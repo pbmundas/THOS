@@ -1,0 +1,24 @@
+title: Web Server Access Log Webshell Interaction Pattern
+id: thos-0016
+status: experimental
+description: >
+  Detects HTTP access-log entries containing classic webshell
+  invocation patterns (command-execution parameters, eval/base64
+  payload markers, or common webshell filenames) — indicates a
+  previously planted webshell being actively interacted with.
+logsource:
+  category: webserver
+detection:
+  selection:
+    detail|contains:
+      - "cmd="
+      - "eval("
+      - "base64_decode"
+      - "shell.php"
+      - "cmd.jsp"
+      - "webshell"
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1505.003

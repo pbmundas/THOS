@@ -1,0 +1,18 @@
+title: PowerShell Script Block Logging Execution
+id: thos-0001
+status: experimental
+description: >
+  Detects Windows PowerShell Script Block Logging events (Event ID 4104),
+  which capture the actual content of executed PowerShell script blocks —
+  the primary telemetry source for spotting malicious PowerShell use.
+logsource:
+  product: windows
+  category: powershell
+detection:
+  selection_event:
+    event|contains: "4104"
+  condition: selection_event
+level: medium
+tags:
+  - attack.execution
+  - attack.t1059.001

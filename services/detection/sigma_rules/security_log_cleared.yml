@@ -1,0 +1,17 @@
+title: Windows Security Audit Log Cleared
+id: thos-0002
+status: experimental
+description: >
+  Detects clearing of the Windows Security event log (Event ID 1102), a
+  common anti-forensic action taken to remove evidence of prior activity.
+logsource:
+  product: windows
+  category: security
+detection:
+  selection_event:
+    event|contains: "1102"
+  condition: selection_event
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001

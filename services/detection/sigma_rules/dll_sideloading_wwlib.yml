@@ -1,0 +1,24 @@
+title: DLL Search-Order Hijacking via wwlib.dll
+id: thos-0010
+status: experimental
+description: >
+  Detects Sysmon FileCreate/ImageLoad/ProcessCreate events (Event IDs
+  1/7/11) referencing wwlib.dll in an unexpected location — a known DLL
+  sideloading/hijacking vector abused for persistence and defense evasion.
+logsource:
+  product: windows
+  category: image_load
+detection:
+  selection_events:
+    event|contains:
+      - "1"
+      - "7"
+      - "11"
+  selection_module:
+    detail|contains: "wwlib"
+  condition: selection_events and selection_module
+level: high
+tags:
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.t1574.002
