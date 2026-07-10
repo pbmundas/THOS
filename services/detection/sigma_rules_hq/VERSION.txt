@@ -1,0 +1,37 @@
+SigmaHQ/sigma vendored ruleset
+===============================
+
+Source:  https://github.com/SigmaHQ/sigma
+Commit:  282369fa76c5cd6103b055478fbaebec8530cfa5 (master)
+Fetched: 2026-07-11
+
+Scope: the rules/{windows,linux,network,application,web,category,identity}
+subtrees only (2,843 rules) -- i.e. every logsource this platform's
+normalized log record schema (services/siem/*) can plausibly carry text
+for. Excluded on purpose:
+
+  - rules/cloud (~230 rules)  -- AWS/GCP/Azure/M365 control-plane JSON
+    events with provider-specific field names (eventSource, eventName,
+    requestParameters.*, etc.) that THOS's flat {host,user,event,detail}
+    schema and file_log_parser.py's ingestion formats (EVTX/CEF/syslog/
+    CSV/JSON/pcap) have no realistic path to populating correctly. Vendoring
+    them would inflate the "rules evaluated" count without adding real
+    detection capability, which is the same complaint this replaces.
+  - rules/macos (~69 rules) -- out of scope for this platform today.
+  - deprecated/, unsupported/, rules-placeholder/, rules-emerging-threats/,
+    rules-threat-hunting/, rules-dfir/, rules-compliance/ -- not part of
+    the stable, maintained detection ruleset proper.
+  - Sigma correlation rules (aggregation/count() rules) -- pySigma parses
+    these as a distinct SigmaCorrelationRule type; THOS evaluates each log
+    record independently (no time-windowed join), so they're not loadable
+    by design here, same limitation the original hand-rolled engine
+    documented. None exist in the subtrees above as of this vendoring.
+
+This is a deliberately air-gapped vendoring (THOS targets on-prem/
+air-gapped deployments -- see README.md "Security") rather than a
+runtime fetch from GitHub. To refresh it against upstream, run:
+
+    python3 services/detection/fetch_sigmahq_rules.py
+
+...from a machine with network + git access (not inside the container),
+then commit the resulting diff under services/detection/sigma_rules_hq/.

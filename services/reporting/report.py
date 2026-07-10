@@ -178,11 +178,15 @@ def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_
         f"**{sigma_matched_count} of {records_analyzed} analyzed record(s) matched at least one "
         f"Sigma rule:**",
         "",
-        "| Rule ID | Title | Level | Records matched |",
-        "|---|---|---|---|",
+        "| Source | Rule ID | Title | Level | Records matched |",
+        "|---|---|---|---|---|",
     ]
+    source_label = {"sigmahq": "SigmaHQ", "thos": "THOS"}
     for rm in sigma_rule_matches:
-        lines.append(f"| `{rm['rule_id']}` | {rm['title']} | {rm['level']} | {rm['matched_count']} |")
+        label = source_label.get(rm.get("source", ""), "—")
+        lines.append(
+            f"| {label} | `{rm['rule_id']}` | {rm['title']} | {rm['level']} | {rm['matched_count']} |"
+        )
     return "\n".join(lines)
 
 

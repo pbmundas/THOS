@@ -1,6 +1,6 @@
 """
-Sigma rule engine — full-fledged, offline, no external dependency on
-SigmaHQ or pySigma.
+Sigma rule engine — small, hand-written, hand-tuned, offline, no
+external dependency on SigmaHQ or pySigma.
 
 Loads real Sigma-style YAML detection rules from
 services/detection/sigma_rules/*.yml and evaluates them directly against
@@ -8,11 +8,23 @@ THOS's normalized log record schema:
 
     {timestamp, host, user, event, src_ip, dst_ip, detail, source_file, source_type}
 
-This replaces the previous "Phase 1" approach in services/mcp/soc_tools.py,
-which only did ad-hoc event-ID/keyword substring matching and called an
-LLM to draft cosmetic SIGMA-looking text that was never actually
-evaluated. Here, rules are real Sigma detection logic and are actually
-run against every record.
+This is the SUPPLEMENTARY detection layer. The primary one — real
+breadth against the actual SigmaHQ community ruleset, parsed with
+pySigma rather than the simplified grammar below — is
+services/detection/sigmahq_engine.py; see that module's docstring for
+the three-layer design (SigmaHQ rules -> these hand-tuned rules -> LLM-
+derived indicators) and services/mcp/soc_tools.py for how they combine.
+This module and its ~16 rules were never the problem being solved here
+— thin *coverage* was — so they're kept as-is: a small set of rules
+written and tuned specifically against this platform's flat 8-field
+schema, useful precisely because they're narrower and more precise than
+a generic community rule would be on this schema.
+
+This originally replaced the "Phase 1" approach in
+services/mcp/soc_tools.py, which only did ad-hoc event-ID/keyword
+substring matching and called an LLM to draft cosmetic SIGMA-looking
+text that was never actually evaluated. Here, rules are real Sigma
+detection logic and are actually run against every record.
 
 Supported rule grammar (a grounded, honest subset of full Sigma — see
 LIMITATIONS below):
