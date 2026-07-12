@@ -69,7 +69,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
                  ▼                ▼                        ▼
         ┌────────────────┐ ┌─────────────┐        ┌──────────────────┐
         │  Ollama (LLM)   │ │ ChromaDB     │        │ SIEM Connectors   │
-        │  Qwen2.5 7B     │ │ (vector RAG) │        │ mock/folder/      │
+        │  qwen3:4b     │ │ (vector RAG) │        │ mock/folder/      │
         └────────────────┘ └─────────────┘        │ LogRhythm/Splunk/  │
                                                      │ QRadar             │
                                                      └──────────────────┘
@@ -95,7 +95,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 | Chat frontend | **Gradio** | Single-file app (`services/api/app.py`), Basic-Auth gated |
 | Backend API / orchestration | **FastAPI** + **LangGraph** | `services/orchestration/main.py`, `graph.py` |
 | Tool execution layer | **FastMCP** (Model Context Protocol) | `services/api/server.py` |
-| Local LLM inference | **Ollama**, default model `qwen2.5:7b` | No cloud calls |
+| Local LLM inference | **Ollama**, default model `qwen3:4b` | No cloud calls |
 | Vector database (RAG) | **ChromaDB** | Collections: `hearth_kb`, `mitre_kb` (implicit), `siem_kb`, `custom_kb` |
 | Relational store | **PostgreSQL 16** | Audit trail: hunts, hunt_steps, tool_errors, reports |
 | Cache / rate limiting | **Redis 7** | SIEM/LLM response caching, per-hunter rate limits |
@@ -384,7 +384,7 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `CHATUI_USERNAME` / `CHATUI_PASSWORD` | `analyst` / `thos_change_me` | Single-hunter chat login |
 | `CHATUI_USERS` | *(blank)* | Multi-hunter logins, `user:pass,user2:pass2`; overrides the single-user pair when set |
 | `REDIS_PASSWORD` | `thos_change_me_redis` | Redis auth |
-| `OLLAMA_MODEL` | `qwen2.5:7b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
+| `OLLAMA_MODEL` | `qwen3:4b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
 | `POSTGRES_USER/PASSWORD/DB` | `thos` / `thos_change_me` / `thos_audit` | Audit DB credentials |
 | `SIEM_TYPE` | `mock` | `mock` \| `folder` \| `logrhythm` \| `splunk` \| `qradar` |
 | `LOG_SOURCE_DIR` / `LOG_SOURCE_ALLOWED_ROOTS` | `/data/log_sources` | Folder-mode default + path-traversal allowlist |

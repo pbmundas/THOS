@@ -79,7 +79,7 @@ def get_pg_pool() -> ConnectionPool:
 
 async def ollama_generate(prompt: str, model: str = None, system: str = None) -> str:
     """Call the local Ollama server for generation (used by query_generator, reasoning helpers)."""
-    model = model or os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+    model = model or os.environ.get("OLLAMA_MODEL", "qwen3:4b")
     payload = {
         "model": model,
         "prompt": prompt,

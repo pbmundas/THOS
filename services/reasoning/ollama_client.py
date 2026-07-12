@@ -4,7 +4,7 @@ import httpx
 from services.observability.retry import async_retry
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
 
 async def generate(prompt: str, system: str = None, format: str | dict = "json") -> str:
