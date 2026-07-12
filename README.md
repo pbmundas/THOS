@@ -149,7 +149,7 @@ Generate Threat Hunting Report
 | AI Workflow | LangGraph |
 | MCP Framework | FastMCP |
 | Local LLM | Ollama |
-| Default Model | Qwen2.5 |
+| Default Model | Qwen3.4B |
 | Vector Database | ChromaDB |
 | Database | PostgreSQL |
 | Cache | Redis |
