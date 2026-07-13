@@ -61,7 +61,7 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
             f"Normalized fields available: {field_map}\n\n"
             f"Generate the keyword list now."
         )
-        query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT)
+        query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT, agent="query_gen")
     else:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
@@ -69,7 +69,7 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
             f"Field mapping: {field_map}\n\n"
             f"Generate the query now."
         )
-        query_text = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT)
+        query_text = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="query_gen")
 
     query_text = query_text.strip()
     await asyncio.to_thread(cache.cache_set, "query_gen", cache_payload, query_text)

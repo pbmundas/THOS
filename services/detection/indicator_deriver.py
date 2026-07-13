@@ -58,7 +58,7 @@ async def derive_indicators(hypothesis_text: str, technique_id: str = "",
         f"MITRE technique: {technique_id} ({technique_name}) — tactic: {tactic}\n\n"
         f"Generate the JSON now."
     )
-    raw = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT)
+    raw = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="indicator_deriver")
     parsed = _parse(raw)
 
     event_ids = [str(e).strip() for e in parsed.get("event_ids", []) if str(e).strip()]

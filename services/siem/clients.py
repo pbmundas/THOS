@@ -8,6 +8,7 @@ import os
 import functools
 import threading
 import httpx
+from services.reasoning.model_router import target_for
 import redis
 import chromadb
 from chromadb.config import Settings
@@ -77,16 +78,18 @@ def get_pg_pool() -> ConnectionPool:
     return _pg_pool
 
 
-async def ollama_generate(prompt: str, model: str = None, system: str = None) -> str:
+async def ollama_generate(prompt: str, model: str = None, system: str = None,
+                          agent: str = "query_gen") -> str:
     """Call the local Ollama server for generation (used by query_generator, reasoning helpers)."""
-    model = model or os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+    target = target_for(agent)
+    model = model or target.model
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_ctx": 8192,
-            "num_predict": 512,
+            "num_ctx": target.num_ctx,
+            "num_predict": min(target.num_predict, 512),
         },
     }
     if system:
@@ -94,7 +97,7 @@ async def ollama_generate(prompt: str, model: str = None, system: str = None) ->
 
     async def _do_request():
         async with httpx.AsyncClient(timeout=600) as client:
-            resp = await client.post(f"{OLLAMA_HOST}/api/generate", json=payload)
+            resp = await client.post(f"{target.host}/api/generate", json=payload)
             resp.raise_for_status()
             return resp.json().get("response", "")
 

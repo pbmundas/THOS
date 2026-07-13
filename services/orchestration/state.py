@@ -29,6 +29,20 @@ class HuntState(TypedDict, total=False):
     # Set by query_generator node
     query: Optional[str]
 
+    # Set by supervisor / guardrail / verifier agents
+    plan: List[str]
+    guardrail_result: Dict[str, Any]
+    verifier_result: Dict[str, Any]
+    human_approval_required: bool
+    human_approval_status: Optional[str]
+    escalation_reason: Optional[str]
+
+    # Reserved for the next agent increments (enrichment, detection
+    # engineering, case management and feedback capture).
+    enrichment_hits: List[Dict[str, Any]]
+    proposed_detection_rule: Optional[str]
+    case_id: Optional[str]
+
     # Set by siem_fetch node
     logs: List[Dict[str, Any]]
     record_count: int

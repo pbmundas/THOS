@@ -464,7 +464,7 @@ async def reason_node(state: HuntState) -> dict:
     # state, never a stale/different one.
     raw = await asyncio.to_thread(cache.cache_get, "reasoning", prompt)
     if raw is None:
-        raw = await generate(prompt, system=SYSTEM_PROMPT, format=FINDINGS_SCHEMA)
+        raw = await generate(prompt, system=SYSTEM_PROMPT, format=FINDINGS_SCHEMA, agent="reasoning")
         await asyncio.to_thread(cache.cache_set, "reasoning", prompt, raw)
     parsed = _extract_json(raw)
 

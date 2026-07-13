@@ -42,3 +42,25 @@ CREATE TABLE IF NOT EXISTS reports (
     summary     TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Agentic transformation foundations: a durable human-review queue and
+-- analyst feedback records. Both are append-only audit-friendly data.
+CREATE TABLE IF NOT EXISTS hunt_approvals (
+    approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+    reason TEXT,
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS finding_feedback (
+    feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE,
+    finding_ref TEXT,
+    rating TEXT NOT NULL, -- up|down|corrected
+    correction TEXT,
+    analyst_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

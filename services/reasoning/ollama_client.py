@@ -2,14 +2,16 @@ import os
 import httpx
 
 from services.observability.retry import async_retry
+from services.reasoning.model_router import target_for
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
 
-async def generate(prompt: str, system: str = None, format: str | dict = "json") -> str:
+async def generate(prompt: str, system: str = None, format: str | dict = "json", agent: str = "reasoning") -> str:
+    target = target_for(agent)
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": target.model,
         "prompt": prompt,
         "stream": False,
         # Without an explicit num_ctx, Ollama falls back to a small
@@ -21,8 +23,8 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json")
         # long structured answer (summary+findings+recommendations) has
         # room to finish instead of being cut off by an output cap.
         "options": {
-            "num_ctx": 8192,
-            "num_predict": 1024,
+            "num_ctx": target.num_ctx,
+            "num_predict": target.num_predict,
         },
         # reasoning.py's SYSTEM_PROMPT asks for "Respond ONLY with a JSON
         # object" but nothing was enforcing that server-side, so the model
@@ -50,7 +52,7 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json")
 
     async def _do_request():
         async with httpx.AsyncClient(timeout=600) as client:
-            resp = await client.post(f"{OLLAMA_HOST}/api/generate", json=payload)
+            resp = await client.post(f"{target.host}/api/generate", json=payload)
             resp.raise_for_status()
             return resp.json().get("response", "")
 
