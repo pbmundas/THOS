@@ -13,6 +13,11 @@ async def fetch_logs_node(state: HuntState) -> dict:
     # script block logging) if the cap is too tight.
     limit = state.get("log_limit") or (1000 if siem_type in
                                         ("folder", "local_folder", "file", "local") else 25)
+    executed = list(state.get("executed_queries") or [])
+    # A model occasionally asks to repeat the same query verbatim. Do not
+    # spend another full SOC/reasoning pass on identical telemetry.
+    if query and query in executed:
+        return {"follow_up_query": None, "need_more_logs": False, "executed_queries": executed}
     result = await call_tool("fetch_siem_logs", {
         "query": query,
         "limit": limit,
@@ -21,10 +26,13 @@ async def fetch_logs_node(state: HuntState) -> dict:
     })
     existing = state.get("logs", []) or []
     new_logs = result.get("logs", [])
+    if query:
+        executed.append(query)
     return {
         "logs": existing + new_logs,
         "record_count": result.get("record_count", 0),
         "follow_up_query": None,
+        "executed_queries": executed,
         # Diagnostics from file_log_parser.fetch_from_folder (folder mode
         # only — absent/ignored for mock/live SIEM types) so we can
         # verify, in the final report, exactly how many files/records

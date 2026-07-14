@@ -233,6 +233,10 @@ REPORT_TEMPLATE = """\
 
 {recommendations}
 
+## Detection Rule Proposal
+
+{proposed_detection_rule}
+
 ## Sample Log Evidence
 
 ```json
@@ -256,7 +260,8 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   hypothesis_id: str = "", log_source: str = "",
                   ingestion_diagnostics: str = "", hunter_name: str = "",
                   cover_style: str = "1", sigma_rule_matches: list | None = None,
-                  sigma_matched_count: int = 0, records_analyzed: int = 0) -> str:
+                  sigma_matched_count: int = 0, records_analyzed: int = 0,
+                  proposed_detection_rule: str | None = None) -> str:
     """Render the markdown report and write it to disk. Returns the file path.
 
     `title`, if not given (empty string), is now derived automatically
@@ -306,6 +311,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         ingestion_diagnostics=ingestion_diagnostics or "(not available for this SIEM type)",
         mitre_section=mitre_section,
         sigma_section=sigma_section,
+        proposed_detection_rule=(f"```yaml\n{proposed_detection_rule}```\n\n_Proposal only; human approval is required before promotion._" if proposed_detection_rule else "_No rule proposal generated for this hunt._"),
     )
 
     with open(path, "w", encoding="utf-8") as f:
@@ -340,7 +346,7 @@ async def write_report_node(state: dict) -> dict:
         technique_id=state.get("technique_id", ""),
         technique_name=state.get("technique_name", ""),
         tactic=state.get("tactic", ""),
-        summary=state.get("reasoning_summary", ""),
+        summary=state.get("communication_summary") or state.get("reasoning_summary", ""),
         queries=state.get("query", ""),
         findings=state.get("findings", ""),
         recommendations=state.get("recommendations", ""),
@@ -353,6 +359,7 @@ async def write_report_node(state: dict) -> dict:
         sigma_rule_matches=state.get("sigma_rule_matches", []),
         sigma_matched_count=state.get("sigma_matched_count", 0),
         records_analyzed=len(logs),
+        proposed_detection_rule=state.get("proposed_detection_rule"),
     )
     return {"report_path": path}
 

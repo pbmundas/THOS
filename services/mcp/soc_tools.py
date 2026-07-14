@@ -3,6 +3,7 @@ import asyncio
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
 from services.detection import sigma_engine, sigmahq_engine
+from services.detection.anomaly_scoring import score_rare_events
 
 
 def _keyword_matches(log: dict, event_ids: list[str], keywords: list[str]) -> bool:
@@ -176,4 +177,5 @@ async def run_soc_tools_node(state: HuntState) -> dict:
             "llm_indicator_keywords": keywords,
             "llm_indicator_matched_records": len(llm_matched_set),
         },
+        "anomaly_scores": score_rare_events(processed_logs),
     }

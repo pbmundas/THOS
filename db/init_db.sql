@@ -64,3 +64,25 @@ CREATE TABLE IF NOT EXISTS finding_feedback (
     analyst_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS cases (
+    case_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open', -- open|in_progress|resolved|closed
+    priority TEXT NOT NULL DEFAULT 'medium', -- low|medium|high|critical
+    assigned_to TEXT,
+    summary TEXT,
+    sla_due_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS case_events (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    case_id UUID NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+    actor TEXT,
+    event_type TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

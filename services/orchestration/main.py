@@ -25,6 +25,8 @@ import os
 import secrets
 import uuid
 import asyncio
+import time
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -85,6 +87,7 @@ async def require_api_key(authorization: str = Header(default="")):
 # starve everyone else's budget; both knobs are env-configurable per deploy.
 HUNT_RATE_LIMIT = int(os.environ.get("HUNT_RATE_LIMIT_PER_WINDOW", "10"))
 HUNT_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("HUNT_RATE_LIMIT_WINDOW_SECONDS", "60"))
+MAX_REASONING_FOLLOWUPS = int(os.environ.get("MAX_REASONING_FOLLOWUPS", "1"))
 
 
 async def _enforce_hunt_rate_limit(hunter_name: str):
@@ -184,6 +187,11 @@ async def _shutdown():
     audit.close_pool()
 
 
+@app.on_event("startup")
+async def _ensure_agentic_schema():
+    await audit.ensure_agentic_schema()
+
+
 class HuntRequest(BaseModel):
     hunter_name: str = "anonymous"
     hypothesis_id: str | None = None
@@ -199,6 +207,42 @@ class HuntRequest(BaseModel):
     cover_style: str = "1"
 
 
+class CaseCreateRequest(BaseModel):
+    hunt_id: str | None = None
+    title: str
+    priority: str = "medium"
+    assigned_to: str | None = None
+    summary: str | None = None
+    actor: str = "api-user"
+
+
+class CaseUpdateRequest(BaseModel):
+    status: str | None = None
+    priority: str | None = None
+    assigned_to: str | None = None
+    summary: str | None = None
+    actor: str = "api-user"
+
+
+class ApprovalDecisionRequest(BaseModel):
+    status: str
+    decided_by: str
+
+
+class FeedbackRequest(BaseModel):
+    hunt_id: str
+    rating: str
+    finding_ref: str | None = None
+    correction: str | None = None
+    analyst_name: str = "api-user"
+
+
+class RulePromotionRequest(BaseModel):
+    hunt_id: str
+    rule_yaml: str
+    approved_by: str
+
+
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
     return {
         "hunt_id": hunt_id,
@@ -211,6 +255,8 @@ def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
         "iteration": 0,
         "max_iterations": req.max_iterations,
         "need_more_logs": False,
+        "executed_queries": [],
+        "max_reasoning_followups": max(0, MAX_REASONING_FOLLOWUPS),
         "enrichment": {},
         "cover_style": req.cover_style,
     }
@@ -287,6 +333,116 @@ async def refresh_hypotheses():
     return await call_tool("refresh_hearth_hypotheses", {})
 
 
+_CASE_STATUSES = {"open", "in_progress", "resolved", "closed"}
+_PRIORITIES = {"low", "medium", "high", "critical"}
+_FEEDBACK_RATINGS = {"up", "down", "corrected"}
+
+
+@app.get("/cases", dependencies=[Depends(require_api_key)])
+async def cases(status: str | None = None, limit: int = 100):
+    if status and status not in _CASE_STATUSES:
+        raise HTTPException(status_code=422, detail="invalid case status")
+    return await audit.list_cases(status, max(1, min(limit, 200)))
+
+
+@app.post("/cases", dependencies=[Depends(require_api_key)], status_code=201)
+async def create_case(request: CaseCreateRequest):
+    if not request.title.strip() or len(request.title) > 500:
+        raise HTTPException(status_code=422, detail="title must contain 1-500 characters")
+    if request.priority not in _PRIORITIES:
+        raise HTTPException(status_code=422, detail="invalid case priority")
+    result = await audit.create_case(request.hunt_id, request.title.strip(), request.priority,
+                                     request.assigned_to, request.summary, request.actor)
+    if result is None:
+        raise HTTPException(status_code=503, detail="case store unavailable or referenced hunt does not exist")
+    return result
+
+
+@app.patch("/cases/{case_id}", dependencies=[Depends(require_api_key)])
+async def update_case(case_id: str, request: CaseUpdateRequest):
+    if request.status and request.status not in _CASE_STATUSES:
+        raise HTTPException(status_code=422, detail="invalid case status")
+    if request.priority and request.priority not in _PRIORITIES:
+        raise HTTPException(status_code=422, detail="invalid case priority")
+    result = await audit.update_case(case_id, request.status, request.priority,
+                                     request.assigned_to, request.summary, request.actor)
+    if result is None:
+        raise HTTPException(status_code=404, detail="case not found or case store unavailable")
+    return result
+
+
+@app.post("/approvals/{approval_id}/decision", dependencies=[Depends(require_api_key)])
+async def decide_approval(approval_id: str, request: ApprovalDecisionRequest):
+    if request.status not in {"approved", "rejected"}:
+        raise HTTPException(status_code=422, detail="status must be approved or rejected")
+    result = await audit.decide_approval(approval_id, request.status, request.decided_by)
+    if result is None:
+        raise HTTPException(status_code=404, detail="pending approval not found")
+    return result
+
+
+@app.get("/approvals", dependencies=[Depends(require_api_key)])
+async def approvals(status: str | None = "pending", limit: int = 100):
+    if status and status not in {"pending", "approved", "rejected"}:
+        raise HTTPException(status_code=422, detail="invalid approval status")
+    return await audit.list_approvals(status, max(1, min(limit, 200)))
+
+
+@app.post("/feedback", dependencies=[Depends(require_api_key)], status_code=201)
+async def capture_feedback(request: FeedbackRequest):
+    if request.rating not in _FEEDBACK_RATINGS:
+        raise HTTPException(status_code=422, detail="rating must be up, down, or corrected")
+    result = await audit.record_feedback(request.hunt_id, request.finding_ref, request.rating,
+                                         request.correction, request.analyst_name)
+    if result is None:
+        raise HTTPException(status_code=503, detail="feedback store unavailable or hunt does not exist")
+    return result
+
+
+@app.get("/learning/feedback-export", dependencies=[Depends(require_api_key)])
+async def learning_feedback_export(limit: int = 5000):
+    """Export analyst-labelled examples for offline, on-prem evaluation/fine-tuning."""
+    return await audit.export_learning_feedback(max(1, min(limit, 5000)))
+
+
+@app.get("/hunts/{hunt_id}/metrics", dependencies=[Depends(require_api_key)])
+async def get_hunt_metrics(hunt_id: str):
+    return await audit.hunt_metrics(hunt_id)
+
+
+@app.post("/detection-rules/promote", dependencies=[Depends(require_api_key)], status_code=201)
+async def promote_detection_rule(request: RulePromotionRequest):
+    """Promote an approved proposal to staging only; live rules remain untouched."""
+    rule = request.rule_yaml.strip()
+    if not request.hunt_id.strip() or not request.approved_by.strip():
+        raise HTTPException(status_code=422, detail="hunt_id and approved_by are required")
+    if len(rule) > 20_000 or "status: experimental" not in rule or "title:" not in rule or "detection:" not in rule:
+        raise HTTPException(status_code=422, detail="only an experimental THOS detection proposal may be staged")
+    staging = Path(os.environ.get("DETECTION_PROPOSALS_DIR", "/data/detection_rule_proposals"))
+    staging.mkdir(parents=True, exist_ok=True)
+    safe_hunt = "".join(char for char in request.hunt_id if char.isalnum() or char == "-")[:64]
+    path = staging / f"{safe_hunt}_approved.yml"
+    path.write_text(f"# Approved by: {request.approved_by}\n# Hunt: {request.hunt_id}\n{rule}\n", encoding="utf-8")
+    return {"status": "staged", "path": str(path), "message": "Rule is staged only; review and merge it into the live ruleset through change control."}
+
+
+async def _create_review_artifacts(hunt_id: str, final_state: dict, owner: str) -> None:
+    """Persist approval + case artifacts once the verifier requires review."""
+    if not final_state.get("human_approval_required"):
+        return
+    approval = await audit.create_approval(
+        hunt_id, final_state.get("escalation_reason") or "Verifier requested analyst review",
+    )
+    if approval:
+        final_state["approval_id"] = str(approval["approval_id"])
+    case = await audit.create_case(
+        hunt_id, f"Analyst review required: {final_state.get('technique_name') or 'THOS hunt'}",
+        "high", owner, final_state.get("reasoning_summary"), "thos-verifier",
+    )
+    if case:
+        final_state["case_id"] = str(case["case_id"])
+
+
 @app.post("/hunt", dependencies=[Depends(require_api_key)])
 async def run_hunt(req: HuntRequest):
     """Run a full hunt (hypothesis -> query -> fetch -> process -> SOC tools
@@ -309,15 +465,18 @@ async def run_hunt(req: HuntRequest):
             await audit.log_hunt_start(hunt_id, req.hunter_name, req.hypothesis_id, req.hypothesis_text)
 
             final_state = dict(state)
+            last_step_at = time.perf_counter()
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
                     for node_name, partial in step.items():
+                        duration_ms = int((time.perf_counter() - last_step_at) * 1000)
+                        last_step_at = time.perf_counter()
                         if partial is None:
                             logger.warning("node '%s' returned None instead of a dict — skipping merge", node_name, extra={"node": node_name})
                             await audit.log_tool_error(hunt_id, node_name, "node returned None instead of a partial-state dict")
                             continue
                         final_state.update(partial)
-                        await audit.log_hunt_step(hunt_id, node_name, partial)
+                        await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
@@ -327,6 +486,7 @@ async def run_hunt(req: HuntRequest):
                 return {"hunt_id": hunt_id, "error": str(e), "state": final_state}
 
             await audit.log_hunt_complete(hunt_id, "completed")
+            await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
             if final_state.get("report_path"):
                 await audit.log_report(hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""))
 
@@ -380,17 +540,20 @@ async def run_hunt_stream(req: HuntRequest):
         # why this can't just reuse the outer ctx_tokens.
         gen_ctx_tokens = set_hunt_context(hunt_id, req.hunter_name)
         final_state = dict(state)
+        last_step_at = time.perf_counter()
         try:
             yield json.dumps({"event": "hunt_started", "hunt_id": hunt_id}) + "\n"
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
                     for node_name, partial in step.items():
+                        duration_ms = int((time.perf_counter() - last_step_at) * 1000)
+                        last_step_at = time.perf_counter()
                         if partial is None:
                             logger.warning("node '%s' returned None instead of a dict — skipping merge", node_name, extra={"node": node_name})
                             await audit.log_tool_error(hunt_id, node_name, "node returned None instead of a partial-state dict")
                             continue
                         final_state.update(partial)
-                        await audit.log_hunt_step(hunt_id, node_name, partial)
+                        await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
                         yield json.dumps({"event": "node_complete", "node": node_name, "data": partial}, default=str) + "\n"
             except Exception as e:
                 import traceback
@@ -403,6 +566,7 @@ async def run_hunt_stream(req: HuntRequest):
 
             try:
                 await audit.log_hunt_complete(hunt_id, "completed")
+                await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
                 if final_state.get("report_path"):
                     await audit.log_report(hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""))
             except Exception as e:

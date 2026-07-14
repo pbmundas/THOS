@@ -28,6 +28,8 @@ class HuntState(TypedDict, total=False):
 
     # Set by query_generator node
     query: Optional[str]
+    executed_queries: List[str]
+    max_reasoning_followups: int
 
     # Set by supervisor / guardrail / verifier agents
     plan: List[str]
@@ -42,6 +44,10 @@ class HuntState(TypedDict, total=False):
     enrichment_hits: List[Dict[str, Any]]
     proposed_detection_rule: Optional[str]
     case_id: Optional[str]
+    coverage_gaps: List[str]
+    anomaly_scores: List[Dict[str, Any]]
+    hunt_memory: List[Dict[str, Any]]
+    communication_summary: Optional[str]
 
     # Set by siem_fetch node
     logs: List[Dict[str, Any]]

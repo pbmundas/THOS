@@ -18,10 +18,18 @@ def _key(namespace: str, payload: str) -> str:
 def cache_get(namespace: str, payload: str):
     r = get_redis_client()
     val = r.get(_key(namespace, payload))
-    return json.loads(val) if val else None
+    if not val:
+        return None
+    value = json.loads(val)
+    # Earlier versions cached empty model responses. Treat them as a cache
+    # miss so a transient Ollama failure cannot poison all identical hunts
+    # for the full TTL.
+    return None if isinstance(value, str) and not value.strip() else value
 
 
 def cache_set(namespace: str, payload: str, value, ttl: int = DEFAULT_TTL_SECONDS):
+    if isinstance(value, str) and not value.strip():
+        return
     r = get_redis_client()
     r.set(_key(namespace, payload), json.dumps(value), ex=ttl)
 

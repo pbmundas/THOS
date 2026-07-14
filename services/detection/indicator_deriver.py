@@ -12,7 +12,9 @@ covers a handful of techniques and goes stale the moment a new
 technique or tool variant shows up.
 """
 import json
+import asyncio
 from services.siem.clients import ollama_generate
+from services.observability import cache
 
 SYSTEM_PROMPT = (
     "You are a SOC detection engineering assistant. You are given a "
@@ -53,15 +55,27 @@ async def derive_indicators(hypothesis_text: str, technique_id: str = "",
                              technique_name: str = "", tactic: str = "") -> dict:
     """Ask the LLM (not a static table) which event IDs and keywords are
     actually relevant to detecting the given hypothesis/technique."""
+    cache_key = f"v2|{technique_id}|{technique_name}|{tactic}"
+    cached = await asyncio.to_thread(cache.cache_get, "indicators", cache_key)
+    if isinstance(cached, dict):
+        return cached
     prompt = (
         f"Hypothesis: {hypothesis_text}\n"
         f"MITRE technique: {technique_id} ({technique_name}) — tactic: {tactic}\n\n"
         f"Generate the JSON now."
     )
-    raw = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="indicator_deriver")
+    try:
+        raw = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="indicator_deriver")
+    except Exception:
+        # Keep deterministic SigmaHQ/THOS rule evaluation available when the
+        # optional indicator model is slow or offline.
+        raw = ""
     parsed = _parse(raw)
 
     event_ids = [str(e).strip() for e in parsed.get("event_ids", []) if str(e).strip()]
     keywords = [str(k).strip().lower() for k in parsed.get("keywords", []) if str(k).strip()]
 
-    return {"event_ids": event_ids, "keywords": keywords}
+    result = {"event_ids": event_ids, "keywords": keywords}
+    if event_ids or keywords:
+        await asyncio.to_thread(cache.cache_set, "indicators", cache_key, result, ttl=86400)
+    return result

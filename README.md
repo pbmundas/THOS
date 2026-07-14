@@ -235,6 +235,42 @@ Upcoming enhancements include:
 
 ---
 
+# Agentic Phase 2 APIs
+
+The orchestrator now exposes authenticated case, approval, and analyst-feedback APIs:
+
+- `GET` / `POST /cases`, `PATCH /cases/{case_id}`
+- `POST /approvals/{approval_id}/decision` (`approved` or `rejected`)
+- `POST /feedback` (`up`, `down`, or `corrected`)
+
+Verifier failures automatically create a pending approval and high-priority case.
+For an existing Postgres volume, apply the migration once:
+
+```bash
+docker compose exec -T postgres psql -U thos -d thos_audit < db/migrations/002_agentic_cases.sql
+```
+
+# Agentic AI Capabilities
+
+THOS remains fully on-premises and now extends its original hunt pipeline with:
+
+- **Supervisor and Hunt Memory:** plans each hunt and recalls recent completed hunts with similar ATT&CK context.
+- **Guardrail, Verifier, and Human Review:** screens untrusted telemetry, verifies citations, and records approval/case workflows for escalations.
+- **Coverage, IOC, and Anomaly Agents:** report ingestion gaps, match IOCs only against a local blocklist (`data/threat_intel/blocklist.json`), and surface rare event types.
+- **Detection Engineering:** creates experimental Sigma proposals for verifier-passed coverage gaps; approval can stage them in `data/detection_rule_proposals/`, never directly in live rules.
+- **Communication and Learning:** prepares audience-aware report summaries and captures analyst feedback. Export labelled examples with `GET /learning/feedback-export` for offline on-prem evaluation or fine-tuning.
+- **Performance Metrics:** `GET /hunts/{hunt_id}/metrics` reports per-node timings from the audit trail.
+
+All agentic write paths are approval-gated or confined to staging. The live detection ruleset is never modified automatically.
+
+## Agentic Configuration
+
+`env.example` includes model tiers, follow-up limits, and timeout/retry settings. The default keeps one adaptive follow-up query and three Ollama retries. Rebuild after changing configuration:
+
+```bash
+docker compose up -d --build
+```
+
 # Contributing
 
 Contributions are welcome!

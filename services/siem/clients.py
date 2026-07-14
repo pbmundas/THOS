@@ -87,6 +87,7 @@ async def ollama_generate(prompt: str, model: str = None, system: str = None,
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "think": False,
         "options": {
             "num_ctx": target.num_ctx,
             "num_predict": min(target.num_predict, 512),
@@ -96,9 +97,12 @@ async def ollama_generate(prompt: str, model: str = None, system: str = None,
         payload["system"] = system
 
     async def _do_request():
-        async with httpx.AsyncClient(timeout=600) as client:
+        timeout = float(os.environ.get("THOS_FAST_GENERATION_TIMEOUT_SECONDS", "60")) if target.tier == "fast" else float(os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"))
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{target.host}/api/generate", json=payload)
             resp.raise_for_status()
-            return resp.json().get("response", "")
+            body = resp.json()
+            return str(body.get("response") or (body.get("message") or {}).get("content") or "").strip()
 
-    return await async_retry(_do_request, what="clients.ollama_generate")
+    retries = int(os.environ.get("OLLAMA_GENERATION_RETRIES", "3"))
+    return await async_retry(_do_request, retries=retries, what="clients.ollama_generate")

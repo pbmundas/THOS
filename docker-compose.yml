@@ -248,6 +248,9 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${OLLAMA_MODEL:-qwen3:4b}}
+      THOS_FAST_GENERATION_TIMEOUT_SECONDS: ${THOS_FAST_GENERATION_TIMEOUT_SECONDS:-60}
+      OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
       REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
@@ -264,10 +267,13 @@ services:
       # trusted local dev box.
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-thos_change_me_mcp_token}
       REPORTS_DIR: /data/reports
+      DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       SIEM_TYPE: ${SIEM_TYPE:-mock}
       LOG_SOURCE_DIR: /data/log_sources
     volumes:
       - ./data/reports:/data/reports
+      - ./data/detection_rule_proposals:/data/detection_rule_proposals
+      - ./data/threat_intel:/data/threat_intel:ro
       - ./data/log_sources:/data/log_sources
     deploy:
       resources:
@@ -302,6 +308,10 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-qwen3:4b}}
+      OLLAMA_GENERATION_TIMEOUT_SECONDS: ${OLLAMA_GENERATION_TIMEOUT_SECONDS:-180}
+      OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
+      MAX_REASONING_FOLLOWUPS: ${MAX_REASONING_FOLLOWUPS:-1}
       MCP_SERVER_URL: http://mcp:8100/mcp
       # Must match mcp's MCP_AUTH_TOKEN above — this is how the orchestrator
       # authenticates to the MCP server as a client.
@@ -313,11 +323,14 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
       REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
       REPORTS_DIR: /data/reports
+      DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       # Structured JSON logs to stdout (services/observability/logging_config.py).
       # One of DEBUG/INFO/WARNING/ERROR.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data/reports:/data/reports
+      - ./data/detection_rule_proposals:/data/detection_rule_proposals
+      - ./data/threat_intel:/data/threat_intel:ro
     deploy:
       resources:
         limits:

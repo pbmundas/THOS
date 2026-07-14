@@ -367,6 +367,39 @@ def _extract_json(raw: str) -> dict:
     }
 
 
+def _deterministic_fallback(state: HuntState, histogram: dict) -> dict:
+    """Produce an explicitly degraded but evidence-grounded result.
+
+    A missing local-model response must never turn into a polished but empty
+    report. This fallback is deliberately conservative: it reports only the
+    deterministic detection output and ingestion coverage already observed.
+    """
+    logs = state.get("processed_logs") or []
+    refs = state.get("sigma_matched_refs") or []
+    matched = state.get("sigma_matched_count", 0)
+    if refs:
+        finding = {
+            "claim": f"Deterministic detection layers flagged {matched} record(s); analyst validation is required because the reasoning model did not return a response.",
+            "evidence": f"Sigma/detection matcher selected {matched} of {len(logs)} processed records.",
+            "ref": str(refs[0]),
+            "confidence": "circumstantial",
+        }
+    else:
+        finding = {
+            "claim": "No deterministic detection match was produced; the model reasoning response was unavailable, so this hunt is inconclusive.",
+            "evidence": f"Histogram covers {len(logs)} processed records: {json.dumps(histogram)}",
+            "ref": "histogram",
+            "confidence": "circumstantial",
+        }
+    return {
+        "summary": "Degraded analysis: the local reasoning model returned no final response. This report contains deterministic telemetry evidence only and requires analyst review.",
+        "findings": [finding],
+        "recommendations": "- Verify Ollama model availability and response logs.\n- Re-run this hunt after the model returns a non-empty response.\n- Review the cited deterministic records before taking action.",
+        "need_more_logs": False,
+        "follow_up_query": "",
+    }
+
+
 async def _build_kb_context(state: HuntState, max_chunks: int = 3, max_chars: int = 600) -> str:
     """Best-effort semantic lookup against the analyst-uploaded custom_kb
     knowledge base, keyed on this hunt's hypothesis/technique. Never
@@ -437,12 +470,20 @@ async def reason_node(state: HuntState) -> dict:
         f"Matched records are marked '_sigma_match': true in the sample "
         f"below and were prioritized into it.\n"
     )
+    coverage_section = "\n".join(f"- {gap}" for gap in state.get("coverage_gaps") or []) or "- No deterministic coverage gaps identified."
+    intel_section = json.dumps(state.get("enrichment_hits") or [], indent=2)
+    anomaly_section = json.dumps(state.get("anomaly_scores") or [], indent=2)
+    memory_section = json.dumps(state.get("hunt_memory") or [], indent=2, default=str)
 
     prompt = (
         f"Hypothesis: {state.get('hypothesis_text')}\n"
         f"MITRE technique: {state.get('technique_id')} ({state.get('technique_name')}) — {state.get('tactic')}\n"
         f"SIGMA rule draft + matcher results:\n{state.get('sigma_rule')}\n\n"
         f"Ingestion diagnostics:\n{diagnostics}\n"
+        f"Deterministic coverage-gap assessment:\n{coverage_section}\n\n"
+        f"On-prem threat-intel hits (local blocklist only):\n{intel_section}\n\n"
+        f"Deterministic behavioural rarity signals (not findings by themselves):\n{anomaly_section}\n\n"
+        f"Prior completed hunts with similar technique context (context only, not evidence):\n{memory_section}\n\n"
         f"{kb_section}"
         f"Event-type histogram across ALL {len(processed_logs)} processed records "
         f"(event_id/type -> count, top {len(histogram)} shown):\n"
@@ -462,11 +503,18 @@ async def reason_node(state: HuntState) -> dict:
     # diagnostics + histogram + sample), so keying the cache on it directly
     # is safe: an identical prompt can only come from an identical hunt
     # state, never a stale/different one.
-    raw = await asyncio.to_thread(cache.cache_get, "reasoning", prompt)
-    if raw is None:
-        raw = await generate(prompt, system=SYSTEM_PROMPT, format=FINDINGS_SCHEMA, agent="reasoning")
-        await asyncio.to_thread(cache.cache_set, "reasoning", prompt, raw)
-    parsed = _extract_json(raw)
+    # Versioned key bypasses historical empty-response cache entries.
+    cache_key = "v2|" + prompt
+    raw = await asyncio.to_thread(cache.cache_get, "reasoning", cache_key)
+    if not isinstance(raw, str) or not raw.strip():
+        try:
+            raw = await generate(prompt, system=SYSTEM_PROMPT, format=FINDINGS_SCHEMA, agent="reasoning")
+        except Exception as exc:  # deterministic fallback keeps the hunt auditable
+            logger.warning("reasoning model unavailable; using evidence-only fallback: %s", exc)
+            raw = ""
+        if raw.strip():
+            await asyncio.to_thread(cache.cache_set, "reasoning", cache_key, raw)
+    parsed = _deterministic_fallback(state, histogram) if not raw.strip() else _extract_json(raw)
 
     iteration = state.get("iteration", 0) + 1
     max_iterations = state.get("max_iterations", 3)

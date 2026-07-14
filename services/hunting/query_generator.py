@@ -38,6 +38,33 @@ FOLDER_SYSTEM_PROMPT = (
 FOLDER_SIEM_TYPES = {"folder", "local_folder", "file", "local"}
 
 
+def _fallback_query(hypothesis_text: str, siem_type: str) -> str:
+    """Provide a safe, visible degraded-mode query when a local model is unavailable.
+
+    The folder connector already falls back to an unfiltered scan when these
+    terms produce no hits, so this is safer than silently returning an empty
+    query and falsely implying that an LLM query was generated.
+    """
+    terms = []
+    for token in hypothesis_text.replace("/", " ").replace("-", " ").split():
+        cleaned = "".join(char for char in token if char.isalnum() or char == ".")
+        if len(cleaned) >= 4 and cleaned.lower() not in {"attackers", "activity", "detecting", "below"}:
+            terms.append(cleaned.lower())
+        if len(terms) == 6:
+            break
+    return ", ".join(terms) if siem_type.lower() in FOLDER_SIEM_TYPES else "*"
+
+
+def _normalize_folder_query(value: str, hypothesis_text: str) -> str:
+    """Accept only a compact keyword list, never model explanation prose."""
+    candidate = (value or "").strip().splitlines()[0] if value else ""
+    if len(candidate) > 180 or any(marker in candidate.lower() for marker in ("here", "query", "keyword", "because", ":")):
+        return _fallback_query(hypothesis_text, "folder")
+    terms = [term.strip().strip("'\"") for term in candidate.split(",")]
+    terms = [term for term in terms if 1 < len(term) <= 48 and all(ch.isalnum() or ch in ".-_\\/" for ch in term)]
+    return ", ".join(terms[:8]) if terms else _fallback_query(hypothesis_text, "folder")
+
+
 async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
     # cache.py's own docstring calls this out as a target ("repeated SIEM
     # queries and LLM calls") but nothing called it — a hunter iterating on
@@ -46,7 +73,7 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
     # pair that determines the output.
     cache_payload = f"{siem_type}|{hypothesis_text}"
     cached_query = await asyncio.to_thread(cache.cache_get, "query_gen", cache_payload)
-    if cached_query is not None:
+    if isinstance(cached_query, str) and cached_query.strip():
         return {
             "siem_type": siem_type,
             "hypothesis": hypothesis_text,
@@ -61,7 +88,10 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
             f"Normalized fields available: {field_map}\n\n"
             f"Generate the keyword list now."
         )
-        query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT, agent="query_gen")
+        try:
+            query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT, agent="query_gen")
+        except Exception:
+            query_text = ""
     else:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
@@ -69,9 +99,14 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
             f"Field mapping: {field_map}\n\n"
             f"Generate the query now."
         )
-        query_text = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="query_gen")
+        try:
+            query_text = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="query_gen")
+        except Exception:
+            query_text = ""
 
-    query_text = query_text.strip()
+    query_text = query_text.strip() or _fallback_query(hypothesis_text, siem_type)
+    if siem_type.lower() in FOLDER_SIEM_TYPES:
+        query_text = _normalize_folder_query(query_text, hypothesis_text)
     await asyncio.to_thread(cache.cache_set, "query_gen", cache_payload, query_text)
 
     return {

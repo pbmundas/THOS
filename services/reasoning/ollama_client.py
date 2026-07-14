@@ -14,6 +14,10 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json",
         "model": target.model,
         "prompt": prompt,
         "stream": False,
+        # Qwen3 enables a hidden reasoning mode by default in some Ollama
+        # versions. THOS needs the final structured answer, not an empty
+        # visible response after an internal thinking pass.
+        "think": False,
         # Without an explicit num_ctx, Ollama falls back to a small
         # default context window (often 2048), which silently truncates
         # long reasoning prompts (hypothesis + MITRE context + SIGMA rule
@@ -51,14 +55,18 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json",
         payload["system"] = system
 
     async def _do_request():
-        async with httpx.AsyncClient(timeout=600) as client:
+        async with httpx.AsyncClient(timeout=float(os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"))) as client:
             resp = await client.post(f"{target.host}/api/generate", json=payload)
             resp.raise_for_status()
-            return resp.json().get("response", "")
+            body = resp.json()
+            return str(body.get("response") or (body.get("message") or {}).get("content") or "").strip()
 
     # Reasoning prompts include hypothesis + MITRE context + SIGMA rule +
     # a log sample, so they're bigger than the query-gen prompt and take
     # noticeably longer to generate — especially on CPU-only inference or
     # right after the model was first pulled/loaded. 180s was too tight
     # and produced spurious httpx.ReadTimeout failures mid-hunt.
-    return await async_retry(_do_request, what="ollama_client.generate")
+    # Local inference can be temporarily slow while Ollama loads a model;
+    # retain the configurable retry policy for quality-sensitive hunts.
+    retries = int(os.environ.get("OLLAMA_GENERATION_RETRIES", "3"))
+    return await async_retry(_do_request, retries=retries, what="ollama_client.generate")
