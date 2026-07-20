@@ -534,7 +534,7 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
             hunter_name_display = gr.Textbox(label="Logged in as", interactive=False, scale=1)
             siem_type = gr.Dropdown(
                 label="Target SIEM",
-                choices=["mock", "splunk", "qradar", "logrhythm", FOLDER_SIEM_VALUE],
+                choices=["mock", "wazuh", "splunk", "qradar", "logrhythm", FOLDER_SIEM_VALUE],
                 value="mock", scale=1,
             )
             max_iterations = gr.Slider(label="Max reasoning iterations", minimum=1, maximum=5, value=3, step=1, scale=1)

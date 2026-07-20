@@ -458,6 +458,7 @@ async def reason_node(state: HuntState) -> dict:
         f"Files scanned: {state.get('files_scanned', 'n/a')}\n"
         f"Total records parsed (before query filter): {state.get('total_parsed', 'n/a')}\n"
         f"Records after query filter (record_count): {state.get('record_count', 'n/a')}\n"
+        f"Total records matching the live SIEM query: {state.get('total_hits', 'n/a')}\n"
         f"Records reaching this analysis (after dedup): {len(processed_logs)}\n"
         f"Fell back to unfiltered (query matched nothing): {state.get('used_fallback_unfiltered', 'n/a')}\n"
         f"SIGMA-style matcher (event-ID + keyword substring match against "

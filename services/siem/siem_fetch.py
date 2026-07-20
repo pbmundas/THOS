@@ -24,6 +24,8 @@ async def fetch_logs_node(state: HuntState) -> dict:
         "siem_type": siem_type,
         "log_source_path": state.get("log_source_path", "") or "",
     })
+    if result.get("error"):
+        raise RuntimeError(f"{siem_type} log fetch failed: {result['error']}")
     existing = state.get("logs", []) or []
     new_logs = result.get("logs", [])
     if query:
@@ -31,6 +33,7 @@ async def fetch_logs_node(state: HuntState) -> dict:
     return {
         "logs": existing + new_logs,
         "record_count": result.get("record_count", 0),
+        "total_hits": result.get("total_hits"),
         "follow_up_query": None,
         "executed_queries": executed,
         # Diagnostics from file_log_parser.fetch_from_folder (folder mode

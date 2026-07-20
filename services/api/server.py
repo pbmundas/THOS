@@ -160,7 +160,7 @@ async def derive_detection_indicators(hypothesis_text: str, technique_id: str = 
 # ---------------------------------------------------------------
 @mcp.tool()
 def siem_field_mapping(siem_type: str) -> dict:
-    """Return the normalized-to-vendor field name mapping for a given SIEM type (logrhythm/splunk/qradar)."""
+    """Return normalized-to-vendor field mappings for a supported SIEM."""
     return siem_kb.get_field_mapping(siem_type)
 
 
@@ -180,7 +180,8 @@ async def generate_siem_query(hypothesis_text: str, siem_type: str = "mock") -> 
 def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
                      log_source_path: str = "") -> dict:
     """Execute a SIEM query and fetch matching log records. In 'mock' mode
-    returns synthetic records. In 'folder' mode, parses every supported
+    returns synthetic records. In 'wazuh' mode, searches the Wazuh
+    Indexer. In 'folder' mode, parses every supported
     log file (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) under
     log_source_path and returns records matching the query."""
     return siem_connector.fetch_logs(query, limit, siem_type=siem_type or None,

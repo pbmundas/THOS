@@ -35,6 +35,7 @@ from services.siem import file_log_parser
 from services.siem import logrhythm as logrhythm_connector
 from services.siem import splunk as splunk_connector
 from services.siem import qradar as qradar_connector
+from services.siem import wazuh as wazuh_connector
 from services.observability import cache
 
 # Fallback default if a call doesn't specify siem_type explicitly
@@ -162,7 +163,33 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
                 "error": str(e),
             }
 
+    if siem_type == "wazuh":
+        cache_payload = "|".join((
+            "wazuh",
+            os.environ.get("WAZUH_INDEXER_URL", ""),
+            os.environ.get("WAZUH_INDEX_SOURCE", "both"),
+            os.environ.get("WAZUH_LOOKBACK_MINUTES", "1440"),
+            os.environ.get("WAZUH_MAX_RESULTS", "1000"),
+            query,
+            str(limit),
+        ))
+        cached = cache.cache_get("siem_fetch", cache_payload)
+        if cached is not None:
+            return cached
+        try:
+            result = wazuh_connector.fetch_logs(query, limit)
+            cache.cache_set("siem_fetch", cache_payload, result)
+            return result
+        except wazuh_connector.WazuhConfigError as e:
+            return {
+                "siem_type": "wazuh",
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": str(e),
+            }
+
     raise NotImplementedError(
         f"SIEM_TYPE='{siem_type}' is not implemented yet. "
-        f"Supported: mock, folder, logrhythm, splunk, qradar."
+        f"Supported: mock, folder, logrhythm, splunk, qradar, wazuh."
     )

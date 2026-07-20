@@ -99,8 +99,8 @@ services:
     # which (combined with `service_completed_successfully` below) stops
     # mcp/orchestrator from starting against a model that was never
     # actually pulled, instead of silently 404'ing at hunt time.
-    command: >
-      /bin/sh -c '
+    command:
+      - |
         for i in 1 2 3 4 5; do
           echo "[ollama-model-init] pull attempt $$i for $$MODEL_NAME";
           if ollama pull "$$MODEL_NAME"; then
@@ -115,7 +115,6 @@ services:
           exit 1;
         fi;
         echo "[ollama-model-init] confirmed $$MODEL_NAME is available";
-      '
     restart: "no"
 
   # ------------------------------------------------------------
@@ -270,6 +269,15 @@ services:
       DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       SIEM_TYPE: ${SIEM_TYPE:-mock}
       LOG_SOURCE_DIR: /data/log_sources
+      WAZUH_INDEXER_URL: ${WAZUH_INDEXER_URL:-https://host.docker.internal:9200}
+      WAZUH_INDEXER_USERNAME: ${WAZUH_INDEXER_USERNAME:-}
+      WAZUH_INDEXER_PASSWORD: ${WAZUH_INDEXER_PASSWORD:-}
+      WAZUH_VERIFY_SSL: ${WAZUH_VERIFY_SSL:-1}
+      WAZUH_CA_BUNDLE: ${WAZUH_CA_BUNDLE:-}
+      WAZUH_INDEX_SOURCE: ${WAZUH_INDEX_SOURCE:-both}
+      WAZUH_LOOKBACK_MINUTES: ${WAZUH_LOOKBACK_MINUTES:-1440}
+      WAZUH_REQUEST_TIMEOUT_SECONDS: ${WAZUH_REQUEST_TIMEOUT_SECONDS:-30}
+      WAZUH_MAX_RESULTS: ${WAZUH_MAX_RESULTS:-1000}
     volumes:
       - ./data/reports:/data/reports
       - ./data/detection_rule_proposals:/data/detection_rule_proposals

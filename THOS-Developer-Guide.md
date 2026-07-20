@@ -217,10 +217,11 @@ Thin wrapper so any LangGraph node can do `await call_tool("tool_name", {...})` 
 | `logrhythm` | Live LogRhythm Web Console Search API (submit → poll → retrieve) | `logrhythm.py` |
 | `splunk` | Live Splunk REST Search API (async search-job pattern) | `splunk.py` |
 | `qradar` | Live IBM QRadar Ariel Search API (async AQL pattern) | `qradar.py` |
+| `wazuh` | Live Wazuh Indexer search across alert/raw archive indices | `wazuh.py` |
 
 All non-mock, non-folder connectors raise a dedicated `*ConfigError` (e.g. `LogRhythmConfigError`) when credentials are missing/incomplete, which `siem_connector.py` catches and turns into a structured `{"error": ...}` response instead of a raw stack trace bubbling up through MCP. **Follow this pattern for any new connector.**
 
-Results for `folder`/`logrhythm`/`splunk`/`qradar` are cached in Redis, keyed on `siem_type|query|limit` (or `folder|path|query|limit`), so re-running the same hypothesis against the same source doesn't redo a full fetch/parse pass.
+Results for `folder`/`logrhythm`/`splunk`/`qradar`/`wazuh` are cached in Redis, keyed on the source configuration, query, and limit, so re-running the same hypothesis against the same source doesn't redo a full fetch/parse pass.
 
 `file_log_parser.py` (572 lines — the largest single file) supports: EVTX, CSV, JSON/JSONL/NDJSON, XML, ECS JSON, syslog, CEF, LOG/TXT, PCAP/PCAPNG. It also enforces `LOG_SOURCE_ALLOWED_ROOTS` — any `log_source_path` passed at hunt time must resolve inside an allowed root, or the request is rejected (prevents arbitrary path reads).
 
@@ -386,11 +387,12 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `REDIS_PASSWORD` | `thos_change_me_redis` | Redis auth |
 | `OLLAMA_MODEL` | `qwen3:4b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
 | `POSTGRES_USER/PASSWORD/DB` | `thos` / `thos_change_me` / `thos_audit` | Audit DB credentials |
-| `SIEM_TYPE` | `mock` | `mock` \| `folder` \| `logrhythm` \| `splunk` \| `qradar` |
+| `SIEM_TYPE` | `mock` | `mock` \| `folder` \| `logrhythm` \| `splunk` \| `qradar` \| `wazuh` |
 | `LOG_SOURCE_DIR` / `LOG_SOURCE_ALLOWED_ROOTS` | `/data/log_sources` | Folder-mode default + path-traversal allowlist |
 | `LOGRHYTHM_BASE_URL` / `LOGRHYTHM_API_TOKEN` | *(blank)* | Required for `SIEM_TYPE=logrhythm` |
 | `SPLUNK_BASE_URL` / `SPLUNK_TOKEN` | *(blank)* | Required for `SIEM_TYPE=splunk` |
 | `QRADAR_BASE_URL` / `QRADAR_TOKEN` | *(blank)* | Required for `SIEM_TYPE=qradar` |
+| `WAZUH_INDEXER_URL` / `WAZUH_INDEXER_USERNAME` / `WAZUH_INDEXER_PASSWORD` | *(blank)* | Required for `SIEM_TYPE=wazuh`; queries the Indexer on port 9200, not the manager API on port 55000 |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`, applies to orchestrator/mcp/chat-ui structured logs |
 | `HUNT_RATE_LIMIT_PER_WINDOW` / `HUNT_RATE_LIMIT_WINDOW_SECONDS` | `10` / `60` | Per-hunter rate limit |
 | `MAX_CONCURRENT_HUNTS` / `MAX_QUEUED_HUNTS` / `HUNT_QUEUE_TIMEOUT_SECONDS` | `2` / `5` / `120` | Concurrency gate against single-GPU Ollama contention |

@@ -332,12 +332,17 @@ async def write_report_node(state: dict) -> dict:
             f"- Files scanned: {state.get('files_scanned', 'n/a')}\n"
             f"- Total records parsed (before query filter): {state.get('total_parsed', 'n/a')}\n"
             f"- Records after query filter: {state.get('record_count', 'n/a')}\n"
+            f"- Total live-SIEM matches before result cap: {state.get('total_hits', 'n/a')}\n"
             f"- Records analyzed after dedup: {len(logs)}\n"
             f"- Query filter fell back to unfiltered (matched nothing): {state.get('used_fallback_unfiltered', 'n/a')}\n"
         )
     else:
         log_source = siem_type
-        ingestion_diagnostics = f"- Records fetched: {state.get('record_count', 'n/a')}\n- Records analyzed after dedup: {len(logs)}\n"
+        ingestion_diagnostics = (
+            f"- Records fetched: {state.get('record_count', 'n/a')}\n"
+            f"- Total live-SIEM matches before result cap: {state.get('total_hits', 'n/a')}\n"
+            f"- Records analyzed after dedup: {len(logs)}\n"
+        )
 
     path = write_report(
         hunt_id=state.get("hunt_id", ""),

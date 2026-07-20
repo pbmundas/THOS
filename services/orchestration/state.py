@@ -52,6 +52,7 @@ class HuntState(TypedDict, total=False):
     # Set by siem_fetch node
     logs: List[Dict[str, Any]]
     record_count: int
+    total_hits: Optional[int]
     files_scanned: Optional[int]
     total_parsed: Optional[int]
     used_fallback_unfiltered: Optional[bool]

@@ -78,8 +78,33 @@ THOS provides a modular SIEM abstraction layer, allowing the same AI hunting wor
 | Splunk Enterprise | ✅ Supported | REST Search API |
 | Splunk Cloud | ✅ Supported | REST Search API |
 | IBM QRadar | ✅ Supported | Ariel Search API |
+| Wazuh | ✅ Supported | Wazuh Indexer / OpenSearch Search API |
 
 Additional SIEM platforms can be integrated by implementing a new connector within the `services/siem` module.
+
+---
+
+## Wazuh Indexer log source
+
+THOS queries security telemetry from the Wazuh Indexer API on port `9200`;
+it does not use the Wazuh manager API on port `55000`. For the accompanying
+Docker Desktop purple-team lab, configure `.env` with the Indexer credentials
+from that lab:
+
+```dotenv
+WAZUH_INDEXER_URL=https://host.docker.internal:9200
+WAZUH_INDEXER_USERNAME=<read-only-indexer-user>
+WAZUH_INDEXER_PASSWORD=<password>
+WAZUH_INDEX_SOURCE=both
+WAZUH_VERIFY_SSL=0
+```
+
+`WAZUH_INDEX_SOURCE=both` searches `wazuh-alerts-*` and
+`wazuh-archives-*`. Disabling TLS verification is appropriate only for the
+isolated self-signed local lab. For other deployments, leave verification
+enabled and provide the Wazuh root CA through `WAZUH_CA_BUNDLE`. Rebuild the
+`mcp` service after changing its environment, then select `wazuh` in the
+Target SIEM dropdown.
 
 ---
 
