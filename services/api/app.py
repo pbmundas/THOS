@@ -127,6 +127,7 @@ else:
 FOLDER_SIEM_VALUE = "folder"
 
 NODE_LABELS = {
+    "refresh_hearth_kb": "🔄 Refreshing hypothesis knowledge",
     "supervisor": "🧭 Planning adaptive hunt workflow",
     "hypothesis": "🎯 Selecting hypothesis & MITRE context",
     "hunt_memory": "🧠 Recalling relevant completed hunts",
@@ -136,12 +137,64 @@ NODE_LABELS = {
     "guardrail": "🛡️ Screening untrusted telemetry",
     "soc_tools": "🛠️ Running SOC tools (SIGMA/enrichment)",
     "coverage_gap": "📊 Checking telemetry coverage gaps",
+    "threat_intel": "📡 Enriching indicators with threat intelligence",
     "reasoning": "🧠 Reasoning over evidence (Ollama)",
     "verifier": "🔎 Verifying citations and confidence",
     "detection_engineering": "Drafting detection-rule proposal",
     "communication": "🗣️ Preparing audience-aware report brief",
     "report": "📄 Writing markdown report",
 }
+
+NODE_REASONS = {
+    "refresh_hearth_kb": "keeps the local hypothesis catalogue current",
+    "hypothesis": "resolves the hunt scope and MITRE ATT&CK context",
+    "hunt_memory": "adds lessons from comparable completed hunts",
+    "supervisor": "selects the read-only analysis stages needed for this hunt",
+    "query_gen": "translates the hypothesis into validated SIEM syntax",
+    "siem_fetch": "executes the query and retrieves bounded telemetry",
+    "log_processing": "normalizes records and removes duplicates",
+    "guardrail": "checks untrusted log text for instruction-injection patterns",
+    "soc_tools": "runs SigmaHQ, THOS Sigma, and derived-indicator matching concurrently",
+    "coverage_gap": "checks whether collection volume and sources support the conclusion",
+    "threat_intel": "compares observed IOCs with the local blocklist",
+    "reasoning": "turns the evidence into cited findings and recommendations",
+    "verifier": "validates every cited record before findings are trusted",
+    "detection_engineering": "drafts a proposal only when a verified coverage gap exists",
+    "communication": "adapts the verified result to the selected audience",
+    "report": "persists the evidence, decisions, and governance status",
+}
+
+
+def _format_elapsed(duration_ms) -> str:
+    try:
+        milliseconds = max(0, int(duration_ms))
+    except (TypeError, ValueError):
+        return "time unavailable"
+    if milliseconds < 1000:
+        return f"{milliseconds} ms"
+    return f"{milliseconds / 1000:.2f} s"
+
+
+def _node_reason(node: str, data: dict | None) -> str:
+    data = data or {}
+    if node == "siem_fetch":
+        return f"retrieved {data.get('record_count', 0)} matching record(s) from the selected source"
+    if node == "log_processing":
+        return f"normalized and deduplicated to {len(data.get('processed_logs') or [])} record(s)"
+    if node == "guardrail":
+        result = data.get("guardrail_result") or {}
+        return f"screened {result.get('scanned_records', 0)} record(s); status: {result.get('status', 'unknown')}"
+    if node == "soc_tools":
+        enrichment = data.get("enrichment") or {}
+        return (
+            f"evaluated {enrichment.get('sigma_rules_evaluated', 0)} rule(s) and flagged "
+            f"{data.get('sigma_matched_count', 0)} record(s)"
+        )
+    if node == "coverage_gap":
+        return f"identified {len(data.get('coverage_gaps') or [])} telemetry coverage gap(s)"
+    if node == "threat_intel":
+        return f"found {len(data.get('enrichment_hits') or [])} local-blocklist IOC match(es)"
+    return NODE_REASONS.get(node, "completed this hunt stage")
 
 
 def fetch_hypotheses():
@@ -261,7 +314,9 @@ def run_hunt(message, history, siem_type, log_source_path, max_iterations, reque
                     progress_lines.append(f"Hunt `{evt['hunt_id']}` started.")
                 elif evt.get("event") == "node_complete":
                     label = NODE_LABELS.get(evt["node"], evt["node"])
-                    progress_lines.append(label)
+                    elapsed = _format_elapsed(evt.get("duration_ms"))
+                    reason = _node_reason(evt["node"], evt.get("data"))
+                    progress_lines.append(f"{label} — **{elapsed}** — {reason}")
                 elif evt.get("event") == "error":
                     progress_lines.append(f"❌ Error: {evt['error']}")
                     hunt_failed = True
@@ -537,7 +592,7 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
                 choices=["mock", "wazuh", "splunk", "qradar", "logrhythm", FOLDER_SIEM_VALUE],
                 value="mock", scale=1,
             )
-            max_iterations = gr.Slider(label="Max reasoning iterations", minimum=1, maximum=5, value=3, step=1, scale=1)
+            max_iterations = gr.Slider(label="Max reasoning iterations", minimum=1, maximum=5, value=1, step=1, scale=1)
 
         with gr.Group(visible=False) as folder_group:
             gr.Markdown(

@@ -8,7 +8,14 @@ async def select_hypothesis(state: HuntState) -> dict:
     Otherwise, if hunter_name / a free-text intent is given via
     hypothesis_text, run a semantic search to suggest one.
     """
-    if state.get("hypothesis_id"):
+    if state.get("hypothesis_id") and state.get("hypothesis_text"):
+        detail = {
+            "id": state["hypothesis_id"],
+            "text": state["hypothesis_text"],
+            "tactic": state.get("hypothesis_tactic", ""),
+            "technique": state.get("hypothesis_technique", ""),
+        }
+    elif state.get("hypothesis_id"):
         detail = await call_tool("get_hearth_hypothesis", {"hypothesis_id": state["hypothesis_id"]})
     else:
         candidates = await call_tool(

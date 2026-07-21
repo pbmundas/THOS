@@ -1,5 +1,4 @@
-"""
-SIEM-KB tool: field mappings, log source metadata, API quirks.
+"""SIEM-KB tool: field mappings, log source metadata, API quirks.
 
 This is the tool the query_generator relies on so the LLM doesn't have
 to guess field names per-vendor.
@@ -9,6 +8,8 @@ Phase 2 extension point: load this from /data/knowledge_base/siem_kb/*.yaml
 and index into a 'siem_kb' Chroma collection for semantic field lookup
 across large schemas.
 """
+
+from services.runtime_config import get_value
 
 SIEM_FIELD_MAP = {
     "logrhythm": {
@@ -71,7 +72,18 @@ SIEM_FIELD_MAP = {
 
 def get_field_mapping(siem_type: str) -> dict:
     """Return the normalized-field -> vendor-field mapping for a given SIEM."""
-    return SIEM_FIELD_MAP.get(siem_type.lower(), {})
+    key = siem_type.lower()
+    mapping = dict(SIEM_FIELD_MAP.get(key, {}))
+    custom = get_value("siem_field_mappings", key, default={})
+    if isinstance(custom, dict):
+        mapping.update({str(field): str(value) for field, value in custom.items() if str(field) and str(value)})
+    inventory = get_value("siem_field_inventory", key, default={})
+    fields = inventory.get("fields", []) if isinstance(inventory, dict) else []
+    if isinstance(fields, list) and fields:
+        # Keep the return shape string-valued for existing MCP consumers while
+        # grounding query generation in the exact uploaded vendor schema.
+        mapping["available_fields"] = ", ".join(str(field) for field in fields if str(field).strip())
+    return mapping
 
 
 def normalize_field(siem_type: str, normalized_field: str) -> str | None:

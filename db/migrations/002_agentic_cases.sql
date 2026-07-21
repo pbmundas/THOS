@@ -4,10 +4,14 @@ CREATE TABLE IF NOT EXISTS hunt_approvals (
     hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'pending',
     reason TEXT,
+    approval_type TEXT NOT NULL DEFAULT 'hunt_review',
+    artifact_hash TEXT,
     decided_by TEXT,
     decided_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'hunt_review';
+ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS artifact_hash TEXT;
 CREATE TABLE IF NOT EXISTS finding_feedback (
     feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE,

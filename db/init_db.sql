@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS hunt_approvals (
     hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
     reason TEXT,
+    approval_type TEXT NOT NULL DEFAULT 'hunt_review', -- hunt_review|detection_rule
+    artifact_hash TEXT, -- exact SHA-256 for detection_rule approvals
     decided_by TEXT,
     decided_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()

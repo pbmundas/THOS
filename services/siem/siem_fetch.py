@@ -1,10 +1,15 @@
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
+from services.hunting.query_generator import validate_and_normalize_query
 
 
 async def fetch_logs_node(state: HuntState) -> dict:
-    query = state.get("follow_up_query") or state.get("query", "")
     siem_type = state.get("siem_type", "mock")
+    requested_query = state.get("follow_up_query") or state.get("query", "")
+    validation = validate_and_normalize_query(
+        requested_query, state.get("hypothesis_text", "") or "", siem_type,
+    )
+    query = validation["query"]
     # Folder-backed sources typically hold far more records than a
     # hand-tuned mock/live query, so give them a larger default cap.
     # Bumped from 200 -> 1000: with EVTX exports especially, a handful
@@ -31,11 +36,14 @@ async def fetch_logs_node(state: HuntState) -> dict:
     if query:
         executed.append(query)
     return {
+        "query": query if not state.get("follow_up_query") else state.get("query", ""),
         "logs": existing + new_logs,
         "record_count": result.get("record_count", 0),
         "total_hits": result.get("total_hits"),
         "follow_up_query": None,
         "executed_queries": executed,
+        "query_used_fallback": validation["used_fallback"],
+        "query_validation_error": validation["validation_error"],
         # Diagnostics from file_log_parser.fetch_from_folder (folder mode
         # only — absent/ignored for mock/live SIEM types) so we can
         # verify, in the final report, exactly how many files/records

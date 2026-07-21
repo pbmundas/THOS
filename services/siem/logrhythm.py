@@ -52,6 +52,7 @@ from typing import Any
 import httpx
 
 from services.observability.retry import sync_retry
+from services.runtime_config import env_or_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,9 @@ class LogRhythmAPIError(RuntimeError):
 
 
 def _get_config() -> dict:
-    base_url = os.environ.get("LOGRHYTHM_BASE_URL", "").rstrip("/")
-    token = os.environ.get("LOGRHYTHM_API_TOKEN", "")
+    setting = lambda name, default="": env_or_runtime(name, "logrhythm", default)
+    base_url = setting("LOGRHYTHM_BASE_URL").rstrip("/")
+    token = setting("LOGRHYTHM_API_TOKEN")
     if not base_url or not token:
         raise LogRhythmConfigError(
             "LogRhythm is not configured. Set LOGRHYTHM_BASE_URL "
@@ -76,11 +78,11 @@ def _get_config() -> dict:
     return {
         "base_url": base_url,
         "token": token,
-        "verify_ssl": os.environ.get("LOGRHYTHM_VERIFY_SSL", "1") != "0",
-        "lookback_minutes": int(os.environ.get("LOGRHYTHM_LOOKBACK_MINUTES", "1440")),
-        "poll_interval": float(os.environ.get("LOGRHYTHM_POLL_INTERVAL_SECONDS", "2")),
-        "poll_timeout": float(os.environ.get("LOGRHYTHM_POLL_TIMEOUT_SECONDS", "60")),
-        "search_events": os.environ.get("LOGRHYTHM_SEARCH_EVENTS", "0") == "1",
+        "verify_ssl": setting("LOGRHYTHM_VERIFY_SSL", "1") != "0",
+        "lookback_minutes": int(setting("LOGRHYTHM_LOOKBACK_MINUTES", "1440")),
+        "poll_interval": float(setting("LOGRHYTHM_POLL_INTERVAL_SECONDS", "2")),
+        "poll_timeout": float(setting("LOGRHYTHM_POLL_TIMEOUT_SECONDS", "60")),
+        "search_events": setting("LOGRHYTHM_SEARCH_EVENTS", "0") == "1",
     }
 
 

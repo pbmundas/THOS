@@ -61,6 +61,7 @@ from typing import Any
 import httpx
 
 from services.observability.retry import sync_retry
+from services.runtime_config import env_or_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,9 @@ class QRadarAPIError(RuntimeError):
 
 
 def _get_config() -> dict:
-    base_url = os.environ.get("QRADAR_BASE_URL", "").rstrip("/")
-    token = os.environ.get("QRADAR_TOKEN", "")
+    setting = lambda name, default="": env_or_runtime(name, "qradar", default)
+    base_url = setting("QRADAR_BASE_URL").rstrip("/")
+    token = setting("QRADAR_TOKEN")
     if not base_url or not token:
         raise QRadarConfigError(
             "QRadar is not configured. Set QRADAR_BASE_URL "
@@ -85,11 +87,11 @@ def _get_config() -> dict:
     return {
         "base_url": base_url,
         "token": token,
-        "verify_ssl": os.environ.get("QRADAR_VERIFY_SSL", "1") != "0",
-        "api_version": os.environ.get("QRADAR_API_VERSION", "20.0"),
-        "lookback_minutes": int(os.environ.get("QRADAR_LOOKBACK_MINUTES", "1440")),
-        "poll_interval": float(os.environ.get("QRADAR_POLL_INTERVAL_SECONDS", "2")),
-        "poll_timeout": float(os.environ.get("QRADAR_POLL_TIMEOUT_SECONDS", "60")),
+        "verify_ssl": setting("QRADAR_VERIFY_SSL", "1") != "0",
+        "api_version": setting("QRADAR_API_VERSION", "20.0"),
+        "lookback_minutes": int(setting("QRADAR_LOOKBACK_MINUTES", "1440")),
+        "poll_interval": float(setting("QRADAR_POLL_INTERVAL_SECONDS", "2")),
+        "poll_timeout": float(setting("QRADAR_POLL_TIMEOUT_SECONDS", "60")),
     }
 
 

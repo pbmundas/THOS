@@ -22,12 +22,16 @@ class HuntState(TypedDict, total=False):
     # Set by hypothesis node
     hypothesis_id: Optional[str]
     hypothesis_text: Optional[str]
+    hypothesis_tactic: Optional[str]
+    hypothesis_technique: Optional[str]
     technique_id: Optional[str]
     technique_name: Optional[str]
     tactic: Optional[str]
 
     # Set by query_generator node
     query: Optional[str]
+    query_used_fallback: bool
+    query_validation_error: Optional[str]
     executed_queries: List[str]
     max_reasoning_followups: int
 
@@ -43,6 +47,8 @@ class HuntState(TypedDict, total=False):
     # engineering, case management and feedback capture).
     enrichment_hits: List[Dict[str, Any]]
     proposed_detection_rule: Optional[str]
+    proposed_detection_rule_hash: Optional[str]
+    approval_id: Optional[str]
     case_id: Optional[str]
     coverage_gaps: List[str]
     anomaly_scores: List[Dict[str, Any]]
@@ -74,11 +80,16 @@ class HuntState(TypedDict, total=False):
     reasoning_summary: Optional[str]
     findings: Optional[str]
     recommendations: Optional[str]
+    reasoning_cache_hit: bool
+    reasoning_failed: bool
+    reasoning_attempts: int
+    reasoning_error: Optional[str]
     need_more_logs: bool
     follow_up_query: Optional[str]
 
     # Set by report node
     report_path: Optional[str]
+    report_status: Optional[str]
 
     # Bookkeeping
     iteration: int

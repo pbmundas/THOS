@@ -5,12 +5,10 @@ services/detection/sigma_rules_hq/, per the scope documented in
 services/detection/sigma_rules_hq/VERSION.txt.
 
 THOS targets on-prem / air-gapped deployments (see README.md
-"Security"), so the running platform never fetches rules from GitHub
-at runtime -- sigmahq_engine.py only ever reads the vendored copy on
-disk. This script is the *offline vendoring step*: run it once from a
-machine with network + git access (NOT inside the THOS container),
-review the diff, and commit the result under sigma_rules_hq/. It is
-not imported by any service at runtime.
+"Security"). sigmahq_engine.py only reads rules from disk; it never
+contacts GitHub. This script is used both for the preferred offline
+vendoring workflow and by Compose's one-shot sigmahq-rules-init service
+when no vendored or previously downloaded corpus is available.
 
 What it does:
   1. Sparse-checkouts SigmaHQ/sigma at --ref (default: master) --
@@ -32,6 +30,7 @@ What it does:
 Usage:
     python3 services/detection/fetch_sigmahq_rules.py
     python3 services/detection/fetch_sigmahq_rules.py --ref <commit-or-branch>
+    python3 services/detection/fetch_sigmahq_rules.py --ref <commit> --dest /rules
 
 Requires `git` >= 2.25 (cone-mode sparse-checkout) on PATH.
 """
@@ -94,14 +93,15 @@ for. Excluded on purpose:
     by design here, same limitation the original hand-rolled engine
     documented. {correlation_count} were excluded from this fetch on that basis.
 
-This is a deliberately air-gapped vendoring (THOS targets on-prem/
-air-gapped deployments -- see README.md "Security") rather than a
-runtime fetch from GitHub. To refresh it against upstream, run:
+The application runtime never contacts GitHub. Compose's one-shot
+sigmahq-rules-init may download this pinned commit into a persistent volume
+when the reviewed YAML files are absent. For a deliberately air-gapped
+deployment, vendor the corpus before deployment by running:
 
-    python3 services/detection/fetch_sigmahq_rules.py
+    python3 services/detection/fetch_sigmahq_rules.py --ref <commit>
 
-...from a machine with network + git access (not inside the container),
-then commit the resulting diff under services/detection/sigma_rules_hq/.
+...from a machine with network + git access, then review and commit the
+resulting diff under services/detection/sigma_rules_hq/.
 """
 
 
@@ -138,10 +138,22 @@ def _is_correlation_rule(path: str) -> bool:
     return False
 
 
-def _vendor(clone_dir: str) -> tuple[int, int]:
-    if os.path.isdir(DEST_DIR):
-        shutil.rmtree(DEST_DIR)
-    os.makedirs(DEST_DIR)
+def _clear_directory(path: str) -> None:
+    """Clear a directory without removing its root (which may be a volume)."""
+    resolved = os.path.abspath(path)
+    if os.path.dirname(resolved) == resolved:
+        raise ValueError(f"refusing to clear filesystem root: {resolved}")
+    os.makedirs(path, exist_ok=True)
+    for name in os.listdir(path):
+        child = os.path.join(path, name)
+        if os.path.isdir(child) and not os.path.islink(child):
+            shutil.rmtree(child)
+        else:
+            os.unlink(child)
+
+
+def _vendor(clone_dir: str, dest_dir: str = DEST_DIR) -> tuple[int, int]:
+    _clear_directory(dest_dir)
 
     vendored = 0
     skipped_correlation = 0
@@ -158,14 +170,20 @@ def _vendor(clone_dir: str) -> tuple[int, int]:
                     skipped_correlation += 1
                     continue
                 rel = os.path.relpath(src_path, clone_dir)
-                dst_path = os.path.join(DEST_DIR, rel)
+                dst_path = os.path.join(dest_dir, rel)
                 os.makedirs(os.path.dirname(dst_path), exist_ok=True)
                 shutil.copy2(src_path, dst_path)
                 vendored += 1
     return vendored, skipped_correlation
 
 
-def _write_version_file(commit: str, ref: str, count: int, correlation_count: int) -> None:
+def _write_version_file(
+    commit: str,
+    ref: str,
+    count: int,
+    correlation_count: int,
+    dest_dir: str = DEST_DIR,
+) -> None:
     content = VERSION_TEMPLATE.format(
         commit=commit,
         ref=ref,
@@ -173,7 +191,7 @@ def _write_version_file(commit: str, ref: str, count: int, correlation_count: in
         count=count,
         correlation_count=correlation_count,
     )
-    with open(os.path.join(DEST_DIR, "VERSION.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(dest_dir, "VERSION.txt"), "w", encoding="utf-8") as f:
         f.write(content)
 
 
@@ -182,7 +200,17 @@ def main() -> int:
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ref", default=DEFAULT_REF,
                          help="Branch, tag, or commit to vendor (default: master)")
+    parser.add_argument(
+        "--dest",
+        default=DEST_DIR,
+        help=f"Destination directory (default: {DEST_DIR})",
+    )
     args = parser.parse_args()
+
+    destination = os.path.abspath(args.dest)
+    if os.path.dirname(destination) == destination:
+        parser.error("--dest must not be a filesystem root")
+    args.dest = destination
 
     if shutil.which("git") is None:
         print("error: git is required on PATH to fetch the SigmaHQ ruleset.", file=sys.stderr)
@@ -194,13 +222,14 @@ def main() -> int:
         except subprocess.CalledProcessError as e:
             print(f"error: git operation failed ({e}). Do you have network access?", file=sys.stderr)
             return 1
-        vendored, skipped_correlation = _vendor(clone_dir)
+        vendored, skipped_correlation = _vendor(clone_dir, args.dest)
 
-    _write_version_file(commit, args.ref, vendored, skipped_correlation)
+    _write_version_file(commit, args.ref, vendored, skipped_correlation, args.dest)
 
     print(f"Vendored {vendored} SigmaHQ rules (skipped {skipped_correlation} correlation "
-          f"rules) at commit {commit} into {DEST_DIR}")
-    print("Review the diff, then commit services/detection/sigma_rules_hq/.")
+          f"rules) at commit {commit} into {args.dest}")
+    if os.path.abspath(args.dest) == os.path.abspath(DEST_DIR):
+        print("Review the diff, then commit services/detection/sigma_rules_hq/.")
     return 0
 
 

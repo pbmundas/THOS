@@ -81,6 +81,8 @@ from sigma.conversion.state import ConversionState
 from sigma.exceptions import SigmaError
 from sigma.types import SigmaCompareExpression
 
+from services.runtime_config import get_value
+
 RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sigma_rules_hq")
 
 Predicate = Callable[[dict], bool]
@@ -382,7 +384,8 @@ def clear_cache() -> None:
 
 
 def load_rules(rules_dir: str = RULES_DIR) -> list[CompiledRule]:
-    return list(_cached_ruleset(rules_dir))
+    disabled = {str(item) for item in get_value("sigma", "disabled_rule_ids", default=[]) or []}
+    return [rule for rule in _cached_ruleset(rules_dir) if rule.rule_id not in disabled]
 
 
 def evaluate_all(records: list[dict], rules: list[CompiledRule] | None = None,

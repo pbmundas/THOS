@@ -170,11 +170,13 @@ async def update_case(case_id: str, status: str | None, priority: str | None, as
     return rows[0] if rows else None
 
 
-async def create_approval(hunt_id: str, reason: str) -> dict | None:
+async def create_approval(hunt_id: str, reason: str, approval_type: str = "hunt_review",
+                          artifact_hash: str | None = None) -> dict | None:
     rows = await asyncio.to_thread(_fetch, """
-        INSERT INTO hunt_approvals (hunt_id, reason) VALUES (%s, %s)
-        RETURNING approval_id, hunt_id, status, reason, created_at
-    """, (hunt_id, reason))
+        INSERT INTO hunt_approvals (hunt_id, reason, approval_type, artifact_hash)
+        VALUES (%s, %s, %s, %s)
+        RETURNING approval_id, hunt_id, status, reason, approval_type, artifact_hash, created_at
+    """, (hunt_id, reason, approval_type, artifact_hash))
     return rows[0] if rows else None
 
 
@@ -195,6 +197,15 @@ async def list_approvals(status: str | None = "pending", limit: int = 100) -> li
     return await asyncio.to_thread(_fetch, query, params)
 
 
+async def get_approval(approval_id: str) -> dict | None:
+    rows = await asyncio.to_thread(
+        _fetch,
+        "SELECT * FROM hunt_approvals WHERE approval_id = %s",
+        (approval_id,),
+    )
+    return rows[0] if rows else None
+
+
 async def record_feedback(hunt_id: str, finding_ref: str | None, rating: str,
                           correction: str | None, analyst_name: str) -> dict | None:
     rows = await asyncio.to_thread(_fetch, """
@@ -208,7 +219,9 @@ async def record_feedback(hunt_id: str, finding_ref: str | None, rating: str,
 async def ensure_agentic_schema() -> None:
     """Backfill Phase-2 tables for existing Postgres volumes at startup."""
     statements = (
-        """CREATE TABLE IF NOT EXISTS hunt_approvals (approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending', reason TEXT, decided_by TEXT, decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS hunt_approvals (approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending', reason TEXT, approval_type TEXT NOT NULL DEFAULT 'hunt_review', artifact_hash TEXT, decided_by TEXT, decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'hunt_review'""",
+        """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS artifact_hash TEXT""",
         """CREATE TABLE IF NOT EXISTS finding_feedback (feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, finding_ref TEXT, rating TEXT NOT NULL, correction TEXT, analyst_name TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS cases (case_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', priority TEXT NOT NULL DEFAULT 'medium', assigned_to TEXT, summary TEXT, sla_due_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS case_events (event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE, actor TEXT, event_type TEXT NOT NULL, note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
@@ -232,6 +245,17 @@ async def recent_hunt_memory(technique_id: str, limit: int = 3) -> list[dict]:
         WHERE h.hypothesis_text ILIKE %s AND h.status = 'completed'
         ORDER BY h.created_at DESC LIMIT %s
     """, (f"%{technique_id}%", limit))
+
+
+async def hypothesis_last_runs() -> list[dict]:
+    """Return the newest audit row for each catalogue hypothesis."""
+    return await asyncio.to_thread(_fetch, """
+        SELECT DISTINCT ON (hypothesis_id)
+               hypothesis_id, hunt_id, status, created_at AS last_ran_at
+        FROM hunts
+        WHERE hypothesis_id IS NOT NULL AND hypothesis_id <> ''
+        ORDER BY hypothesis_id, created_at DESC
+    """, ())
 
 
 async def export_learning_feedback(limit: int = 5000) -> list[dict]:

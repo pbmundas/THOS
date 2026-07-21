@@ -2,7 +2,9 @@ import json
 
 from services.hunting.query_generator import (
     _fallback_query,
+    _normalize_folder_query,
     _normalize_wazuh_query,
+    validate_and_normalize_query,
 )
 
 
@@ -66,3 +68,32 @@ def test_wazuh_normalizer_falls_back_on_wildcard_fields():
     query = _normalize_wazuh_query(candidate, "Nmap scan")
 
     assert "data.*" not in json.loads(query)["query"]["simple_query_string"]["fields"]
+
+
+def test_qradar_invalid_model_output_retries_with_valid_read_only_aql():
+    result = validate_and_normalize_query(
+        "WHERE Process Name = 'powershell.exe'", "PowerShell execution", "qradar"
+    )
+
+    assert result["query"] == "SELECT * FROM events"
+    assert result["used_fallback"] is True
+    assert "complete SELECT" in result["validation_error"]
+
+
+def test_splunk_state_changing_command_is_never_executed():
+    result = validate_and_normalize_query(
+        "index=main | delete", "Suspicious PowerShell", "splunk"
+    )
+
+    assert result["query"] == "*"
+    assert "delete" not in result["query"]
+    assert result["used_fallback"] is True
+
+
+def test_folder_query_removes_generic_prose_and_keeps_explicit_indicators():
+    result = _normalize_folder_query(
+        "often, utilize, powershell, powerful, language, available, windows",
+        "Detect powershell.exe activity using Event ID 4104",
+    )
+
+    assert result == "powershell, 4104, powershell.exe"

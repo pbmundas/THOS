@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from services.runtime_config import get_value
+
 
 @dataclass(frozen=True)
 class ModelTarget:
@@ -38,10 +40,12 @@ def target_for(agent: str) -> ModelTarget:
     """
     tier = _AGENT_TIERS.get(agent, "reasoning")
     suffix = tier.upper()
+    runtime_model = str(get_value("models", "default_model", default="") or "").strip()
+    configured_model = os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL)
     return ModelTarget(
         tier=tier,
         host=os.environ.get(f"THOS_OLLAMA_{suffix}_HOST", _DEFAULT_HOST).rstrip("/"),
-        model=os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL),
+        model=runtime_model or configured_model,
         num_ctx=int(os.environ.get(f"THOS_{suffix}_NUM_CTX", "8192")),
         num_predict=int(os.environ.get(f"THOS_{suffix}_NUM_PREDICT", "1024")),
     )

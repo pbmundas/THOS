@@ -33,7 +33,9 @@ THOS is designed to operate **entirely on-premises**, ensuring sensitive securit
 - 📖 MITRE ATT&CK & HEARTH framework integration
 - 📄 Automated Markdown hunting reports
 - ⚡ FastAPI backend services
-- 🖥️ Modern Gradio user interface
+- 🖥️ Responsive React analyst workspace with hypothesis tiles and report library
+- ⚙️ Governed Settings control plane for models, iterations, Sigma, SIEM schemas, schedules, RAG, and local users
+- 💬 Floating on-prem model assistant with minimize/maximize controls and an audited read-only MCP tool allowlist
 - 🐳 One-command Docker deployment
 - 🔒 Fully on-premises architecture
 
@@ -51,7 +53,7 @@ THOS is designed to operate **entirely on-premises**, ensuring sensitive securit
 
 | Component | Description |
 |------------|-------------|
-| **Gradio UI** | Interactive analyst chat interface |
+| **React UI** | Searchable hypothesis board, streamed hunt progress, and report library |
 | **FastAPI** | REST API backend |
 | **LangGraph** | AI workflow orchestration |
 | **FastMCP** | Tool execution framework |
@@ -169,7 +171,7 @@ Generate Threat Hunting Report
 
 | Layer | Technology |
 |--------|------------|
-| Frontend | Gradio |
+| Frontend | React + Vite |
 | Backend | FastAPI |
 | AI Workflow | LangGraph |
 | MCP Framework | FastMCP |
@@ -225,6 +227,32 @@ Reports are automatically saved to:
 data/reports/
 ```
 
+The report library renders that Markdown directly and provides both the original
+`.md` file and a styled PDF export. Reports are written only after reasoning
+returns a complete, schema-valid result. An empty, malformed, or truncated model
+response is retried up to three total attempts; if all three fail, the hunt ends
+with an explicit reason and no unfinished report is created.
+
+## Settings and local roles
+
+The first configured UI account is seeded as the **SME administrator**. SMEs can
+select any model already available in Ollama, choose the default hunt iteration
+count, enable/disable and schedule Sigma rules, schedule hypotheses in system
+local time, configure SIEM credentials and normalized vendor fields, manage the
+RAG knowledge base, and create local users. Analyst accounts see only the
+features assigned by an SME (`hunts`, `reports`, `chat`, and/or `knowledge`).
+
+Each hypothesis tile includes a full Read view, a Run action, and its most
+recent run date when audit history is available. THOS permits one active hunt
+across the platform; all other Run actions remain disabled with a visible
+status notice until it completes. Only SME administrators can publish custom
+hypotheses from the dedicated **Create hypothesis** page.
+
+Settings are persisted in `data/runtime/config.json` and consumed dynamically by
+the UI gateway, Orchestrator, and MCP service. The file is deliberately ignored
+by Git because it can contain password hashes and SIEM secrets. Back it up as a
+secret and restrict filesystem access in production.
+
 ---
 
 # Security
@@ -232,10 +260,19 @@ data/reports/
 THOS is built for security-conscious environments.
 
 - Fully on-premises deployment
-- Local AI inference (no cloud dependency)
+- Local AI inference (no cloud model dependency)
 - Local vector database
 - Local report storage
 - Suitable for regulated and air-gapped environments
+
+SigmaHQ rules are loaded from a persistent `sigmahq_rules` volume. On
+startup, Compose first copies a reviewed corpus from
+`services/detection/sigma_rules_hq/`. If the repository contains only the
+version marker, the one-shot `sigmahq-rules-init` service downloads the exact
+commit configured by `SIGMAHQ_REF` and verifies at least
+`SIGMAHQ_MIN_RULES` rules before MCP can start. For air-gapped deployment,
+run `python services/detection/fetch_sigmahq_rules.py --ref <commit>` on a
+connected review machine and commit the resulting directory.
 
 ---
 
@@ -290,7 +327,11 @@ All agentic write paths are approval-gated or confined to staging. The live dete
 
 ## Agentic Configuration
 
-`env.example` includes model tiers, follow-up limits, and timeout/retry settings. The default keeps one adaptive follow-up query and three Ollama retries. Rebuild after changing configuration:
+`env.example` includes model tiers, follow-up limits, and timeout settings. The
+default keeps one adaptive follow-up query. Final reasoning follows an
+application-level three-strike rule: exactly three complete-response attempts,
+then a clear `report not generated` failure rather than a degraded report.
+Rebuild after changing configuration:
 
 ```bash
 docker compose up -d --build
@@ -319,7 +360,8 @@ THOS is built upon several outstanding open-source technologies:
 - FastMCP
 - ChromaDB
 - FastAPI
-- Gradio
+- React
+- Vite
 - PostgreSQL
 - Redis
 - Docker

@@ -33,6 +33,7 @@ the markdown file as the source of truth and add exporters here.
 import os
 import re
 import datetime
+import json
 
 from services.knowledge import mitre
 
@@ -114,7 +115,8 @@ def _bottom_line(findings: str, sigma_matched_records) -> str:
 def _render_cover(cover_style: str, hunt_id: str, hypothesis_id: str, technique_id: str,
                    technique_name: str, tactic: str, log_source: str, hunter_name: str,
                    records_analyzed: int, sigma_rules_matched: int, sigma_matched_records: int,
-                   findings: str, timestamp: datetime.datetime) -> str:
+                   findings: str, timestamp: datetime.datetime,
+                   verification_passed: bool = True) -> str:
     generated_human = timestamp.strftime("%Y-%m-%d %H:%M UTC")
     if str(cover_style) == "2":
         return COVER_ANALYST_TEMPLATE.format(
@@ -133,9 +135,54 @@ def _render_cover(cover_style: str, hunt_id: str, hypothesis_id: str, technique_
         technique_name_or_na=technique_name or "an unspecified technique",
         tactic_or_na=tactic or "unspecified tactic",
         generated_human=generated_human,
-        bottom_line=_bottom_line(findings, sigma_matched_records),
+        bottom_line=(
+            _bottom_line(findings, sigma_matched_records)
+            if verification_passed
+            else "Findings were generated, but deterministic citation verification failed; analyst review is required before relying on them."
+        ),
         hunter_name=hunter_name or "anonymous",
     )
+
+
+def _representative_log_sample(logs: list[dict], priority_indices: list[int] | None = None,
+                               limit: int = 5) -> str:
+    """Render a bounded, valid-JSON evidence sample without raw XML walls."""
+    selected: list[tuple[int, dict]] = []
+    selected_indices = set()
+    priority_cap = max(1, limit // 2)
+    for index in priority_indices or []:
+        if 0 <= index < len(logs) and index not in selected_indices:
+            selected.append((index, logs[index]))
+            selected_indices.add(index)
+        if len(selected) >= priority_cap:
+            break
+    seen_events = {str(log.get("event", "")) for _, log in selected}
+    for index, log in enumerate(logs):
+        event = str(log.get("event", ""))
+        if index in selected_indices or event in seen_events:
+            continue
+        selected.append((index, log))
+        selected_indices.add(index)
+        seen_events.add(event)
+        if len(selected) >= limit:
+            break
+    if len(selected) < limit:
+        for index, log in enumerate(logs):
+            if index not in selected_indices:
+                selected.append((index, log))
+            if len(selected) >= limit:
+                break
+    rendered = []
+    for index, log in selected:
+        item = {"ref": index}
+        for key in ("timestamp", "host", "user", "event", "src_ip", "dst_ip", "source_file", "source_type"):
+            if log.get(key) not in (None, ""):
+                item[key] = log.get(key)
+        detail = str(log.get("detail", ""))
+        if detail:
+            item["detail"] = detail[:500] + ("…" if len(detail) > 500 else "")
+        rendered.append(item)
+    return json.dumps(rendered, indent=2, ensure_ascii=False, default=str)
 
 
 def _render_mitre_section(technique_id: str) -> str:
@@ -234,7 +281,7 @@ This phase validates the collection, parsing, and filtering of telemetry data.
 ## 🔌 Phase 3: Automated Detection & Enrichment
 This phase applies deterministic detection rules and correlates threat intelligence.
 
-### 🎯 Sigma & YARA Detections
+### 🎯 Sigma Detections
 {sigma_section}
 
 ### 📡 Threat Intelligence Enrichment
@@ -254,7 +301,8 @@ This phase represents the core analytical assessment and evidence verification.
 ### 🧐 Verifier / Critic Validation
 {verifier_section}
 
-### 📊 Raw Ingestion Sample
+### 📊 Representative Evidence Sample (bounded)
+The sample prioritizes matcher hits and event diversity, and truncates raw detail fields to keep review practical.
 ```json
 {log_sample}
 ```
@@ -341,6 +389,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         log_source=log_source, hunter_name=hunter_name, records_analyzed=records_analyzed,
         sigma_rules_matched=len(sigma_rule_matches or []), sigma_matched_records=sigma_matched_count,
         findings=findings, timestamp=timestamp,
+        verification_passed=(verifier_result or {}).get("status", "passed") == "passed",
     )
     mitre_section = _render_mitre_section(technique_id)
     sigma_section = _render_sigma_section(sigma_rule_matches or [], sigma_matched_count, records_analyzed)
@@ -377,7 +426,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
             "siem_fetch": "Retrieve Log Telemetry",
             "log_processing": "Parse & Normalize Logs",
             "guardrail": "Sentinel Injection Screening",
-            "soc_tools": "Run Matcher Engines (Sigma, YARA, Behavioral)",
+            "soc_tools": "Run Sigma and Indicator Matchers",
             "coverage_gap_check": "Verify Log Telemetry Health",
             "threat_intel_enrichment": "Enrich IOCs with Threat Intel",
             "reasoning": "AI Security Reasoning",
@@ -532,6 +581,13 @@ async def write_report_node(state: dict) -> dict:
             f"- Records analyzed after dedup: {len(logs)}\n"
         )
 
+    if state.get("reasoning_failed"):
+        return {
+            "report_path": None,
+            "report_status": "not_generated",
+            "error": state.get("error") or "Report not generated because reasoning did not complete.",
+        }
+
     path = write_report(
         hunt_id=state.get("hunt_id", ""),
         title="",  # always auto-derived now — see write_report docstring
@@ -543,7 +599,9 @@ async def write_report_node(state: dict) -> dict:
         queries=state.get("query", ""),
         findings=state.get("findings", ""),
         recommendations=state.get("recommendations", ""),
-        log_sample=str(logs[:5]),
+        log_sample=_representative_log_sample(
+            logs, state.get("sigma_matched_refs") or [], limit=5,
+        ),
         hypothesis_id=state.get("hypothesis_id", ""),
         log_source=log_source,
         ingestion_diagnostics=ingestion_diagnostics,
@@ -563,7 +621,7 @@ async def write_report_node(state: dict) -> dict:
         approval_id=state.get("approval_id"),
         human_approval_required=state.get("human_approval_required", False),
     )
-    return {"report_path": path}
+    return {"report_path": path, "report_status": "generated"}
 
 
 def list_reports() -> list[dict]:

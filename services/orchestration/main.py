@@ -30,7 +30,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.orchestration.graph import compiled_graph
 from services.mcp import mcp_client
@@ -42,6 +42,8 @@ from services.observability.logging_config import (
     reset_hunt_context,
     set_hunt_context,
 )
+from services.detection_engineering.rule_drafter import detection_rule_approval_error
+from services.runtime_config import get_value
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -108,74 +110,32 @@ async def _enforce_hunt_rate_limit(hunter_name: str):
         )
 
 
-# --- Concurrency gate ------------------------------------------------------
-# The rate limiter above only throttles *how often* one hunter can fire
-# requests — it does nothing to stop N different hunters from each starting
-# a hunt at the same moment and piling up as competing asyncio tasks against
-# the single Ollama model, the single Postgres pool, and the single MCP
-# server behind this one process. Previously there was no cap at all: every
-# accepted request just ran the full graph concurrently, so Ollama (which
-# can really only usefully serve requests ~one-at-a-time on typical
-# single-GPU/CPU deployments) would thrash between contexts and every
-# in-flight hunt would slow down together instead of queuing predictably.
-#
-# MAX_CONCURRENT_HUNTS caps how many hunts can be *actively running* through
-# the graph at once. MAX_QUEUED_HUNTS caps how many additional requests may
-# wait for a free slot before we start rejecting outright — a bounded queue,
-# not unbounded pile-up. HUNT_QUEUE_TIMEOUT_SECONDS bounds how long a queued
-# request will wait before giving up, so a caller gets a clear timeout
-# instead of hanging indefinitely behind a backlog.
-MAX_CONCURRENT_HUNTS = int(os.environ.get("MAX_CONCURRENT_HUNTS", "2"))
-MAX_QUEUED_HUNTS = int(os.environ.get("MAX_QUEUED_HUNTS", "5"))
-HUNT_QUEUE_TIMEOUT_SECONDS = float(os.environ.get("HUNT_QUEUE_TIMEOUT_SECONDS", "120"))
-
-_hunt_semaphore = asyncio.Semaphore(MAX_CONCURRENT_HUNTS)
-_hunt_queue_depth = 0
-_hunt_queue_lock = asyncio.Lock()
+# --- Platform-wide hunt gate ----------------------------------------------
+# Hunts are intentionally serialized across every user of this Orchestrator.
+# A second start is rejected immediately so the UI can explain the active lock
+# instead of silently queueing another hypothesis behind it.
+_active_hunt_count = 0
+_active_hunt_lock = asyncio.Lock()
 
 
 class _HuntSlot:
-    """Async context manager that enforces the concurrency gate.
-
-    Raises HTTPException(503) immediately if the bounded wait queue is
-    already full, or HTTPException(503) after HUNT_QUEUE_TIMEOUT_SECONDS if
-    a slot never frees up. Otherwise blocks (as a queued waiter) until a
-    hunt slot is available, then holds that slot until released.
-    """
+    """Reject a second hunt until the currently active hunt has completed."""
 
     async def __aenter__(self):
-        global _hunt_queue_depth
-        async with _hunt_queue_lock:
-            if _hunt_queue_depth >= MAX_QUEUED_HUNTS:
+        global _active_hunt_count
+        async with _active_hunt_lock:
+            if _active_hunt_count:
                 raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        f"THOS is at capacity ({MAX_CONCURRENT_HUNTS} hunts running, "
-                        f"{MAX_QUEUED_HUNTS} queued). Please retry shortly."
-                    ),
+                    status_code=409,
+                    detail="A hunt is already running. Wait for it to complete before starting another hypothesis.",
                 )
-            _hunt_queue_depth += 1
-        try:
-            try:
-                await asyncio.wait_for(
-                    _hunt_semaphore.acquire(), timeout=HUNT_QUEUE_TIMEOUT_SECONDS
-                )
-            except asyncio.TimeoutError:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        f"Timed out after {HUNT_QUEUE_TIMEOUT_SECONDS}s waiting for a "
-                        f"free hunt slot ({MAX_CONCURRENT_HUNTS} running concurrently). "
-                        f"Please retry shortly."
-                    ),
-                )
-        finally:
-            async with _hunt_queue_lock:
-                _hunt_queue_depth -= 1
+            _active_hunt_count += 1
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        _hunt_semaphore.release()
+        global _active_hunt_count
+        async with _active_hunt_lock:
+            _active_hunt_count = max(0, _active_hunt_count - 1)
         return False
 
 
@@ -196,12 +156,18 @@ class HuntRequest(BaseModel):
     hunter_name: str = "anonymous"
     hypothesis_id: str | None = None
     hypothesis_text: str | None = None
+    hypothesis_tactic: str = ""
+    hypothesis_technique: str = ""
     siem_type: str = "mock"
     # Only used when siem_type == "folder": local directory containing
     # log artifacts (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) to
     # hunt against instead of a live SIEM API.
     log_source_path: str | None = None
-    max_iterations: int = 3
+    max_iterations: int = Field(
+        default_factory=lambda: max(1, min(5, int(get_value("general", "default_iterations", default=1)))),
+        ge=1,
+        le=5,
+    )
     # "1" = Executive cover page (plain-language, for management/compliance)
     # "2" = SOC Analyst cover panel (technique/tactic/ingestion-stats table)
     cover_style: str = "1"
@@ -240,7 +206,13 @@ class FeedbackRequest(BaseModel):
 class RulePromotionRequest(BaseModel):
     hunt_id: str
     rule_yaml: str
-    approved_by: str
+    approval_id: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=16_000)
+    history: list[dict[str, str]] = []
+    analyst: str = "analyst"
 
 
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
@@ -251,6 +223,8 @@ def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
         "log_source_path": req.log_source_path,
         "hypothesis_id": req.hypothesis_id,
         "hypothesis_text": req.hypothesis_text or "",
+        "hypothesis_tactic": req.hypothesis_tactic,
+        "hypothesis_technique": req.hypothesis_technique,
         "logs": [],
         "iteration": 0,
         "max_iterations": req.max_iterations,
@@ -271,6 +245,63 @@ async def health():
 async def hypotheses(tactic: str = ""):
     """Proxy to the HEARTH hypothesis tool so the chat-ui doesn't need direct MCP access."""
     return await call_tool("list_hearth_hypotheses", {"tactic": tactic})
+
+
+@app.get("/hypotheses/last-runs", dependencies=[Depends(require_api_key)])
+async def hypothesis_last_runs():
+    return await audit.hypothesis_last_runs()
+
+
+@app.get("/hunt/status", dependencies=[Depends(require_api_key)])
+async def hunt_status():
+    return {"active": _active_hunt_count > 0, "active_count": _active_hunt_count}
+
+
+@app.post("/siem/test/{siem_type}", dependencies=[Depends(require_api_key)])
+async def test_siem_connection(siem_type: str):
+    queries = {
+        "mock": "*",
+        "folder": "*",
+        "wazuh": '{"query":{"match_all":{}}}',
+        "logrhythm": "*",
+        "splunk": "search * | head 1",
+        "qradar": "SELECT * FROM events LAST 5 MINUTES",
+    }
+    if siem_type not in queries:
+        raise HTTPException(status_code=404, detail="unsupported SIEM")
+    result = await call_tool("fetch_siem_logs", {"query": queries[siem_type], "limit": 1, "siem_type": siem_type})
+    if result.get("error"):
+        raise HTTPException(status_code=422, detail=result["error"])
+    return {"status": "connected", "siem_type": siem_type, "record_count": result.get("record_count", 0)}
+
+
+_NEXT_PIPELINE_NODE = {
+    "refresh_hearth_kb": "hypothesis", "hypothesis": "hunt_memory",
+    "hunt_memory": "supervisor", "supervisor": "query_gen",
+    "query_gen": "siem_fetch", "siem_fetch": "log_processing",
+    "log_processing": "guardrail", "guardrail": "soc_tools",
+    "soc_tools": "coverage_gap", "coverage_gap": "threat_intel",
+    "threat_intel": "reasoning", "verifier": "detection_engineering",
+    "detection_engineering": "communication", "communication": "report",
+}
+
+
+def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
+    if completed_node == "reasoning":
+        from services.orchestration.graph import route_after_reasoning
+        route = route_after_reasoning(state)
+        return None if route == "failed" else route
+    return _NEXT_PIPELINE_NODE.get(completed_node)
+
+
+@app.post("/chat", dependencies=[Depends(require_api_key)])
+async def chat_with_model(request: ChatRequest):
+    from services.chat_agent import chat
+    try:
+        return await chat(request.message, request.history, request.analyst)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("MCP-backed chat failed")
+        raise HTTPException(status_code=502, detail=f"The local model chat failed: {exc}") from exc
 
 
 @app.get("/log_sources", dependencies=[Depends(require_api_key)])
@@ -375,7 +406,10 @@ async def update_case(case_id: str, request: CaseUpdateRequest):
 async def decide_approval(approval_id: str, request: ApprovalDecisionRequest):
     if request.status not in {"approved", "rejected"}:
         raise HTTPException(status_code=422, detail="status must be approved or rejected")
-    result = await audit.decide_approval(approval_id, request.status, request.decided_by)
+    decided_by = request.decided_by.strip()
+    if not decided_by:
+        raise HTTPException(status_code=422, detail="decided_by must identify the human reviewer")
+    result = await audit.decide_approval(approval_id, request.status, decided_by)
     if result is None:
         raise HTTPException(status_code=404, detail="pending approval not found")
     return result
@@ -412,17 +446,26 @@ async def get_hunt_metrics(hunt_id: str):
 
 @app.post("/detection-rules/promote", dependencies=[Depends(require_api_key)], status_code=201)
 async def promote_detection_rule(request: RulePromotionRequest):
-    """Promote an approved proposal to staging only; live rules remain untouched."""
+    """Stage a proposal only after a human approved this exact rule content."""
     rule = request.rule_yaml.strip()
-    if not request.hunt_id.strip() or not request.approved_by.strip():
-        raise HTTPException(status_code=422, detail="hunt_id and approved_by are required")
+    if not request.hunt_id.strip() or not request.approval_id.strip():
+        raise HTTPException(status_code=422, detail="hunt_id and approval_id are required")
     if len(rule) > 20_000 or "status: experimental" not in rule or "title:" not in rule or "detection:" not in rule:
         raise HTTPException(status_code=422, detail="only an experimental THOS detection proposal may be staged")
+    approval = await audit.get_approval(request.approval_id)
+    approval_error = detection_rule_approval_error(approval, request.hunt_id, rule)
+    if approval_error:
+        raise HTTPException(status_code=403, detail=approval_error)
     staging = Path(os.environ.get("DETECTION_PROPOSALS_DIR", "/data/detection_rule_proposals"))
     staging.mkdir(parents=True, exist_ok=True)
     safe_hunt = "".join(char for char in request.hunt_id if char.isalnum() or char == "-")[:64]
     path = staging / f"{safe_hunt}_approved.yml"
-    path.write_text(f"# Approved by: {request.approved_by}\n# Hunt: {request.hunt_id}\n{rule}\n", encoding="utf-8")
+    path.write_text(
+        f"# Approval: {request.approval_id}\n"
+        f"# Approved by: {approval['decided_by']}\n"
+        f"# Hunt: {request.hunt_id}\n{rule}\n",
+        encoding="utf-8",
+    )
     return {"status": "staged", "path": str(path), "message": "Rule is staged only; review and merge it into the live ruleset through change control."}
 
 
@@ -474,9 +517,9 @@ async def run_hunt(req: HuntRequest):
                         duration_ms = int((time.perf_counter() - last_step_at) * 1000)
                         last_step_at = time.perf_counter()
                         if partial is None:
-                            logger.warning("node '%s' returned None instead of a dict — skipping merge", node_name, extra={"node": node_name})
-                            await audit.log_tool_error(hunt_id, node_name, "node returned None instead of a partial-state dict")
-                            continue
+                            # LangGraph uses None for a successful node with no
+                            # state mutation (for example a no-op KB refresh).
+                            partial = {}
                         final_state.update(partial)
                         await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
             except Exception as e:
@@ -486,6 +529,18 @@ async def run_hunt(req: HuntRequest):
                 await audit.log_tool_error(hunt_id, "graph", tb)
                 await audit.log_hunt_complete(hunt_id, "failed")
                 return {"hunt_id": hunt_id, "error": str(e), "state": final_state}
+
+            if final_state.get("reasoning_failed"):
+                failure = final_state.get("error") or "reasoning failed after three attempts"
+                await audit.log_tool_error(
+                    hunt_id,
+                    "reasoning",
+                    failure,
+                    {"attempts": final_state.get("reasoning_attempts", 3)},
+                )
+                await audit.log_hunt_complete(hunt_id, "failed")
+                logger.error("hunt stopped without report: %s", failure, extra={"node": "reasoning"})
+                return final_state
 
             await audit.log_hunt_complete(hunt_id, "completed")
             await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
@@ -545,18 +600,27 @@ async def run_hunt_stream(req: HuntRequest):
         last_step_at = time.perf_counter()
         try:
             yield json.dumps({"event": "hunt_started", "hunt_id": hunt_id}) + "\n"
+            yield json.dumps({"event": "node_started", "node": "refresh_hearth_kb"}) + "\n"
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
                     for node_name, partial in step.items():
                         duration_ms = int((time.perf_counter() - last_step_at) * 1000)
                         last_step_at = time.perf_counter()
                         if partial is None:
-                            logger.warning("node '%s' returned None instead of a dict — skipping merge", node_name, extra={"node": node_name})
-                            await audit.log_tool_error(hunt_id, node_name, "node returned None instead of a partial-state dict")
-                            continue
+                            # Keep no-op nodes in progress/audit output without
+                            # treating a valid empty update as a tool failure.
+                            partial = {}
                         final_state.update(partial)
                         await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
-                        yield json.dumps({"event": "node_complete", "node": node_name, "data": partial}, default=str) + "\n"
+                        yield json.dumps({
+                            "event": "node_complete",
+                            "node": node_name,
+                            "duration_ms": duration_ms,
+                            "data": partial,
+                        }, default=str) + "\n"
+                        next_node = _next_pipeline_node(node_name, final_state)
+                        if next_node:
+                            yield json.dumps({"event": "node_started", "node": next_node}) + "\n"
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
@@ -564,6 +628,24 @@ async def run_hunt_stream(req: HuntRequest):
                 await audit.log_tool_error(hunt_id, "graph", tb)
                 await audit.log_hunt_complete(hunt_id, "failed")
                 yield json.dumps({"event": "error", "error": str(e)}) + "\n"
+                return
+
+            if final_state.get("reasoning_failed"):
+                failure = final_state.get("error") or "reasoning failed after three attempts"
+                await audit.log_tool_error(
+                    hunt_id,
+                    "reasoning",
+                    failure,
+                    {"attempts": final_state.get("reasoning_attempts", 3)},
+                )
+                await audit.log_hunt_complete(hunt_id, "failed")
+                logger.error("hunt stopped without report: %s", failure, extra={"node": "reasoning"})
+                yield json.dumps({"event": "error", "error": failure}) + "\n"
+                yield json.dumps({
+                    "event": "hunt_complete",
+                    "hunt_id": hunt_id,
+                    "state": final_state,
+                }, default=str) + "\n"
                 return
 
             try:

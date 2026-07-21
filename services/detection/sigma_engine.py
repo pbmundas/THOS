@@ -63,6 +63,8 @@ import re
 
 import yaml
 
+from services.runtime_config import get_value
+
 RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sigma_rules")
 
 
@@ -80,7 +82,11 @@ def load_rules(rules_dir: str = RULES_DIR) -> list[dict]:
         except (yaml.YAMLError, OSError) as e:
             # A single malformed rule file must never abort the whole load.
             rules.append({"_path": path, "_load_error": str(e)})
-    return [r for r in rules if "_load_error" not in r]
+    disabled = {str(item) for item in get_value("sigma", "disabled_rule_ids", default=[]) or []}
+    return [
+        r for r in rules
+        if "_load_error" not in r and str(r.get("id", "unknown")) not in disabled
+    ]
 
 
 def _field_value(record: dict, field: str):

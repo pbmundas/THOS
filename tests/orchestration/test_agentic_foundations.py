@@ -10,7 +10,11 @@ import datetime
 from services.guardrails.sentinel import guardrail_node
 from services.orchestration.supervisor import plan_hunt_node
 from services.verification.verifier import verify_findings_node
-from services.reporting.report import write_report_node
+from services.reporting.report import (
+    _render_cover,
+    _representative_log_sample,
+    write_report_node,
+)
 
 
 def test_supervisor_selects_optional_read_only_branches():
@@ -40,6 +44,44 @@ def test_verifier_requires_valid_citations():
     }))
     assert passed["verifier_result"]["status"] == "passed"
     assert failed["human_approval_required"] is True
+
+
+def test_verifier_accepts_bounded_reference_lists_and_ranges():
+    result = asyncio.run(verify_findings_node({
+        "findings": "- [hard-evidence] Supported (evidence: details; ref: 1-3, 5)",
+        "processed_logs": [{}, {}, {}, {}, {}, {}],
+    }))
+
+    assert result["verifier_result"]["status"] == "passed"
+    assert result["verifier_result"]["checked_citations"] == 4
+
+
+def test_failed_verification_cannot_become_executive_headline():
+    cover = _render_cover(
+        cover_style="1", hunt_id="hunt-1", hypothesis_id="H013",
+        technique_id="T1059.001", technique_name="PowerShell", tactic="Execution",
+        log_source="folder", hunter_name="analyst", records_analyzed=10,
+        sigma_rules_matched=1, sigma_matched_records=2,
+        findings="- [hard-evidence] Unverified claim",
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        verification_passed=False,
+    )
+
+    assert "citation verification failed" in cover
+    assert "Unverified claim" not in cover
+
+
+def test_report_sample_is_bounded_valid_json():
+    import json
+
+    sample = _representative_log_sample([
+        {"event": "4104", "detail": "x" * 2000, "host": "host-a"},
+        {"event": "1116", "detail": "defender"},
+    ], [0], limit=2)
+    parsed = json.loads(sample)
+
+    assert parsed[0]["ref"] == 0
+    assert len(parsed[0]["detail"]) <= 501
 
 
 def test_verifier_proactively_creates_case_and_approval_on_failure():

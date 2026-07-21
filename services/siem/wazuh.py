@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from services.runtime_config import env_or_runtime
+
 from services.observability.retry import sync_retry
 
 
@@ -66,7 +68,7 @@ _SEARCH_FIELD_NAMES = {field.split("^", 1)[0] for field in _SEARCH_FIELDS}
 
 
 def _positive_int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name, str(default))
+    raw = env_or_runtime(name, "wazuh", str(default))
     try:
         value = int(raw)
     except ValueError as exc:
@@ -77,10 +79,11 @@ def _positive_int_env(name: str, default: int) -> int:
 
 
 def _get_config() -> dict[str, Any]:
-    base_url = os.environ.get("WAZUH_INDEXER_URL", "").rstrip("/")
-    username = os.environ.get("WAZUH_INDEXER_USERNAME", "")
-    password = os.environ.get("WAZUH_INDEXER_PASSWORD", "")
-    source = os.environ.get("WAZUH_INDEX_SOURCE", "both").strip().lower()
+    setting = lambda name, default="": env_or_runtime(name, "wazuh", default)
+    base_url = setting("WAZUH_INDEXER_URL").rstrip("/")
+    username = setting("WAZUH_INDEXER_USERNAME")
+    password = setting("WAZUH_INDEXER_PASSWORD")
+    source = setting("WAZUH_INDEX_SOURCE", "both").strip().lower()
 
     if not base_url or not username or not password:
         raise WazuhConfigError(
@@ -98,8 +101,8 @@ def _get_config() -> dict[str, Any]:
             "WAZUH_INDEX_SOURCE must be one of: alerts, archives, both."
         )
 
-    verify_ssl = os.environ.get("WAZUH_VERIFY_SSL", "1") != "0"
-    ca_bundle = os.environ.get("WAZUH_CA_BUNDLE", "").strip()
+    verify_ssl = setting("WAZUH_VERIFY_SSL", "1") != "0"
+    ca_bundle = setting("WAZUH_CA_BUNDLE").strip()
     verify: bool | str = ca_bundle if verify_ssl and ca_bundle else verify_ssl
 
     return {

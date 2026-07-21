@@ -36,6 +36,8 @@ from services.communication.audience import communicate_node
 
 
 def route_after_reasoning(state: HuntState) -> str:
+    if state.get("reasoning_failed"):
+        return "failed"
     follow_up = (state.get("follow_up_query") or "").strip()
     # One targeted refinement is useful; repeated full-pipeline loops are
     # expensive and tend to re-analyze the same data rather than add evidence.
@@ -83,6 +85,7 @@ def build_graph():
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
         "siem_fetch": "siem_fetch",
         "verifier": "verifier",
+        "failed": END,
     })
     graph.add_edge("verifier", "detection_engineering")
     graph.add_edge("detection_engineering", "communication")

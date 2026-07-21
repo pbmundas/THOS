@@ -3,7 +3,7 @@
 # =====================================================================
 # Stack: Ollama (Qwen) + ChromaDB (RAG) + FastMCP (tools) + LangGraph
 #        (orchestrator) + Postgres (audit/state) + Redis (cache) +
-#        Gradio Chat UI (hunter interface)
+#        React analyst UI + secured FastAPI gateway
 #
 # Quickstart:
 #   cp .env.example .env          # then edit as needed
@@ -33,6 +33,7 @@ volumes:
   chroma_data:
   postgres_data:
   redis_data:
+  sigmahq_rules:
 
 services:
 
@@ -232,7 +233,37 @@ services:
       retries: 10
 
   # ------------------------------------------------------------
-  # 6. MCP Server — SOC Tools
+  # 6. SigmaHQ Rules — one-shot corpus initializer
+  # ------------------------------------------------------------
+  sigmahq-rules-init:
+    build:
+      context: .
+      dockerfile: services/detection/Dockerfile.sigma-init
+    container_name: thos-sigmahq-rules-init
+    restart: "no"
+    environment:
+      # Pinned for reproducible deployments. Override deliberately to test
+      # another upstream commit; never use a moving branch in production.
+      SIGMAHQ_REF: ${SIGMAHQ_REF:-282369fa76c5cd6103b055478fbaebec8530cfa5}
+      SIGMAHQ_MIN_RULES: ${SIGMAHQ_MIN_RULES:-2000}
+      SIGMAHQ_VENDOR_DIR: /vendor
+      SIGMAHQ_RULES_DIR: /rules
+    volumes:
+      # Prefer a reviewed, committed corpus for offline deployments. The
+      # initializer downloads the pinned ref only when this directory and
+      # the persistent rules volume do not contain a complete corpus.
+      - ./services/detection/sigma_rules_hq:/vendor:ro
+      - sigmahq_rules:/rules
+    networks:
+      - thos-net
+    deploy:
+      resources:
+        limits:
+          cpus: "${SIGMAHQ_INIT_CPU_LIMIT:-1}"
+          memory: ${SIGMAHQ_INIT_MEM_LIMIT:-512m}
+
+  # ------------------------------------------------------------
+  # 7. MCP Server — SOC Tools
   # ------------------------------------------------------------
   mcp:
     build:
@@ -266,6 +297,7 @@ services:
       # trusted local dev box.
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-thos_change_me_mcp_token}
       REPORTS_DIR: /data/reports
+      THOS_RUNTIME_CONFIG: /data/runtime/config.json
       DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       SIEM_TYPE: ${SIEM_TYPE:-mock}
       LOG_SOURCE_DIR: /data/log_sources
@@ -283,6 +315,10 @@ services:
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
       - ./data/threat_intel:/data/threat_intel:ro
       - ./data/log_sources:/data/log_sources
+      - ./data/runtime:/data/runtime
+      # The initializer guarantees this volume has the pinned community
+      # corpus before MCP starts; MCP only receives a read-only view.
+      - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
     deploy:
       resources:
         limits:
@@ -297,11 +333,13 @@ services:
         condition: service_healthy
       ollama-model-init:
         condition: service_completed_successfully
+      sigmahq-rules-init:
+        condition: service_completed_successfully
     networks:
       - thos-net
 
   # ------------------------------------------------------------
-  # 7. Orchestrator — LangGraph Engine
+  # 8. Orchestrator — LangGraph Engine
   # ------------------------------------------------------------
   orchestrator:
     build:
@@ -331,6 +369,7 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
       REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
       REPORTS_DIR: /data/reports
+      THOS_RUNTIME_CONFIG: /data/runtime/config.json
       DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       # Structured JSON logs to stdout (services/observability/logging_config.py).
       # One of DEBUG/INFO/WARNING/ERROR.
@@ -339,6 +378,7 @@ services:
       - ./data/reports:/data/reports
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
       - ./data/threat_intel:/data/threat_intel:ro
+      - ./data/runtime:/data/runtime
     deploy:
       resources:
         limits:
@@ -357,40 +397,50 @@ services:
       - thos-net
 
   # ------------------------------------------------------------
-  # 8. Chat UI — Gradio hunter interface
+  # 9. Analyst UI — React workspace + secured FastAPI gateway
   # ------------------------------------------------------------
   chat-ui:
     build:
-      context: ./services/api
-      dockerfile: Dockerfile.chatui
+      context: .
+      dockerfile: services/api/Dockerfile.chatui
     container_name: thos-chat-ui
     restart: unless-stopped
     ports:
       - "7860:7860"
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8200
+      OLLAMA_HOST: http://ollama:11434
+      THOS_RUNTIME_CONFIG: /data/runtime/config.json
+      TZ: ${TZ:-Asia/Kolkata}
+      SIGMAHQ_UI_RULES_DIR: /data/sigmahq
+      SIGMA_LOCAL_UI_RULES_DIR: /data/sigma-local
       # Must match orchestrator's ORCHESTRATOR_API_KEY above — this is how
       # the chat UI authenticates to the orchestrator API as a client.
       ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-thos_change_me_orchestrator_key}
-      # Gates the Gradio app itself behind a login page. Change these in
+      # Credentials accepted by the branded SOCmate login page. Change these in
       # .env before deploying anywhere but a trusted local dev box.
       # Single-user default:
       CHATUI_USERNAME: ${CHATUI_USERNAME:-analyst}
       CHATUI_PASSWORD: ${CHATUI_PASSWORD:-thos_change_me}
-      # For more than one hunter login, set CHATUI_USERS instead (takes
+      # HMAC key for the HTTP-only analyst session cookie. Use a long random
+      # value in production. Enable Secure cookies when serving through HTTPS.
+      CHATUI_SESSION_SECRET: ${CHATUI_SESSION_SECRET:-thos_change_me_session_key}
+      CHATUI_SESSION_TTL_SECONDS: ${CHATUI_SESSION_TTL_SECONDS:-43200}
+      CHATUI_SECURE_COOKIE: ${CHATUI_SECURE_COOKIE:-0}
+      # For more than one analyst login, set CHATUI_USERS instead (takes
       # precedence over CHATUI_USERNAME/CHATUI_PASSWORD when non-empty):
       #   CHATUI_USERS=alice:pw1,bob:pw2
       CHATUI_USERS: ${CHATUI_USERS:-}
       REPORTS_DIR: /data/reports
       LOG_SOURCE_DIR: /data/log_sources
-      # Structured JSON logs to stdout (self-contained setup in app.py --
-      # see the comment there for why it doesn't share
-      # services/observability/logging_config.py). One of
-      # DEBUG/INFO/WARNING/ERROR.
+      # Structured gateway logs to stdout. One of DEBUG/INFO/WARNING/ERROR.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data/reports:/data/reports
       - ./data/log_sources:/data/log_sources
+      - ./data/runtime:/data/runtime
+      - ./services/detection/sigma_rules:/data/sigma-local:ro
+      - sigmahq_rules:/data/sigmahq:ro
     deploy:
       resources:
         limits:
@@ -398,5 +448,11 @@ services:
           memory: ${CHATUI_MEM_LIMIT:-1g}
     depends_on:
       - orchestrator
+      - ollama
     networks:
       - thos-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7860/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10

@@ -55,6 +55,7 @@ from typing import Any
 import httpx
 
 from services.observability.retry import sync_retry
+from services.runtime_config import env_or_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,9 @@ class SplunkAPIError(RuntimeError):
 
 
 def _get_config() -> dict:
-    base_url = os.environ.get("SPLUNK_BASE_URL", "").rstrip("/")
-    token = os.environ.get("SPLUNK_TOKEN", "")
+    setting = lambda name, default="": env_or_runtime(name, "splunk", default)
+    base_url = setting("SPLUNK_BASE_URL").rstrip("/")
+    token = setting("SPLUNK_TOKEN")
     if not base_url or not token:
         raise SplunkConfigError(
             "Splunk is not configured. Set SPLUNK_BASE_URL "
@@ -79,10 +81,10 @@ def _get_config() -> dict:
     return {
         "base_url": base_url,
         "token": token,
-        "verify_ssl": os.environ.get("SPLUNK_VERIFY_SSL", "1") != "0",
-        "lookback": os.environ.get("SPLUNK_LOOKBACK", "-24h"),
-        "poll_interval": float(os.environ.get("SPLUNK_POLL_INTERVAL_SECONDS", "2")),
-        "poll_timeout": float(os.environ.get("SPLUNK_POLL_TIMEOUT_SECONDS", "60")),
+        "verify_ssl": setting("SPLUNK_VERIFY_SSL", "1") != "0",
+        "lookback": setting("SPLUNK_LOOKBACK", "-24h"),
+        "poll_interval": float(setting("SPLUNK_POLL_INTERVAL_SECONDS", "2")),
+        "poll_timeout": float(setting("SPLUNK_POLL_TIMEOUT_SECONDS", "60")),
     }
 
 

@@ -9,6 +9,11 @@ from services.observability import cache
 from services.mcp.mcp_client import call_tool
 
 logger = logging.getLogger(__name__)
+REASONING_MAX_ATTEMPTS = 3
+
+
+class ReasoningResponseError(RuntimeError):
+    """The model returned a response that cannot safely drive a report."""
 
 # --------------------------------------------------------------------
 # System prompt — this is the single place to tune analysis DEPTH and
@@ -136,7 +141,7 @@ Respond ONLY with a JSON object with these exact keys:
   "findings": [
     {"claim": "<the finding, stated plainly>",
      "evidence": "<the literal field/value that supports it, or 'absent across N records per histogram'>",
-     "ref": "<record _ref index this is based on, or 'histogram'>",
+     "ref": "<one record _ref index, comma-separated indices, a compact inclusive range such as 4-7, or 'histogram'>",
      "confidence": "<hard-evidence | circumstantial>"}
   ],
   "recommendations": "<specific, actionable bullet-point recommendations as a single string with \\n separators>",
@@ -311,93 +316,102 @@ def _render_findings(findings) -> str:
     return str(findings)
 
 
-def _extract_json(raw: str) -> dict:
-    """Best-effort recovery of the JSON object the model was asked to
-    return, even if it wrapped it in markdown fences, prose, or the
-    completion got cut short before the closing brace."""
-    cleaned = raw.strip().strip("`").strip()
-    if cleaned.lower().startswith("json"):
-        cleaned = cleaned[4:].strip()
+def _parse_complete_reasoning(raw: str) -> dict:
+    """Strictly validate a complete reasoning response before reporting.
 
-    # Try straightforward parse first.
-    try:
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError):
-        pass
-
-    # Fall back to grabbing the outermost {...} span, in case the model
-    # added commentary before/after the JSON object.
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = cleaned[start:end + 1]
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: the completion was likely truncated before it could
-    # close its braces/quotes. Try to salvage whatever fields we can via
-    # regex instead of discarding the whole response. "findings" is a
-    # JSON array in the expected schema, not a plain string, so it's
-    # excluded from this string-field salvage and handled generically.
-    salvaged = {}
-    for key in ("summary", "recommendations", "follow_up_query"):
-        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)', cleaned)
-        if m:
-            salvaged[key] = m.group(1).replace('\\n', '\n').replace('\\"', '"')
-    m = re.search(r'"need_more_logs"\s*:\s*(true|false)', cleaned)
-    if m:
-        salvaged["need_more_logs"] = m.group(1) == "true"
-
-    if salvaged:
-        salvaged.setdefault("summary", cleaned[:500])
-        salvaged.setdefault("findings", "Response was truncated before findings could be parsed — see raw summary.")
-        salvaged.setdefault("recommendations", "Re-run with a smaller log sample or shorter max output; response was cut off.")
-        salvaged.setdefault("need_more_logs", False)
-        salvaged.setdefault("follow_up_query", "")
-        return salvaged
-
-    return {
-        "summary": cleaned[:500] or "(model returned an empty response)",
-        "findings": "Could not parse structured findings — see raw summary.",
-        "recommendations": "Re-run the hunt; if this repeats, the model may be timing out or truncating — check num_ctx/num_predict settings.",
-        "need_more_logs": False,
-        "follow_up_query": "",
-    }
-
-
-def _deterministic_fallback(state: HuntState, histogram: dict) -> dict:
-    """Produce an explicitly degraded but evidence-grounded result.
-
-    A missing local-model response must never turn into a polished but empty
-    report. This fallback is deliberately conservative: it reports only the
-    deterministic detection output and ingestion coverage already observed.
+    The old salvage path intentionally recovered fragments from truncated JSON,
+    but that allowed unfinished model output to become a polished report. A
+    response now counts as a successful strike only when every required field
+    is present, non-empty, and structurally usable.
     """
-    logs = state.get("processed_logs") or []
-    refs = state.get("sigma_matched_refs") or []
-    matched = state.get("sigma_matched_count", 0)
-    if refs:
-        finding = {
-            "claim": f"Deterministic detection layers flagged {matched} record(s); analyst validation is required because the reasoning model did not return a response.",
-            "evidence": f"Sigma/detection matcher selected {matched} of {len(logs)} processed records.",
-            "ref": str(refs[0]),
-            "confidence": "circumstantial",
-        }
-    else:
-        finding = {
-            "claim": "No deterministic detection match was produced; the model reasoning response was unavailable, so this hunt is inconclusive.",
-            "evidence": f"Histogram covers {len(logs)} processed records: {json.dumps(histogram)}",
-            "ref": "histogram",
-            "confidence": "circumstantial",
-        }
-    return {
-        "summary": "Degraded analysis: the local reasoning model returned no final response. This report contains deterministic telemetry evidence only and requires analyst review.",
-        "findings": [finding],
-        "recommendations": "- Verify Ollama model availability and response logs.\n- Re-run this hunt after the model returns a non-empty response.\n- Review the cited deterministic records before taking action.",
-        "need_more_logs": False,
-        "follow_up_query": "",
-    }
+    cleaned = str(raw or "").strip()
+    if not cleaned:
+        raise ReasoningResponseError("model returned an empty response")
+    if cleaned.startswith("```") and cleaned.endswith("```"):
+        cleaned = cleaned[3:-3].strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ReasoningResponseError(
+            f"model returned incomplete or invalid JSON ({exc.msg} at character {exc.pos})"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ReasoningResponseError("model response was not a JSON object")
+
+    summary = parsed.get("summary")
+    findings = parsed.get("findings")
+    recommendations = parsed.get("recommendations")
+    need_more_logs = parsed.get("need_more_logs")
+    follow_up_query = parsed.get("follow_up_query")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ReasoningResponseError("model response had no summary")
+    if not isinstance(findings, list) or not findings:
+        raise ReasoningResponseError("model response had no findings")
+    for index, finding in enumerate(findings, start=1):
+        if not isinstance(finding, dict):
+            raise ReasoningResponseError(f"finding {index} was not an object")
+        for field in ("claim", "evidence", "ref", "confidence"):
+            if not isinstance(finding.get(field), str) or not finding[field].strip():
+                raise ReasoningResponseError(f"finding {index} had no {field}")
+        if finding["confidence"] not in {"hard-evidence", "circumstantial"}:
+            raise ReasoningResponseError(f"finding {index} had an invalid confidence")
+    if not isinstance(recommendations, str) or not recommendations.strip():
+        raise ReasoningResponseError("model response had no recommendations")
+    if not isinstance(need_more_logs, bool):
+        raise ReasoningResponseError("model response had no boolean need_more_logs value")
+    if not isinstance(follow_up_query, str):
+        raise ReasoningResponseError("model response had no follow_up_query string")
+    if need_more_logs and not follow_up_query.strip():
+        raise ReasoningResponseError("model requested more logs without a follow-up query")
+    return parsed
+
+
+async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | None, int, str | None]:
+    """Run exactly three independent reasoning attempts, stopping on success."""
+    failures: list[str] = []
+    for attempt in range(1, REASONING_MAX_ATTEMPTS + 1):
+        try:
+            raw = await generate(
+                prompt,
+                system=SYSTEM_PROMPT,
+                format=FINDINGS_SCHEMA,
+                agent="reasoning",
+                # The strike loop owns retries. Avoid hidden nested attempts so
+                # "three strikes" always means exactly three model requests.
+                transport_retries=0,
+            )
+            parsed = _parse_complete_reasoning(raw)
+            return raw, parsed, attempt, None
+        except Exception as exc:  # noqa: BLE001 - each failure is a recorded strike
+            reason = str(exc).strip() or exc.__class__.__name__
+            failures.append(f"attempt {attempt}: {reason}")
+            logger.warning(
+                "reasoning strike %d/%d failed: %s",
+                attempt,
+                REASONING_MAX_ATTEMPTS,
+                reason,
+            )
+            if attempt < REASONING_MAX_ATTEMPTS:
+                await asyncio.sleep(attempt)
+    return None, None, REASONING_MAX_ATTEMPTS, "; ".join(failures)
+
+
+def _recommendations_or_default(state: HuntState, value) -> str:
+    recommendations = str(value or "").strip()
+    if recommendations:
+        return recommendations
+    if (state.get("technique_id") or "").upper() == "T1059.001":
+        return (
+            "- Enable PowerShell Script Block Logging (Event ID 4104) and Module Logging through Group Policy.\n"
+            "- Enable process-creation command-line auditing (Security 4688) and Sysmon Event ID 1.\n"
+            "- Review the cited PowerShell host, user, script content, and parent process before containment."
+        )
+    return (
+        "- Review every cited record and correlate its host, user, and timestamp with adjacent telemetry.\n"
+        "- Validate listed coverage gaps before treating absence of evidence as a clean result."
+    )
 
 
 async def _build_kb_context(state: HuntState, max_chunks: int = 3, max_chars: int = 600) -> str:
@@ -494,7 +508,7 @@ async def reason_node(state: HuntState) -> dict:
         f"across event types, up to {_PER_EVENT_TYPE_CAP} per type — each "
         f"tagged with '_ref' for citation):\n"
         f"{json.dumps(sample, indent=2)}\n\n"
-        f"Current iteration: {state.get('iteration', 0) + 1} of {state.get('max_iterations', 3)}"
+        f"Current iteration: {state.get('iteration', 0) + 1} of {state.get('max_iterations', 1)}"
     )
 
     # cache.py existed but nothing called it for LLM reasoning — re-running
@@ -505,27 +519,58 @@ async def reason_node(state: HuntState) -> dict:
     # is safe: an identical prompt can only come from an identical hunt
     # state, never a stale/different one.
     # Versioned key bypasses historical empty-response cache entries.
-    cache_key = "v2|" + prompt
-    raw = await asyncio.to_thread(cache.cache_get, "reasoning", cache_key)
-    if not isinstance(raw, str) or not raw.strip():
+    cache_key = "v3|" + prompt
+    cached_raw = await asyncio.to_thread(cache.cache_get, "reasoning", cache_key)
+    parsed = None
+    reasoning_cache_hit = False
+    reasoning_attempts = 0
+    reasoning_error = None
+    if isinstance(cached_raw, str) and cached_raw.strip():
         try:
-            raw = await generate(prompt, system=SYSTEM_PROMPT, format=FINDINGS_SCHEMA, agent="reasoning")
-        except Exception as exc:  # deterministic fallback keeps the hunt auditable
-            logger.warning("reasoning model unavailable; using evidence-only fallback: %s", exc)
-            raw = ""
-        if raw.strip():
+            parsed = _parse_complete_reasoning(cached_raw)
+            reasoning_cache_hit = True
+        except ReasoningResponseError as exc:
+            logger.warning("ignoring invalid reasoning cache entry: %s", exc)
+
+    if parsed is None:
+        raw, parsed, reasoning_attempts, reasoning_error = await _reason_with_three_strikes(prompt)
+        if raw is not None and parsed is not None:
             await asyncio.to_thread(cache.cache_set, "reasoning", cache_key, raw)
-    parsed = _deterministic_fallback(state, histogram) if not raw.strip() else _extract_json(raw)
+
+    if parsed is None:
+        terminal_error = (
+            f"Report not generated: the reasoning model failed all {REASONING_MAX_ATTEMPTS} attempts. "
+            f"{reasoning_error or 'No valid response was returned.'}"
+        )
+        return {
+            "reasoning_summary": "",
+            "findings": "",
+            "recommendations": "",
+            "need_more_logs": False,
+            "follow_up_query": None,
+            "iteration": state.get("iteration", 0) + 1,
+            "reasoning_cache_hit": False,
+            "reasoning_failed": True,
+            "reasoning_attempts": REASONING_MAX_ATTEMPTS,
+            "reasoning_error": reasoning_error or "no valid response was returned",
+            "report_status": "not_generated",
+            "error": terminal_error,
+        }
 
     iteration = state.get("iteration", 0) + 1
-    max_iterations = state.get("max_iterations", 3)
+    max_iterations = state.get("max_iterations", 1)
     need_more = bool(parsed.get("need_more_logs")) and iteration < max_iterations
 
     return {
         "reasoning_summary": parsed.get("summary", ""),
         "findings": _render_findings(parsed.get("findings", "")),
-        "recommendations": parsed.get("recommendations", ""),
+        "recommendations": _recommendations_or_default(state, parsed.get("recommendations")),
         "need_more_logs": need_more,
         "follow_up_query": parsed.get("follow_up_query") if need_more else None,
         "iteration": iteration,
+        "reasoning_cache_hit": reasoning_cache_hit,
+        "reasoning_failed": False,
+        "reasoning_attempts": reasoning_attempts,
+        "reasoning_error": None,
+        "report_status": "pending",
     }

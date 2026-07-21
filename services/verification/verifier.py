@@ -10,6 +10,26 @@ import re
 from services.orchestration.state import HuntState
 
 _REF = re.compile(r"ref:\s*([^\)]+)", re.IGNORECASE)
+_REF_LIST = re.compile(r"^\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*$")
+
+
+def _expand_references(value: str) -> list[int] | None:
+    """Parse one ref, comma-separated refs, or compact inclusive ranges."""
+    prefix = value.split(" (", 1)[0].strip()
+    if not _REF_LIST.fullmatch(prefix):
+        return None
+    expanded = []
+    for token in prefix.split(","):
+        token = token.strip()
+        if "-" not in token:
+            expanded.append(int(token))
+            continue
+        start_text, end_text = token.split("-", 1)
+        start, end = int(start_text.strip()), int(end_text.strip())
+        if end < start or end - start > 100:
+            return None
+        expanded.extend(range(start, end + 1))
+    return expanded
 
 
 async def verify_findings_node(state: HuntState) -> dict:
@@ -21,13 +41,14 @@ async def verify_findings_node(state: HuntState) -> dict:
         if ref.lower() == "histogram":
             checked += 1
             continue
-        try:
-            number = int(ref)
+        numbers = _expand_references(ref)
+        if numbers is None:
+            invalid_refs.append(ref)
+            continue
+        for number in numbers:
             checked += 1
             if number < 0 or number >= log_count:
-                invalid_refs.append(ref)
-        except ValueError:
-            invalid_refs.append(ref)
+                invalid_refs.append(str(number))
     no_citation = bool(findings.strip()) and checked == 0
     failed = bool(invalid_refs or no_citation)
     result = {"status": "failed" if failed else "passed", "checked_citations": checked,

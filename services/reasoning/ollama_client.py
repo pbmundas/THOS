@@ -8,7 +8,13 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
 
-async def generate(prompt: str, system: str = None, format: str | dict = "json", agent: str = "reasoning") -> str:
+async def generate(
+    prompt: str,
+    system: str = None,
+    format: str | dict = "json",
+    agent: str = "reasoning",
+    transport_retries: int | None = None,
+) -> str:
     target = target_for(agent)
     payload = {
         "model": target.model,
@@ -33,9 +39,8 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json",
         # reasoning.py's SYSTEM_PROMPT asks for "Respond ONLY with a JSON
         # object" but nothing was enforcing that server-side, so the model
         # was free to reply conversationally (e.g. "Let's continue with
-        # the analysis...") instead of JSON, which _extract_json then had
-        # no valid structure to recover and fell back to the
-        # "Could not parse structured findings" placeholder.
+        # the analysis...") instead of JSON, which the strict reasoning
+        # validator rejects and retries before any report is written.
         #
         # A bare "format": "json" fixes THAT failure mode (guarantees
         # valid JSON syntax) but introduces a milder one: with no schema
@@ -68,5 +73,9 @@ async def generate(prompt: str, system: str = None, format: str | dict = "json",
     # and produced spurious httpx.ReadTimeout failures mid-hunt.
     # Local inference can be temporarily slow while Ollama loads a model;
     # retain the configurable retry policy for quality-sensitive hunts.
-    retries = int(os.environ.get("OLLAMA_GENERATION_RETRIES", "3"))
+    retries = (
+        int(os.environ.get("OLLAMA_GENERATION_RETRIES", "3"))
+        if transport_retries is None
+        else max(0, int(transport_retries))
+    )
     return await async_retry(_do_request, retries=retries, what="ollama_client.generate")

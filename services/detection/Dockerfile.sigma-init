@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+
+COPY services/detection/fetch_sigmahq_rules.py /repo/services/detection/fetch_sigmahq_rules.py
+COPY services/detection/bootstrap_sigmahq_rules.py /repo/services/detection/bootstrap_sigmahq_rules.py
+
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "/repo/services/detection/bootstrap_sigmahq_rules.py"]

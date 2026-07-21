@@ -7,6 +7,7 @@ pySigma rule parsing (covered in tests/detection/test_sigmahq_engine.py)
 or the real MCP round trip.
 """
 import asyncio
+import threading
 
 import pytest
 
@@ -95,3 +96,33 @@ def test_empty_sigmahq_ruleset_still_works_and_notes_it(monkeypatch):
 
     assert result["sigma_matched_count"] == 0
     assert "fetch_sigmahq_rules.py" in result["sigma_rule"]
+
+
+def test_sigma_and_indicator_work_start_concurrently(monkeypatch):
+    sigma_started = threading.Event()
+    indicator_started = threading.Event()
+
+    def sigma_eval(*args, **kwargs):
+        sigma_started.set()
+        assert indicator_started.wait(timeout=2), "indicator call was awaited after Sigma"
+        return _hq_result([], evaluated=1)
+
+    monkeypatch.setattr(soc_tools.sigmahq_engine, "evaluate_all", sigma_eval)
+    monkeypatch.setattr(
+        soc_tools.sigma_engine, "evaluate_all",
+        lambda *args, **kwargs: _thos_result([], evaluated=1),
+    )
+
+    async def indicator_call(name, args):
+        indicator_started.set()
+        for _ in range(200):
+            if sigma_started.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert sigma_started.is_set(), "Sigma work was awaited after indicator derivation"
+        return {"event_ids": [], "keywords": []}
+
+    monkeypatch.setattr(soc_tools, "call_tool", indicator_call)
+    result = asyncio.run(soc_tools.run_soc_tools_node({"processed_logs": []}))
+
+    assert result["enrichment"]["sigma_rules_evaluated"] == 2

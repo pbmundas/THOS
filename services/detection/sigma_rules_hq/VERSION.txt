@@ -27,11 +27,12 @@ for. Excluded on purpose:
     by design here, same limitation the original hand-rolled engine
     documented. None exist in the subtrees above as of this vendoring.
 
-This is a deliberately air-gapped vendoring (THOS targets on-prem/
-air-gapped deployments -- see README.md "Security") rather than a
-runtime fetch from GitHub. To refresh it against upstream, run:
+The application runtime never contacts GitHub. Compose's one-shot
+sigmahq-rules-init may download this pinned commit into a persistent volume
+when the reviewed YAML files are absent. For a deliberately air-gapped
+deployment, vendor the corpus before deployment by running:
 
-    python3 services/detection/fetch_sigmahq_rules.py
+    python3 services/detection/fetch_sigmahq_rules.py --ref <commit>
 
-...from a machine with network + git access (not inside the container),
-then commit the resulting diff under services/detection/sigma_rules_hq/.
+...from a machine with network + git access, then review and commit the
+resulting diff under services/detection/sigma_rules_hq/.

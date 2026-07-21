@@ -50,7 +50,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 
 ```
                          ┌─────────────────────┐
-   Analyst  ──────────▶  │   Chat UI (Gradio)   │  :7860 (only public port)
+   Analyst  ──────────▶  │  Analyst UI (React)  │  :7860 (only public port)
                          └──────────┬───────────┘
                                     │ Bearer token (ORCHESTRATOR_API_KEY)
                                     ▼
@@ -92,7 +92,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Chat frontend | **Gradio** | Single-file app (`services/api/app.py`), Basic-Auth gated |
+| Analyst frontend | **React + Vite** | `services/ui/`, served by a session-gated FastAPI gateway |
 | Backend API / orchestration | **FastAPI** + **LangGraph** | `services/orchestration/main.py`, `graph.py` |
 | Tool execution layer | **FastMCP** (Model Context Protocol) | `services/api/server.py` |
 | Local LLM inference | **Ollama**, default model `qwen3:4b` | No cloud calls |
@@ -126,9 +126,10 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 │   │   ├── graph.py            #   node wiring / control flow
 │   │   ├── state.py            #   HuntState TypedDict — the shared state schema
 │   │   └── main.py             #   FastAPI app: /hunt, /hunt/stream, /hypotheses, /kb/*
-│   ├── api/                    # MCP server + Gradio chat UI live here
+│   ├── api/                    # MCP server + secured analyst UI gateway
 │   │   ├── server.py           #   MCP tool registry (the "hands")
-│   │   └── app.py              #   Gradio chat frontend
+│   │   └── ui_gateway.py       #   login/session, API proxy, reports/PDF
+│   ├── ui/                     # React/Vite analyst workspace
 │   ├── mcp/                    # MCP client + SOC-tool orchestration node
 │   │   ├── mcp_client.py       #   thin call_tool() wrapper used by every graph node
 │   │   └── soc_tools.py        #   runs all 3 detection layers concurrently
@@ -168,7 +169,7 @@ refresh_hearth_kb → hypothesis → query_gen → siem_fetch → log_processing
 | `reasoning` | `services/reasoning/reasoning.py` | Sends hypothesis + histogram + sample records + Sigma matches + RAG context to the LLM; LLM produces findings/recommendations and decides `need_more_logs` |
 | `report` | `services/reporting/report.py` | Writes the final Markdown report to `data/reports/` |
 
-**The loop:** if the LLM's reasoning output sets `need_more_logs = true`, the graph routes back to `siem_fetch` (using `follow_up_query`) instead of proceeding to `report`. This is capped by `max_iterations` (default 3, set per-request) to prevent runaway loops.
+**The loop:** if the LLM's reasoning output sets `need_more_logs = true`, the graph routes back to `siem_fetch` (using `follow_up_query`) instead of proceeding to `report`. This is capped by `max_iterations` (default 1 to minimize latency; callers may explicitly raise it to 5). The deterministic verifier still runs after the single default reasoning pass, so invalid citations fail closed instead of relying on extra model calls.
 
 **State propagation:** LangGraph merges each node's returned `dict` into a single shared `HuntState` (a `TypedDict` — see Section 7). Nodes only need to return the keys they set; they don't need to know about the rest of the state.
 
@@ -184,6 +185,8 @@ FastAPI service, port `8200` (internal only). Endpoints:
 |---|---|
 | `GET /health` | Liveness check — the only unauthenticated endpoint |
 | `GET /hypotheses?tactic=` | List HEARTH hypotheses, optionally filtered by MITRE tactic |
+| `GET /hypotheses/last-runs` | Latest audit timestamp for every hypothesis that has been run |
+| `GET /hunt/status` | Platform-wide active-hunt state used by the UI lock indicator |
 | `POST /hunt` | Run a full hunt synchronously; returns final `HuntState` |
 | `POST /hunt/stream` | Same, but streamed as newline-delimited JSON (one line per completed graph node) — this is what the chat UI uses for live progress |
 | `GET /log_sources?folder=` | List log files in a candidate folder before running a "folder"-mode hunt |
@@ -192,7 +195,7 @@ FastAPI service, port `8200` (internal only). Endpoints:
 
 **Operational safeguards worth knowing about (all in `main.py`):**
 - **Per-hunter rate limiting** (`HUNT_RATE_LIMIT_PER_WINDOW`, default 10/60s) via `services/observability/cache.rate_limit_check`.
-- **Bounded concurrency gate** (`_HuntSlot`): caps hunts actually running (`MAX_CONCURRENT_HUNTS`, default 2) and hunts waiting in a bounded queue (`MAX_QUEUED_HUNTS`, default 5) with a timeout (`HUNT_QUEUE_TIMEOUT_SECONDS`, default 120s). This exists because Ollama on typical single-GPU/CPU hardware effectively serializes inference — without this gate, concurrent hunts thrash the model instead of queuing predictably.
+- **Single-hunt governance gate** (`_HuntSlot`): permits one platform-wide hunt and rejects a second start with HTTP 409 until the active hunt completes. The UI polls `/hunt/status`, disables every Run control, and displays a clear active-hunt notice.
 - **Hunt-scoped logging context**: `set_hunt_context`/`reset_hunt_context` bind `hunt_id`/`hunter_name` to every log line emitted anywhere in that request's async call tree, without threading IDs through every function signature.
 
 ### 6.2 MCP Server (`services/api/server.py`)
@@ -231,7 +234,7 @@ Results for `folder`/`logrhythm`/`splunk`/`qradar`/`wazuh` are cached in Redis, 
 
 Three **independent, concurrently-executed** matching layers feed into `soc_tools.py`:
 
-1. **SigmaHQ engine** (`sigmahq_engine.py`) — the real, vendored SigmaHQ community ruleset (`services/detection/sigma_rules_hq/`, ~2,800+ rules; version pinned in `VERSION.txt`, refreshed via `fetch_sigmahq_rules.py`). Rules are parsed with **pySigma** (the same rule→query compiler the Sigma ecosystem itself uses), not a hand-rolled YAML parser — this is what gives correct handling of nested boolean conditions and field modifiers. A custom `DictMatchBackend` walks pySigma's parsed condition tree and evaluates it directly against Python dicts (no upstream backend does this, since pySigma normally targets query-string backends like Splunk/Elastic).
+1. **SigmaHQ engine** (`sigmahq_engine.py`) — the real SigmaHQ community ruleset (~2,800+ rules; version pinned in `VERSION.txt`, supplied from reviewed files under `services/detection/sigma_rules_hq/` or Compose's persistent `sigmahq_rules` volume). Rules are parsed with **pySigma** (the same rule→query compiler the Sigma ecosystem itself uses), not a hand-rolled YAML parser — this is what gives correct handling of nested boolean conditions and field modifiers. A custom `DictMatchBackend` walks pySigma's parsed condition tree and evaluates it directly against Python dicts (no upstream backend does this, since pySigma normally targets query-string backends like Splunk/Elastic).
 2. **THOS custom engine** (`sigma_engine.py`) — ~16 hand-written, hand-tuned rules for this platform's 8-field normalized schema. A high-precision supplementary layer, not a replacement for #1.
 3. **LLM-derived indicators** (`indicator_deriver.py`) — for hypotheses/techniques neither static rule set covers, the LLM proposes candidate Event IDs + keywords, which are then substring-matched deterministically (not just trusted as free text).
 
@@ -261,9 +264,36 @@ Three **independent, concurrently-executed** matching layers feed into `soc_tool
 
 Writes the final hunt report as Markdown to `REPORTS_DIR` (`data/reports/`), auto-deriving a short title from technique/tactic/hypothesis-id when none is given. Supports two cover styles: `"1"` = executive summary (management/compliance-facing), `"2"` = SOC analyst panel (technique/tactic/ingestion-stats table). `read_hunt_report` enforces that the requested path resolves inside `REPORTS_DIR` (`ReportPathError` on traversal attempts) — same defensive pattern as `LOG_SOURCE_ALLOWED_ROOTS`.
 
-### 6.9 Chat UI (`services/api/app.py`)
+### 6.9 Analyst UI (`services/ui/`, `services/api/ui_gateway.py`)
 
-Single-file Gradio app (deliberately self-contained — its Docker build copies only this file, not the rest of the repo, hence it duplicates a small JSON logging setup rather than importing `services/observability/logging_config.py`). Talks only to the Orchestrator's REST API over `ORCHESTRATOR_URL`, authenticated with `ORCHESTRATOR_API_KEY`. Gated by Gradio Basic Auth (`CHATUI_USERNAME`/`CHATUI_PASSWORD`, or `CHATUI_USERS` for multiple hunters).
+The Vite-built React workspace presents all hypotheses as searchable/filterable
+tiles. Every tile has Read and Run controls and shows its latest run date when
+audit history exists. A platform-wide lock disables all Run controls while a
+hunt is active. SMEs have a dedicated page for publishing governed custom
+hypotheses; Analysts can read and run them but cannot create them. The UI also
+streams timed hunt progress and renders stored Markdown reports with Markdown
+and PDF downloads.
+`ui_gateway.py` serves the compiled app, proxies only the required Orchestrator
+operations using the server-side `ORCHESTRATOR_API_KEY`, authenticates the
+SOCmate login form (`CHATUI_USERNAME`/`CHATUI_PASSWORD`, or `CHATUI_USERS`) into a
+signed HTTP-only, SameSite session cookie, and generates PDF exports without
+exposing the bearer token or credentials to browser JavaScript.
+
+The same gateway owns the governed runtime control plane in
+`services/api/control_plane.py`: PBKDF2-hashed SME/Analyst users, per-feature
+permissions, Ollama model discovery/default selection, hypothesis and Sigma
+schedules in `TZ`-configured local time, RAG document management, SIEM secrets
+and field mappings, and the floating MCP-backed model assistant. Runtime values
+are atomically persisted to `data/runtime/config.json`; all three runtime
+services mount that directory, and `services/runtime_config.py` provides the
+shared read path. Never commit that generated JSON file.
+
+Final reasoning is accepted only when it is non-empty, valid JSON, and contains
+the complete required report fields. The reasoning node makes at most three
+application-level attempts. After the third failure it sets
+`report_status=not_generated`, records the reasons from all strikes, and routes
+directly to the graph end; the reporter also independently refuses to write a
+file for a failed reasoning state.
 
 ---
 
@@ -312,8 +342,8 @@ This is the audit trail — "what did the AI do, in what order, and why" — wri
 THOS uses a **layered bearer-token model**, all with weak, well-known local-dev defaults that log a loud warning if left unchanged:
 
 ```
-Analyst → [Basic Auth: CHATUI_USERNAME/PASSWORD or CHATUI_USERS]
-        → Chat UI → [Bearer: ORCHESTRATOR_API_KEY]
+Analyst → [SOCmate login form → signed HTTP-only session cookie]
+        → Analyst UI gateway → [Bearer: ORCHESTRATOR_API_KEY]
         → Orchestrator → [Bearer: MCP_AUTH_TOKEN]
         → MCP Server
 ```
@@ -384,6 +414,9 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `ORCHESTRATOR_API_KEY` | `thos_change_me_orchestrator_key` | Shared secret: chat-ui ↔ orchestrator |
 | `CHATUI_USERNAME` / `CHATUI_PASSWORD` | `analyst` / `thos_change_me` | Single-hunter chat login |
 | `CHATUI_USERS` | *(blank)* | Multi-hunter logins, `user:pass,user2:pass2`; overrides the single-user pair when set |
+| `CHATUI_SESSION_SECRET` | `thos_change_me_session_key` | HMAC key for signed analyst sessions; replace in every non-local deployment |
+| `CHATUI_SESSION_TTL_SECONDS` | `43200` | Analyst session lifetime (12 hours by default) |
+| `CHATUI_SECURE_COOKIE` | `0` | Set to `1` when the UI is served through HTTPS |
 | `REDIS_PASSWORD` | `thos_change_me_redis` | Redis auth |
 | `OLLAMA_MODEL` | `qwen3:4b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
 | `POSTGRES_USER/PASSWORD/DB` | `thos` / `thos_change_me` / `thos_audit` | Audit DB credentials |
@@ -395,7 +428,6 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `WAZUH_INDEXER_URL` / `WAZUH_INDEXER_USERNAME` / `WAZUH_INDEXER_PASSWORD` | *(blank)* | Required for `SIEM_TYPE=wazuh`; queries the Indexer on port 9200, not the manager API on port 55000 |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`, applies to orchestrator/mcp/chat-ui structured logs |
 | `HUNT_RATE_LIMIT_PER_WINDOW` / `HUNT_RATE_LIMIT_WINDOW_SECONDS` | `10` / `60` | Per-hunter rate limit |
-| `MAX_CONCURRENT_HUNTS` / `MAX_QUEUED_HUNTS` / `HUNT_QUEUE_TIMEOUT_SECONDS` | `2` / `5` / `120` | Concurrency gate against single-GPU Ollama contention |
 | `*_CPU_LIMIT` / `*_MEM_LIMIT` (per service) | varies | Docker Compose resource limits, tunable per deploy |
 
 Every SIEM connector also has optional tuning env vars (SSL verification, lookback window, poll interval/timeout) — see the connector's own module (`logrhythm.py`/`splunk.py`/`qradar.py`) for the full list.
@@ -456,7 +488,7 @@ Documented extension points already called out in the codebase: a human-approval
 
 ### 13.4 Add custom detection rules
 
-- **SigmaHQ ruleset refresh:** run `services/detection/fetch_sigmahq_rules.py` to re-vendor the latest community rules into `services/detection/sigma_rules_hq/` (updates `VERSION.txt`).
+- **SigmaHQ ruleset refresh:** run `services/detection/fetch_sigmahq_rules.py --ref <commit>` to re-vendor a reviewed community ruleset into `services/detection/sigma_rules_hq/` (updates `VERSION.txt`). If no vendored YAML is present, Compose's one-shot `sigmahq-rules-init` downloads the pinned `SIGMAHQ_REF` into the persistent `sigmahq_rules` volume and verifies `SIGMAHQ_MIN_RULES` before MCP starts.
 - **THOS custom rules:** add a new `.yml` file to `services/detection/sigma_rules/` following the existing rule format; `sigma_engine.py` loads the directory automatically.
 
 ### 13.5 Tune LLM reasoning quality
@@ -471,7 +503,7 @@ Follow `hearth_fetch.py`'s pattern for a new external source, or extend `custom_
 
 ## 14. Deployment (Docker Compose)
 
-`docker-compose.yml` defines 8 services with explicit `deploy.resources.limits` (CPU/memory, all env-overridable) and `healthcheck`/`depends_on: condition: service_healthy` chains so services don't start against dependencies that aren't ready yet:
+`docker-compose.yml` defines 10 services with explicit `deploy.resources.limits` (CPU/memory, all env-overridable) and `healthcheck`/`depends_on` readiness chains so services don't start against dependencies that aren't ready yet:
 
 1. **ollama** — LLM inference; GPU reservation via NVIDIA Container Toolkit (set `OLLAMA_GPU_COUNT=0` or remove the `deploy.resources.reservations` block on CPU-only hosts)
 2. **ollama-model-init** — one-shot: pulls `OLLAMA_MODEL` with retries; **fails the whole startup** if the pull never succeeds, rather than letting `mcp`/`orchestrator` start against a model that silently 404s at hunt time
@@ -479,11 +511,12 @@ Follow `hearth_fetch.py`'s pattern for a new external source, or extend `custom_
 4. **kb-ingest** — one-shot: seeds ChromaDB from `data/knowledge_base/`
 5. **postgres** — audit DB, schema auto-applied from `db/init_db.sql` on first init
 6. **redis** — cache/rate-limit store, password-protected
-7. **mcp** — tool server, depends on chromadb/redis/postgres (all healthy) + ollama-model-init (completed)
-8. **orchestrator** — LangGraph engine, depends on mcp (started) + ollama (healthy) + ollama-model-init (completed) + postgres (healthy)
-9. **chat-ui** — the only service with a published host port (`7860:7860`)
+7. **sigmahq-rules-init** — one-shot: copies reviewed vendored rules or downloads the pinned `SIGMAHQ_REF`; fails startup when fewer than `SIGMAHQ_MIN_RULES` are available
+8. **mcp** — tool server, depends on chromadb/redis/postgres (all healthy) + ollama-model-init and sigmahq-rules-init (completed)
+9. **orchestrator** — LangGraph engine, depends on mcp (started) + ollama (healthy) + ollama-model-init (completed) + postgres (healthy)
+10. **chat-ui** — the only service with a published host port (`7860:7860`)
 
-**Volumes** (`ollama_data`, `chroma_data`, `postgres_data`, `redis_data`) persist across restarts; `docker compose down -v` wipes all of them — use deliberately, not habitually.
+**Volumes** (`ollama_data`, `chroma_data`, `postgres_data`, `redis_data`, `sigmahq_rules`) persist across restarts; `docker compose down -v` wipes all of them — use deliberately, not habitually. Removing `sigmahq_rules` means the initializer must copy or download the corpus again.
 
 **Resource tuning:** every limit (`OLLAMA_CPU_LIMIT`, `OLLAMA_MEM_LIMIT`, `CHROMA_CPU_LIMIT`, etc.) is overridable in `.env` per deployment — the defaults assume a modest single-host deployment, not a production sizing recommendation.
 
@@ -520,7 +553,10 @@ Per the project README, upcoming/planned work includes: Microsoft Sentinel, Elas
 | Change how the LLM reasons/writes findings | `services/reasoning/reasoning.py` |
 | Add/tune detection rules | `services/detection/sigma_rules/` (custom) or `fetch_sigmahq_rules.py` (community) |
 | Change report format/content | `services/reporting/report.py` |
-| Change chat UI behavior | `services/api/app.py` |
+| Change analyst UI behavior | `services/ui/src/App.jsx`, `services/ui/src/Settings.jsx`, `services/ui/src/ChatPage.jsx`, `services/ui/src/app.css` |
+| Change UI auth/API proxy/PDF export | `services/api/ui_gateway.py` |
+| Change settings, users, schedules, RAG, or SIEM forms | `services/api/control_plane.py`, `services/runtime_config.py` |
+| Change the read-only MCP model chatbot | `services/chat_agent.py`, `services/ui/src/ChatPage.jsx` |
 | Change auth / rate limits / concurrency | `services/orchestration/main.py` |
 | Change logging/audit/caching behavior | `services/observability/*.py` |
 | Change infra topology, ports, resource limits | `docker-compose.yml` |

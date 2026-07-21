@@ -30,6 +30,7 @@ settings and caveats.
 import os
 import random
 import datetime
+import json
 
 from services.siem import file_log_parser
 from services.siem import logrhythm as logrhythm_connector
@@ -37,12 +38,57 @@ from services.siem import splunk as splunk_connector
 from services.siem import qradar as qradar_connector
 from services.siem import wazuh as wazuh_connector
 from services.observability import cache
+from services.runtime_config import env_or_runtime
 
 # Fallback default if a call doesn't specify siem_type explicitly
 # (kept for backward compatibility with any code still relying on the
 # container-level env var).
 DEFAULT_SIEM_TYPE = os.environ.get("SIEM_TYPE", "mock")
 DEFAULT_LOG_SOURCE_DIR = os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+
+
+def _cache_payload(siem_type: str, query: str, limit: int,
+                   log_source_path: str = "") -> str:
+    """Build one stable key from every setting that can change results."""
+    setting_names = {
+        "logrhythm": (
+            "LOGRHYTHM_BASE_URL", "LOGRHYTHM_API_TOKEN",
+            "LOGRHYTHM_LOOKBACK_MINUTES", "LOGRHYTHM_SEARCH_EVENTS",
+        ),
+        "splunk": ("SPLUNK_BASE_URL", "SPLUNK_TOKEN", "SPLUNK_LOOKBACK"),
+        "qradar": ("QRADAR_BASE_URL", "QRADAR_TOKEN", "QRADAR_LOOKBACK_MINUTES"),
+        "wazuh": (
+            "WAZUH_INDEXER_URL", "WAZUH_INDEX_SOURCE", "WAZUH_LOOKBACK_MINUTES",
+            "WAZUH_MAX_RESULTS", "WAZUH_ALERTS_INDEX", "WAZUH_ARCHIVES_INDEX",
+            "WAZUH_INDEXER_USERNAME", "WAZUH_INDEXER_PASSWORD",
+        ),
+    }
+    payload = {
+        "version": 2,
+        "siem_type": siem_type,
+        "query": query,
+        "limit": limit,
+        "log_source_path": log_source_path,
+        "settings": {
+            name: env_or_runtime(name, siem_type, "")
+            for name in setting_names.get(siem_type, ())
+        },
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _cached_fetch(siem_type: str, query: str, limit: int, producer,
+                  log_source_path: str = "") -> dict:
+    payload = _cache_payload(siem_type, query, limit, log_source_path)
+    cached = cache.cache_get("siem_fetch", payload)
+    if cached is not None:
+        return cached
+    result = producer()
+    # Configuration/API errors are intentionally not cached: an operator can
+    # fix credentials or connectivity and retry immediately.
+    if not result.get("error"):
+        cache.cache_set("siem_fetch", payload, result)
+    return result
 
 
 def _mock_logs(query: str, limit: int) -> list[dict]:
@@ -78,12 +124,12 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
     siem_type = (siem_type or DEFAULT_SIEM_TYPE or "mock").lower()
 
     if siem_type == "mock":
-        return {
-            "siem_type": "mock",
-            "query": query,
-            "record_count": min(limit, 25),
-            "logs": _mock_logs(query, limit),
-        }
+        return _cached_fetch("mock", query, limit, lambda: {
+                "siem_type": "mock",
+                "query": query,
+                "record_count": min(limit, 25),
+                "logs": _mock_logs(query, limit),
+            })
 
     if siem_type in ("folder", "local_folder", "file", "local"):
         folder = log_source_path or DEFAULT_LOG_SOURCE_DIR
@@ -92,23 +138,18 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         # against the same evidence folder redid a full parse-and-filter
         # pass over every file every time. Keyed on everything that
         # determines the result: folder, query, and limit.
-        cache_payload = f"folder|{folder}|{query}|{limit}"
-        cached = cache.cache_get("siem_fetch", cache_payload)
-        if cached is not None:
-            return cached
-        result = file_log_parser.fetch_from_folder(folder, query=query, limit=limit)
-        cache.cache_set("siem_fetch", cache_payload, result)
-        return result
+        return _cached_fetch(
+            "folder", query, limit,
+            lambda: file_log_parser.fetch_from_folder(folder, query=query, limit=limit),
+            log_source_path=folder,
+        )
 
     if siem_type == "logrhythm":
-        cache_payload = f"logrhythm|{query}|{limit}"
-        cached = cache.cache_get("siem_fetch", cache_payload)
-        if cached is not None:
-            return cached
         try:
-            result = logrhythm_connector.fetch_logs(query, limit)
-            cache.cache_set("siem_fetch", cache_payload, result)
-            return result
+            return _cached_fetch(
+                "logrhythm", query, limit,
+                lambda: logrhythm_connector.fetch_logs(query, limit),
+            )
         except logrhythm_connector.LogRhythmConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
             # not a connector bug — surface it clearly instead of a raw
@@ -122,14 +163,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             }
 
     if siem_type == "splunk":
-        cache_payload = f"splunk|{query}|{limit}"
-        cached = cache.cache_get("siem_fetch", cache_payload)
-        if cached is not None:
-            return cached
         try:
-            result = splunk_connector.fetch_logs(query, limit)
-            cache.cache_set("siem_fetch", cache_payload, result)
-            return result
+            return _cached_fetch(
+                "splunk", query, limit,
+                lambda: splunk_connector.fetch_logs(query, limit),
+            )
         except splunk_connector.SplunkConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
             # not a connector bug — surface it clearly instead of a raw
@@ -143,14 +181,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             }
 
     if siem_type == "qradar":
-        cache_payload = f"qradar|{query}|{limit}"
-        cached = cache.cache_get("siem_fetch", cache_payload)
-        if cached is not None:
-            return cached
         try:
-            result = qradar_connector.fetch_logs(query, limit)
-            cache.cache_set("siem_fetch", cache_payload, result)
-            return result
+            return _cached_fetch(
+                "qradar", query, limit,
+                lambda: qradar_connector.fetch_logs(query, limit),
+            )
         except qradar_connector.QRadarConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
             # not a connector bug — surface it clearly instead of a raw
@@ -164,22 +199,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             }
 
     if siem_type == "wazuh":
-        cache_payload = "|".join((
-            "wazuh",
-            os.environ.get("WAZUH_INDEXER_URL", ""),
-            os.environ.get("WAZUH_INDEX_SOURCE", "both"),
-            os.environ.get("WAZUH_LOOKBACK_MINUTES", "1440"),
-            os.environ.get("WAZUH_MAX_RESULTS", "1000"),
-            query,
-            str(limit),
-        ))
-        cached = cache.cache_get("siem_fetch", cache_payload)
-        if cached is not None:
-            return cached
         try:
-            result = wazuh_connector.fetch_logs(query, limit)
-            cache.cache_set("siem_fetch", cache_payload, result)
-            return result
+            return _cached_fetch(
+                "wazuh", query, limit,
+                lambda: wazuh_connector.fetch_logs(query, limit),
+            )
         except wazuh_connector.WazuhConfigError as e:
             return {
                 "siem_type": "wazuh",
