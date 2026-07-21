@@ -430,6 +430,8 @@ async def _create_review_artifacts(hunt_id: str, final_state: dict, owner: str) 
     """Persist approval + case artifacts once the verifier requires review."""
     if not final_state.get("human_approval_required"):
         return
+    if final_state.get("approval_id") or final_state.get("case_id"):
+        return
     approval = await audit.create_approval(
         hunt_id, final_state.get("escalation_reason") or "Verifier requested analyst review",
     )
