@@ -35,7 +35,9 @@ async def generate(
         "options": {
             "num_ctx": target.num_ctx,
             "num_predict": target.num_predict,
+            "temperature": 0,
         },
+        "keep_alive": os.environ.get(f"THOS_{target.tier.upper()}_KEEP_ALIVE", "30m"),
         # reasoning.py's SYSTEM_PROMPT asks for "Respond ONLY with a JSON
         # object" but nothing was enforcing that server-side, so the model
         # was free to reply conversationally (e.g. "Let's continue with
@@ -60,9 +62,18 @@ async def generate(
         payload["system"] = system
 
     async def _do_request():
-        async with httpx.AsyncClient(timeout=float(os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"))) as client:
+        timeout = float(os.environ.get(
+            f"THOS_{target.tier.upper()}_GENERATION_TIMEOUT_SECONDS",
+            os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"),
+        ))
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{target.host}/api/generate", json=payload)
-            resp.raise_for_status()
+            if resp.is_error:
+                detail = resp.text.strip()[:1000]
+                raise RuntimeError(
+                    f"Ollama {target.model} returned HTTP {resp.status_code}: "
+                    f"{detail or resp.reason_phrase}"
+                )
             body = resp.json()
             return str(body.get("response") or (body.get("message") or {}).get("content") or "").strip()
 

@@ -97,6 +97,20 @@ detection:
 level: low
 """
 
+FIELD_EXISTS_RULE = """\
+title: PowerShell Module Context Exists
+id: test-0006
+status: test
+logsource:
+    product: windows
+    category: ps_module
+detection:
+    selection:
+        ContextInfo|contains: '*'
+    condition: selection
+level: medium
+"""
+
 
 def test_simple_field_match_and_no_match(tmp_path):
     _write_rule(tmp_path, "simple.yml", SIMPLE_RULE)
@@ -161,6 +175,25 @@ def test_regex_modifier(tmp_path):
 
     result = sigmahq_engine.evaluate_all([matching, non_matching], rules=rules)
     assert result["matched_record_indices"] == [0]
+
+
+def test_missing_structured_field_does_not_match_wildcard_existence_rule(tmp_path):
+    _write_rule(tmp_path, "field_exists.yml", FIELD_EXISTS_RULE)
+    rules = sigmahq_engine.load_rules(str(tmp_path))
+    unrelated_evtx = {
+        "event": "EventID-1",
+        "detail": '<Event><System><EventID>1</EventID></System><EventData>'
+                  '<Data Name="Image">C:\\Windows\\System32\\rundll32.exe</Data>'
+                  '</EventData></Event>',
+    }
+    module_event = {
+        "event": "EventID-4103",
+        "detail": '<Event><EventData><Data Name="ContextInfo">Host Application = wsmprovhost.exe</Data>'
+                  '</EventData></Event>',
+    }
+
+    result = sigmahq_engine.evaluate_all([unrelated_evtx, module_event], rules=rules)
+    assert result["matched_record_indices"] == [1]
 
 
 def test_field_mapping_uses_normalized_schema_fields(tmp_path):

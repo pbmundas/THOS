@@ -116,6 +116,19 @@ async def _enforce_hunt_rate_limit(hunter_name: str):
 # instead of silently queueing another hypothesis behind it.
 _active_hunt_count = 0
 _active_hunt_lock = asyncio.Lock()
+_background_hunts: set[asyncio.Task] = set()
+
+
+def _background_hunt_done(task: asyncio.Task) -> None:
+    _background_hunts.discard(task)
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error("background hunt worker crashed: %s", error)
 
 
 class _HuntSlot:
@@ -143,6 +156,11 @@ class _HuntSlot:
 async def _shutdown():
     # Cleanly tear down the shared MCP client session (see mcp_client.py)
     # and release pooled Postgres connections (see audit.py).
+    pending = list(_background_hunts)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
     await mcp_client.close()
     audit.close_pool()
 
@@ -150,6 +168,7 @@ async def _shutdown():
 @app.on_event("startup")
 async def _ensure_agentic_schema():
     await audit.ensure_agentic_schema()
+    await audit.reconcile_incomplete_hunts()
 
 
 class HuntRequest(BaseModel):
@@ -211,8 +230,20 @@ class RulePromotionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=16_000)
-    history: list[dict[str, str]] = []
+    conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     analyst: str = "analyst"
+
+
+class ChatConversationRequest(BaseModel):
+    analyst: str = "analyst"
+    title: str = Field(default="New conversation", max_length=120)
+
+
+class ScheduledSigmaRequest(BaseModel):
+    schedule_id: str = Field(min_length=1, max_length=128)
+    rule_id: str = Field(min_length=1, max_length=256)
+    siem_type: str = Field(pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar)$")
+    log_source_path: str | None = None
 
 
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
@@ -252,9 +283,59 @@ async def hypothesis_last_runs():
     return await audit.hypothesis_last_runs()
 
 
+@app.get("/hunts", dependencies=[Depends(require_api_key)])
+async def hunt_history(limit: int = 100):
+    return await audit.list_hunts(limit)
+
+
+@app.get("/hunts/{hunt_id}/progress", dependencies=[Depends(require_api_key)])
+async def hunt_progress(hunt_id: str):
+    progress = await audit.hunt_progress(hunt_id=hunt_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="hunt not found")
+    return progress
+
+
 @app.get("/hunt/status", dependencies=[Depends(require_api_key)])
 async def hunt_status():
-    return {"active": _active_hunt_count > 0, "active_count": _active_hunt_count}
+    active = _active_hunt_count > 0
+    progress = await audit.hunt_progress(active_only=True) if active else None
+    return {"active": active, "active_count": _active_hunt_count, "hunt": progress}
+
+
+@app.get("/sigma/detections", dependencies=[Depends(require_api_key)])
+async def scheduled_sigma_detections(limit: int = 100):
+    return await audit.list_sigma_detections(limit)
+
+
+@app.post("/sigma/scheduled/run", dependencies=[Depends(require_api_key)])
+async def run_scheduled_sigma(request: ScheduledSigmaRequest):
+    from services.detection.sigma_detection_agent import run_scheduled_sigma_detection
+    try:
+        result = await run_scheduled_sigma_detection(
+            schedule_id=request.schedule_id,
+            rule_id=request.rule_id,
+            siem_type=request.siem_type,
+            log_source_path=request.log_source_path,
+        )
+        stored = await audit.log_sigma_detection(result)
+        return stored or result
+    except Exception as exc:  # noqa: BLE001 - persist a failed scheduled execution
+        await audit.log_sigma_detection({
+            "schedule_id": request.schedule_id,
+            "rule_id": request.rule_id,
+            "rule_title": request.rule_id,
+            "rule_source": "unknown",
+            "level": "unknown",
+            "siem_type": request.siem_type,
+            "status": "failed",
+            "events_matched": 0,
+            "matched_events": [],
+            "analysis": {},
+            "error": str(exc),
+        })
+        logger.exception("scheduled Sigma detection failed")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/siem/test/{siem_type}", dependencies=[Depends(require_api_key)])
@@ -297,11 +378,82 @@ def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
 @app.post("/chat", dependencies=[Depends(require_api_key)])
 async def chat_with_model(request: ChatRequest):
     from services.chat_agent import chat
+    from services.memory import chat_memory
+    conversation = None
     try:
-        return await chat(request.message, request.history, request.analyst)
+        if request.conversation_id:
+            conversation = await asyncio.to_thread(
+                chat_memory.get_conversation, request.analyst, request.conversation_id,
+            )
+            if conversation is None:
+                raise HTTPException(status_code=404, detail="Chat conversation expired or was not found")
+        else:
+            conversation = await asyncio.to_thread(chat_memory.create_conversation, request.analyst)
+        history = list(conversation.get("messages", []))
+        conversation = await asyncio.to_thread(
+            chat_memory.append_message,
+            request.analyst,
+            conversation["id"],
+            {"role": "user", "content": request.message},
+        )
+        result = await chat(request.message, history, request.analyst)
+        answer = str(result.get("answer", "")).strip()
+        if not answer:
+            raise RuntimeError("chat completed without an answer")
+        conversation = await asyncio.to_thread(
+            chat_memory.append_message,
+            request.analyst,
+            conversation["id"],
+            {"role": "assistant", "content": answer, "tools": result.get("tools_used", [])},
+        )
+        return {
+            **result,
+            "conversation_id": conversation["id"],
+            "title": conversation["title"],
+            "messages": conversation["messages"],
+        }
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
+        if conversation is not None:
+            try:
+                await asyncio.to_thread(
+                    chat_memory.append_message,
+                    request.analyst,
+                    conversation["id"],
+                    {"role": "assistant", "content": f"Chat could not complete: {exc}", "error": True},
+                )
+            except Exception:
+                pass
         logger.exception("MCP-backed chat failed")
         raise HTTPException(status_code=502, detail=f"The local model chat failed: {exc}") from exc
+
+
+@app.get("/chat/conversations", dependencies=[Depends(require_api_key)])
+async def chat_conversations(analyst: str = "analyst"):
+    from services.memory import chat_memory
+    return await asyncio.to_thread(chat_memory.list_conversations, analyst)
+
+
+@app.post("/chat/conversations", dependencies=[Depends(require_api_key)])
+async def create_chat_conversation(request: ChatConversationRequest):
+    from services.memory import chat_memory
+    return await asyncio.to_thread(chat_memory.create_conversation, request.analyst, request.title)
+
+
+@app.get("/chat/conversations/{conversation_id}", dependencies=[Depends(require_api_key)])
+async def get_chat_conversation(conversation_id: str, analyst: str = "analyst"):
+    from services.memory import chat_memory
+    conversation = await asyncio.to_thread(chat_memory.get_conversation, analyst, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Chat conversation expired or was not found")
+    return conversation
+
+
+@app.delete("/chat/conversations/{conversation_id}", dependencies=[Depends(require_api_key)])
+async def delete_chat_conversation(conversation_id: str, analyst: str = "analyst"):
+    from services.memory import chat_memory
+    return {"deleted": await asyncio.to_thread(chat_memory.delete_conversation, analyst, conversation_id)}
 
 
 @app.get("/log_sources", dependencies=[Depends(require_api_key)])
@@ -488,6 +640,21 @@ async def _create_review_artifacts(hunt_id: str, final_state: dict, owner: str) 
         final_state["case_id"] = str(case["case_id"])
 
 
+def _audit_outcome(state: dict) -> dict:
+    enrichment = state.get("enrichment") or {}
+    return {
+        "report_status": state.get("report_status"),
+        "report_path": state.get("report_path"),
+        "reasoning_mode": state.get("reasoning_mode"),
+        "reasoning_degraded": bool(state.get("reasoning_degraded")),
+        "reasoning_attempts": state.get("reasoning_attempts", 0),
+        "reasoning_error": state.get("reasoning_error"),
+        "sigmahq_rules_evaluated": enrichment.get("sigmahq_rules_evaluated", 0),
+        "sigma_rules_evaluated": enrichment.get("sigma_rules_evaluated", 0),
+        "records_analyzed": len(state.get("processed_logs") or []),
+    }
+
+
 @app.post("/hunt", dependencies=[Depends(require_api_key)])
 async def run_hunt(req: HuntRequest):
     """Run a full hunt (hypothesis -> query -> fetch -> process -> SOC tools
@@ -495,6 +662,7 @@ async def run_hunt(req: HuntRequest):
     await _enforce_hunt_rate_limit(req.hunter_name)
     hunt_id = str(uuid.uuid4())
     state = _initial_state(hunt_id, req)
+    final_state = dict(state)
 
     # Binds hunt_id/hunter_name onto every log line emitted anywhere in
     # this request's async context from here on -- this module, graph
@@ -509,7 +677,6 @@ async def run_hunt(req: HuntRequest):
         async with _HuntSlot():
             await audit.log_hunt_start(hunt_id, req.hunter_name, req.hypothesis_id, req.hypothesis_text)
 
-            final_state = dict(state)
             last_step_at = time.perf_counter()
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
@@ -527,7 +694,9 @@ async def run_hunt(req: HuntRequest):
                 tb = traceback.format_exc()
                 logger.error("graph error", exc_info=True, extra={"node": "graph"})
                 await audit.log_tool_error(hunt_id, "graph", tb)
-                await audit.log_hunt_complete(hunt_id, "failed")
+                await audit.log_hunt_complete(
+                    hunt_id, "failed", "graph", str(e), _audit_outcome(final_state),
+                )
                 return {"hunt_id": hunt_id, "error": str(e), "state": final_state}
 
             if final_state.get("reasoning_failed"):
@@ -538,17 +707,28 @@ async def run_hunt(req: HuntRequest):
                     failure,
                     {"attempts": final_state.get("reasoning_attempts", 3)},
                 )
-                await audit.log_hunt_complete(hunt_id, "failed")
+                await audit.log_hunt_complete(
+                    hunt_id, "failed", "reasoning", failure, _audit_outcome(final_state),
+                )
                 logger.error("hunt stopped without report: %s", failure, extra={"node": "reasoning"})
                 return final_state
 
-            await audit.log_hunt_complete(hunt_id, "completed")
+            await audit.log_hunt_complete(
+                hunt_id, "completed", outcome=_audit_outcome(final_state),
+            )
             await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
             if final_state.get("report_path"):
                 await audit.log_report(hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""))
 
             logger.info("hunt completed")
             return final_state
+    except asyncio.CancelledError:
+        interruption = "Synchronous hunt request was interrupted before a terminal event."
+        await asyncio.shield(audit.log_tool_error(hunt_id, "request", interruption))
+        await asyncio.shield(audit.log_hunt_complete(
+            hunt_id, "failed", "request", interruption, _audit_outcome(final_state),
+        ))
+        raise
     finally:
         reset_hunt_context(ctx_tokens)
 
@@ -592,90 +772,93 @@ async def run_hunt_stream(req: HuntRequest):
     await slot.__aenter__()
     await audit.log_hunt_start(hunt_id, req.hunter_name, req.hypothesis_id, req.hypothesis_text)
 
-    async def event_gen():
-        # Own context bind, own token -- see the long comment above for
-        # why this can't just reuse the outer ctx_tokens.
+    events: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def publish(payload: dict) -> None:
+        await events.put(json.dumps(payload, default=str) + "\n")
+
+    async def produce_hunt() -> None:
+        """Run independently of the HTTP consumer so a browser disconnect cannot cancel the hunt."""
         gen_ctx_tokens = set_hunt_context(hunt_id, req.hunter_name)
         final_state = dict(state)
         last_step_at = time.perf_counter()
+        terminal_recorded = False
         try:
-            yield json.dumps({"event": "hunt_started", "hunt_id": hunt_id}) + "\n"
-            yield json.dumps({"event": "node_started", "node": "refresh_hearth_kb"}) + "\n"
+            await publish({"event": "hunt_started", "hunt_id": hunt_id})
+            await audit.log_hunt_stage_started(hunt_id, "refresh_hearth_kb")
+            await publish({"event": "node_started", "node": "refresh_hearth_kb"})
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
                     for node_name, partial in step.items():
                         duration_ms = int((time.perf_counter() - last_step_at) * 1000)
                         last_step_at = time.perf_counter()
-                        if partial is None:
-                            # Keep no-op nodes in progress/audit output without
-                            # treating a valid empty update as a tool failure.
-                            partial = {}
+                        partial = {} if partial is None else partial
                         final_state.update(partial)
                         await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
-                        yield json.dumps({
-                            "event": "node_complete",
-                            "node": node_name,
-                            "duration_ms": duration_ms,
-                            "data": partial,
-                        }, default=str) + "\n"
+                        await publish({"event": "node_complete", "node": node_name,
+                                       "duration_ms": duration_ms, "data": partial})
                         next_node = _next_pipeline_node(node_name, final_state)
                         if next_node:
-                            yield json.dumps({"event": "node_started", "node": next_node}) + "\n"
-            except Exception as e:
+                            await audit.log_hunt_stage_started(hunt_id, next_node)
+                            await publish({"event": "node_started", "node": next_node})
+            except Exception as exc:
                 import traceback
-                tb = traceback.format_exc()
+                trace = traceback.format_exc()
                 logger.error("graph error", exc_info=True, extra={"node": "graph"})
-                await audit.log_tool_error(hunt_id, "graph", tb)
-                await audit.log_hunt_complete(hunt_id, "failed")
-                yield json.dumps({"event": "error", "error": str(e)}) + "\n"
+                await audit.log_tool_error(hunt_id, "graph", trace)
+                await audit.log_hunt_complete(
+                    hunt_id, "failed", "graph", str(exc), _audit_outcome(final_state),
+                )
+                terminal_recorded = True
+                await publish({"event": "error", "error": str(exc)})
+                await publish({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state})
                 return
 
             if final_state.get("reasoning_failed"):
-                failure = final_state.get("error") or "reasoning failed after three attempts"
+                failure = final_state.get("error") or "reasoning and deterministic fallback failed"
                 await audit.log_tool_error(
-                    hunt_id,
-                    "reasoning",
-                    failure,
+                    hunt_id, "reasoning", failure,
                     {"attempts": final_state.get("reasoning_attempts", 3)},
                 )
-                await audit.log_hunt_complete(hunt_id, "failed")
-                logger.error("hunt stopped without report: %s", failure, extra={"node": "reasoning"})
-                yield json.dumps({"event": "error", "error": failure}) + "\n"
-                yield json.dumps({
-                    "event": "hunt_complete",
-                    "hunt_id": hunt_id,
-                    "state": final_state,
-                }, default=str) + "\n"
+                await audit.log_hunt_complete(
+                    hunt_id, "failed", "reasoning", failure, _audit_outcome(final_state),
+                )
+                terminal_recorded = True
+                await publish({"event": "error", "error": failure})
+                await publish({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state})
                 return
 
-            try:
-                await audit.log_hunt_complete(hunt_id, "completed")
-                await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
-                if final_state.get("report_path"):
-                    await audit.log_report(hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""))
-            except Exception as e:
-                # The graph itself already finished successfully at this
-                # point — headers and prior chunks are already on the wire,
-                # so an unguarded failure here (e.g. a Postgres hiccup)
-                # used to kill the connection mid-stream instead of
-                # surfacing as a normal error line. Report it as a normal
-                # 'error' event instead; the hunt's actual results
-                # (including the report file, if one was written) are not
-                # lost, only this final bookkeeping step failed.
-                logger.error("post-hunt audit/report bookkeeping failed", exc_info=True, extra={"node": "post_hunt"})
-                yield json.dumps({
-                    "event": "error",
-                    "error": f"hunt completed but final bookkeeping failed: {e}",
-                }) + "\n"
-                yield json.dumps({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state}, default=str) + "\n"
-                return
-
+            await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
+            if final_state.get("report_path"):
+                await audit.log_report(
+                    hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""),
+                )
+            await audit.log_hunt_complete(
+                hunt_id, "completed", outcome=_audit_outcome(final_state),
+            )
+            terminal_recorded = True
             logger.info("hunt completed")
-            yield json.dumps({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state}, default=str) + "\n"
+            await publish({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state})
         finally:
-            # Always release the concurrency slot, whether the stream
-            # finished, errored, or the client disconnected early.
+            if not terminal_recorded:
+                interruption = "Hunt worker stopped before a terminal event."
+                await asyncio.shield(audit.log_tool_error(hunt_id, "worker", interruption))
+                await asyncio.shield(audit.log_hunt_complete(
+                    hunt_id, "failed", "worker", interruption, _audit_outcome(final_state),
+                ))
             await slot.__aexit__(None, None, None)
             reset_hunt_context(gen_ctx_tokens)
+            await events.put(None)
+
+    producer = asyncio.create_task(produce_hunt(), name=f"hunt-{hunt_id}")
+    _background_hunts.add(producer)
+    producer.add_done_callback(_background_hunt_done)
+
+    async def event_gen():
+        while True:
+            event = await events.get()
+            if event is None:
+                return
+            yield event
 
     return StreamingResponse(event_gen(), media_type="application/x-ndjson")

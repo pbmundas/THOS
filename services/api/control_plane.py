@@ -146,6 +146,8 @@ class ScheduleRequest(BaseModel):
     target_id: str = Field(min_length=1, max_length=256)
     title: str = Field(default="", max_length=500)
     time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    frequency: str = Field(default="daily", pattern="^(minutes|hourly|daily)$")
+    interval: int = Field(default=1, ge=1, le=59)
     days: list[int] = Field(default_factory=lambda: list(range(7)))
     enabled: bool = True
     siem_type: str = Field(default="mock", pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar)$")
@@ -154,7 +156,11 @@ class ScheduleRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=16_000)
-    history: list[dict[str, str]] = Field(default_factory=list)
+    conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+
+class ChatConversationCreate(BaseModel):
+    title: str = Field(default="New conversation", max_length=120)
 
 
 class HypothesisCreate(BaseModel):
@@ -209,18 +215,25 @@ def telemetry_sources(config: dict[str, Any] | None = None) -> dict[str, Any]:
     only after the most recently saved connection details pass a live test.
     """
     config = config or read_config()
-    items = [{"id": "folder", "label": TELEMETRY_LABELS["folder"], "tested_at": "built-in"}]
+    folder = {"id": "folder", "label": TELEMETRY_LABELS["folder"], "tested_at": "built-in"}
+    live_items = []
     for siem_type in ("wazuh", "logrhythm", "splunk", "qradar"):
         entry = config.get("siem", {}).get(siem_type, {})
         if entry.get("connection_status") == "connected":
-            items.append({
+            live_items.append({
                 "id": siem_type,
                 "label": TELEMETRY_LABELS[siem_type],
                 "tested_at": entry.get("connection_tested_at", ""),
             })
+    # Live, connection-tested SIEMs are primary. The built-in evidence folder
+    # remains available as a secondary fallback and is primary only when no
+    # live SIEM has passed its connection test.
+    items = [*live_items, folder] if live_items else [folder]
     active_ids = {item["id"] for item in items}
     preferred = str(config.get("general", {}).get("default_siem", "folder"))
-    return {"items": items, "default": preferred if preferred in active_ids else "folder"}
+    if live_items and preferred == "folder":
+        preferred = live_items[0]["id"]
+    return {"items": items, "default": preferred if preferred in active_ids else items[0]["id"]}
 
 
 def is_active_telemetry_source(siem_type: str, config: dict[str, Any] | None = None) -> bool:
@@ -602,6 +615,9 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
         raise HTTPException(status_code=422, detail="Schedules require an active, successfully tested telemetry source")
     if any(day < 0 or day > 6 for day in payload.days):
         raise HTTPException(status_code=422, detail="days must use 0=Monday through 6=Sunday")
+    if payload.frequency in {"hourly", "daily"} and payload.interval > 24:
+        unit = "hours" if payload.frequency == "hourly" else "runs per day"
+        raise HTTPException(status_code=422, detail=f"{unit} must be between 1 and 24")
     config = read_config()
     item = {"id": uuid.uuid4().hex[:12], "kind": kind, **payload.model_dump(), "last_run_key": "", "last_status": "never"}
     if kind == "hypothesis":
@@ -630,6 +646,12 @@ async def delete_schedule(kind: str, schedule_id: str, request: Request):
     return {"deleted": len(collection) < before}
 
 
+@router.get("/detections")
+async def scheduled_detections(request: Request, limit: int = 100):
+    require_feature(request, "reports")
+    return await _upstream("GET", "/sigma/detections", params={"limit": max(1, min(limit, 500))})
+
+
 @router.get("/knowledge/documents")
 async def kb_documents(request: Request):
     require_feature(request, "knowledge")
@@ -656,33 +678,111 @@ async def model_chat(payload: ChatRequest, request: Request):
     return await _upstream("POST", "/chat", json={**payload.model_dump(), "analyst": request.state.analyst}, timeout=httpx.Timeout(300, connect=10))
 
 
+@router.get("/chat/conversations")
+async def chat_conversations(request: Request):
+    require_feature(request, "chat")
+    return await _upstream("GET", "/chat/conversations", params={"analyst": request.state.analyst})
+
+
+@router.post("/chat/conversations", status_code=201)
+async def create_chat_conversation(payload: ChatConversationCreate, request: Request):
+    require_feature(request, "chat")
+    return await _upstream(
+        "POST", "/chat/conversations",
+        json={"analyst": request.state.analyst, "title": payload.title},
+    )
+
+
+@router.get("/chat/conversations/{conversation_id}")
+async def get_chat_conversation(conversation_id: str, request: Request):
+    require_feature(request, "chat")
+    return await _upstream(
+        "GET", f"/chat/conversations/{conversation_id}",
+        params={"analyst": request.state.analyst},
+    )
+
+
+@router.delete("/chat/conversations/{conversation_id}")
+async def delete_chat_conversation(conversation_id: str, request: Request):
+    require_feature(request, "chat")
+    return await _upstream(
+        "DELETE", f"/chat/conversations/{conversation_id}",
+        params={"analyst": request.state.analyst},
+    )
+
+
 async def _execute_schedule(item: dict[str, Any]) -> None:
-    payload: dict[str, Any] = {
-        "hunter_name": "scheduler",
-        "siem_type": item.get("siem_type", "mock"),
-        "log_source_path": item.get("log_source_path"),
-        "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
-        "cover_style": "2",
-    }
-    if item.get("kind") == "hypothesis":
+    kind = item.get("kind", "hypothesis")
+    if kind == "hypothesis":
+        payload: dict[str, Any] = {
+            "hunter_name": "scheduler",
+            "siem_type": item.get("siem_type", "mock"),
+            "log_source_path": item.get("log_source_path"),
+            "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
+            "cover_style": "2",
+        }
         payload["hypothesis_id"] = item["target_id"]
         payload["hypothesis_text"] = item.get("hypothesis_text")
         payload["hypothesis_tactic"] = item.get("hypothesis_tactic", "")
         payload["hypothesis_technique"] = item.get("hypothesis_technique", "")
     else:
-        payload["hypothesis_text"] = f"Scheduled Sigma validation for rule {item['target_id']}: {item.get('title', '')}"
+        siem_type = item.get("siem_type", "mock")
+        payload = {
+            "schedule_id": item["id"],
+            "rule_id": item["target_id"],
+            "siem_type": siem_type,
+            "log_source_path": item.get("log_source_path") or (os.environ.get("LOG_SOURCE_DIR", "/data/log_sources") if siem_type == "folder" else None),
+        }
     status, error = "completed", ""
     try:
-        await _upstream("POST", "/hunt", json=payload, timeout=httpx.Timeout(1200, connect=10))
+        if kind == "sigma":
+            result = await _upstream("POST", "/sigma/scheduled/run", json=payload, timeout=httpx.Timeout(1200, connect=10))
+            status = str(result.get("status", "completed"))
+        else:
+            await _upstream("POST", "/hunt", json=payload, timeout=httpx.Timeout(1200, connect=10))
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", str(exc)
         logger.exception("scheduled %s run failed", item.get("kind"))
     config = read_config()
-    collection = _schedule_collection(config, item.get("kind", "hypothesis"))
+    collection = _schedule_collection(config, kind)
     for stored in collection:
         if stored.get("id") == item.get("id"):
             stored.update({"last_status": status, "last_error": error, "last_run_at": datetime.now().astimezone().isoformat()})
     write_config(config)
+
+
+def _schedule_is_due(item: dict[str, Any], now: datetime) -> bool:
+    """Evaluate minute/hour/day schedules in system-local wall-clock time.
+
+    ``time`` is the anchor. Daily schedules distribute N runs evenly over the
+    24-hour day starting at that anchor (for example, twice daily at 02:00
+    runs at 02:00 and 14:00). Legacy schedules without frequency fields retain
+    their original once-daily behavior.
+    """
+    if now.weekday() not in item.get("days", list(range(7))):
+        return False
+    try:
+        anchor_hour, anchor_minute = map(int, str(item.get("time", "00:00")).split(":"))
+        interval = int(item.get("interval", 1))
+    except (TypeError, ValueError):
+        return False
+    frequency = str(item.get("frequency", "daily"))
+    minute_of_day = now.hour * 60 + now.minute
+    anchor = anchor_hour * 60 + anchor_minute
+
+    if frequency == "minutes" and 1 <= interval <= 59:
+        absolute_minute = now.toordinal() * 1440 + minute_of_day
+        absolute_anchor = anchor
+        return (absolute_minute - absolute_anchor) % interval == 0
+    if frequency == "hourly" and 1 <= interval <= 24:
+        if now.minute != anchor_minute:
+            return False
+        absolute_hour = now.toordinal() * 24 + now.hour
+        return (absolute_hour - anchor_hour) % interval == 0
+    if frequency == "daily" and 1 <= interval <= 24:
+        slots = {round(anchor + index * 1440 / interval) % 1440 for index in range(interval)}
+        return minute_of_day in slots
+    return False
 
 
 async def _scheduler_loop() -> None:
@@ -694,9 +794,9 @@ async def _scheduler_loop() -> None:
             due: list[dict[str, Any]] = []
             for kind in ("hypothesis", "sigma"):
                 for item in _schedule_collection(config, kind):
-                    if not item.get("enabled", True) or item.get("time") != now.strftime("%H:%M"):
+                    if not item.get("enabled", True) or not _schedule_is_due(item, now):
                         continue
-                    if now.weekday() not in item.get("days", list(range(7))) or item.get("last_run_key") == run_key:
+                    if item.get("last_run_key") == run_key:
                         continue
                     item["last_run_key"] = run_key
                     item["last_status"] = "running"

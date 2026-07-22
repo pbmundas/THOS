@@ -82,6 +82,8 @@ class HuntState(TypedDict, total=False):
     recommendations: Optional[str]
     reasoning_cache_hit: bool
     reasoning_failed: bool
+    reasoning_degraded: bool
+    reasoning_mode: Optional[str]
     reasoning_attempts: int
     reasoning_error: Optional[str]
     need_more_logs: bool

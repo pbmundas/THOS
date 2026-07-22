@@ -71,8 +71,12 @@ import glob
 import ipaddress
 import os
 import re
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
+
+import yaml
 
 from sigma.collection import SigmaCollection
 from sigma.conditions import ConditionAND, ConditionNOT, ConditionOR
@@ -84,6 +88,7 @@ from sigma.types import SigmaCompareExpression
 from services.runtime_config import get_value
 
 RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sigma_rules_hq")
+MIN_RULES = int(os.environ.get("SIGMAHQ_MIN_RULES", "2000"))
 
 Predicate = Callable[[dict], bool]
 
@@ -91,6 +96,8 @@ Predicate = Callable[[dict], bool]
 # not listed here falls back to searching the raw `detail` blob.
 FIELD_MAP = {
     "eventid": "event",
+    "event": "event", "detail": "detail", "host": "host",
+    "src_ip": "src_ip", "dst_ip": "dst_ip",
     "user": "user", "targetusername": "user", "subjectusername": "user",
     "accountname": "user", "username": "user",
     "computername": "host", "computer": "host", "hostname": "host",
@@ -113,7 +120,35 @@ def _record_text(record: dict, field: str) -> str:
     val = record.get(key)
     if val is None and key != FALLBACK_FIELD:
         val = record.get(FALLBACK_FIELD)
-    return "" if val is None else str(val)
+    text = "" if val is None else str(val)
+    if key != FALLBACK_FIELD or field.lower() == FALLBACK_FIELD:
+        return text
+
+    # Folder records retain structured EVTX/XML/CEF/flat-key content inside
+    # ``detail``. Extract the requested field's value when present so anchored
+    # regexes and exact comparisons apply to that value. Critically, a missing
+    # field in a structured record is empty, not the entire event blob. Falling
+    # back to the blob made existence selectors such as ``ContextInfo: '*'``
+    # match every EVTX record and created high-volume false positives.
+    escaped = re.escape(field)
+    xml = re.search(
+        rf'<Data\s+Name=["\']{escaped}["\'][^>]*>(.*?)</Data>', text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if xml:
+        return xml.group(1)
+    flat = re.search(
+        rf'(?:^|[\s;,\[])' + escaped +
+        r'\s*[:=]\s*["\']?(.*?)["\']?(?=\s+[A-Za-z_][\w.-]*\s*[:=]|$)',
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if flat:
+        return flat.group(1).strip()
+    if re.search(r"<Event\b|<Data\s+Name=", text, re.IGNORECASE):
+        return ""
+    if re.search(r"(?:^|[\s;,\[])\w[\w.-]*\s*[:=]", text):
+        return ""
+    return text
 
 
 def _mark_unsound(state: ConversionState) -> None:
@@ -157,12 +192,20 @@ class DictMatchBackend(Backend):
     # --- field = value leaves --------------------------------------------------
     def convert_condition_field_eq_val_str(self, cond, state) -> Predicate:
         _record_tokens_from_str(state, cond.value)
+        plain = cond.value.to_plain() if hasattr(cond.value, "to_plain") else str(cond.value)
+        if plain.strip("*?") == "":
+            field = cond.field
+            return lambda r: bool(_record_text(r, field))
         pattern = re.compile(cond.value.to_regex().regexp.to_plain(), re.IGNORECASE | re.DOTALL)
         field = cond.field
         return lambda r: pattern.fullmatch(_record_text(r, field)) is not None
 
     def convert_condition_field_eq_val_str_case_sensitive(self, cond, state) -> Predicate:
         _record_tokens_from_str(state, cond.value)
+        plain = cond.value.to_plain() if hasattr(cond.value, "to_plain") else str(cond.value)
+        if plain.strip("*?") == "":
+            field = cond.field
+            return lambda r: bool(_record_text(r, field))
         pattern = re.compile(cond.value.to_regex().regexp.to_plain(), re.DOTALL)
         field = cond.field
         return lambda r: pattern.fullmatch(_record_text(r, field)) is not None
@@ -352,30 +395,65 @@ def _load_and_compile(rules_dir: str) -> list[CompiledRule]:
     compiled: list[CompiledRule] = []
     backend = DictMatchBackend()
     for path in files:
+        original_ids: dict[str, str] = {}
         try:
             collection = SigmaCollection.load_ruleset([path])
-        except (SigmaError, OSError) as e:
-            # One malformed rule file must never abort the whole load --
-            # same principle the original hand-rolled engine documented.
-            continue
+        except Exception:  # noqa: BLE001 - try readable non-UUID IDs, then skip malformed files
+            try:
+                documents = list(yaml.safe_load_all(Path(path).read_text(encoding="utf-8")))
+                normalized = []
+                for document in documents:
+                    if not isinstance(document, dict):
+                        continue
+                    document = dict(document)
+                    original = str(document.get("id") or "")
+                    try:
+                        uuid.UUID(original)
+                    except ValueError:
+                        generated = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thos:{path}:{original}"))
+                        document["id"] = generated
+                        original_ids[generated] = original or Path(path).stem
+                    normalized.append(document)
+                collection = SigmaCollection.from_yaml(
+                    yaml.safe_dump_all(normalized, sort_keys=False)
+                )
+            except Exception:
+                # One malformed rule file must never abort the whole load.
+                continue
         for rule in collection.rules:
             try:
                 compiled_rule = _compile_rule(rule, backend)
             except Exception:  # noqa: BLE001 -- one bad rule can't abort a hunt
                 compiled_rule = None
             if compiled_rule is not None:
+                compiled_rule.rule_id = original_ids.get(compiled_rule.rule_id, compiled_rule.rule_id)
                 compiled.append(compiled_rule)
     return compiled
 
 
+class SigmaCorpusUnavailableError(RuntimeError):
+    """The required SigmaHQ corpus is absent or incomplete."""
+
+
+def _corpus_signature(rules_dir: str) -> tuple[int, str]:
+    files = list(_iter_rule_files(rules_dir))
+    try:
+        with open(os.path.join(rules_dir, "VERSION.txt"), encoding="utf-8") as marker:
+            version = marker.read().strip()
+    except OSError:
+        version = ""
+    return len(files), version
+
+
 @functools.lru_cache(maxsize=4)
-def _cached_ruleset(rules_dir: str) -> tuple[CompiledRule, ...]:
+def _cached_ruleset(rules_dir: str, signature: tuple[int, str]) -> tuple[CompiledRule, ...]:
     """Parse + compile every vendored rule exactly once per process.
     Compiling ~2,800 rules takes single-digit seconds; doing that on
     every hunt instead of once per process would dominate hunt latency
     for no reason, so this is a process-lifetime cache keyed on the
     rules directory path (call clear_cache() in tests / after a
     fetch_sigmahq_rules.py refresh within a long-running process)."""
+    del signature  # Included only to invalidate cache when the corpus changes.
     return tuple(_load_and_compile(rules_dir))
 
 
@@ -383,9 +461,19 @@ def clear_cache() -> None:
     _cached_ruleset.cache_clear()
 
 
-def load_rules(rules_dir: str = RULES_DIR) -> list[CompiledRule]:
+def load_rules(rules_dir: str = RULES_DIR, minimum_rules: int | None = None) -> list[CompiledRule]:
+    signature = _corpus_signature(rules_dir)
+    required = minimum_rules
+    if required is None:
+        required = MIN_RULES if os.path.realpath(rules_dir) == os.path.realpath(RULES_DIR) else 1
+    if signature[0] < required:
+        raise SigmaCorpusUnavailableError(
+            f"SigmaHQ corpus invariant failed: found {signature[0]} rule files in "
+            f"{rules_dir}; at least {required} are required. Compose must complete "
+            "sigmahq-rules-init before starting SOC tools."
+        )
     disabled = {str(item) for item in get_value("sigma", "disabled_rule_ids", default=[]) or []}
-    return [rule for rule in _cached_ruleset(rules_dir) if rule.rule_id not in disabled]
+    return [rule for rule in _cached_ruleset(rules_dir, signature) if rule.rule_id not in disabled]
 
 
 def evaluate_all(records: list[dict], rules: list[CompiledRule] | None = None,
@@ -403,6 +491,19 @@ def evaluate_all(records: list[dict], rules: list[CompiledRule] | None = None,
     """
     if rules is None:
         rules = load_rules()
+        technique = technique_id.strip().lower()
+        tactic_tag = f"attack.{tactic.strip().lower().replace(' ', '_').replace('-', '_')}" if tactic else ""
+        if technique:
+            relevant_tags = {f"attack.{technique}"}
+            if "." in technique:
+                relevant_tags.add(f"attack.{technique.split('.', 1)[0]}")
+            rules = [rule for rule in rules if relevant_tags.intersection(
+                tag.lower() for tag in rule.tags
+            )]
+        elif tactic_tag:
+            rules = [rule for rule in rules if tactic_tag in {
+                tag.lower() for tag in rule.tags
+            }]
 
     rule_matches = []
     matched_indices: set[int] = set()

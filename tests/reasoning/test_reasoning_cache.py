@@ -25,10 +25,15 @@ def test_repeated_identical_reasoning_uses_cached_completion(monkeypatch):
         model_calls += 1
         return json.dumps({
             "summary": "No suspicious activity found.",
-            "findings": [],
+            "findings": [{
+                "claim": "The reviewed command is present.",
+                "evidence": "cmd.exe was recorded.",
+                "ref": "0",
+                "confidence": "circumstantial",
+            }],
             "recommendations": "Continue monitoring.",
             "need_more_logs": False,
-            "follow_up_query": None,
+            "follow_up_query": "",
         })
 
     monkeypatch.setattr(reasoning, "_build_kb_context", no_kb_context)
@@ -50,7 +55,9 @@ def test_repeated_identical_reasoning_uses_cached_completion(monkeypatch):
 
     assert first["reasoning_cache_hit"] is False
     assert second["reasoning_cache_hit"] is True
-    assert {k: v for k, v in first.items() if k != "reasoning_cache_hit"} == {
-        k: v for k, v in second.items() if k != "reasoning_cache_hit"
+    assert first["reasoning_attempts"] == 1
+    assert second["reasoning_attempts"] == 0
+    assert {k: v for k, v in first.items() if k not in {"reasoning_cache_hit", "reasoning_attempts"}} == {
+        k: v for k, v in second.items() if k not in {"reasoning_cache_hit", "reasoning_attempts"}
     }
     assert model_calls == 1

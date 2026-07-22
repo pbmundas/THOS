@@ -25,7 +25,8 @@ _DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
 _DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
 _AGENT_TIERS = {
-    "query_gen": "fast", "indicator_deriver": "fast", "communication": "fast",
+    "query_gen": "query", "indicator_deriver": "fast", "communication": "fast",
+    "chat": "reasoning",
     "supervisor": "reasoning", "reasoning": "reasoning", "coverage_gap": "reasoning",
     "verifier": "verifier", "detection_engineering": "coding", "guardrail": "guard",
 }
@@ -42,10 +43,15 @@ def target_for(agent: str) -> ModelTarget:
     suffix = tier.upper()
     runtime_model = str(get_value("models", "default_model", default="") or "").strip()
     configured_model = os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL)
+    # The settings-page default controls quality-sensitive reasoning/chat
+    # behavior. Query generation and lightweight extraction keep their
+    # dedicated low-latency models so changing the default cannot accidentally
+    # put the larger reasoning model back on either latency-critical path.
+    selected_model = configured_model if tier in {"query", "fast"} else (runtime_model or configured_model)
     return ModelTarget(
         tier=tier,
         host=os.environ.get(f"THOS_OLLAMA_{suffix}_HOST", _DEFAULT_HOST).rstrip("/"),
-        model=runtime_model or configured_model,
-        num_ctx=int(os.environ.get(f"THOS_{suffix}_NUM_CTX", "8192")),
-        num_predict=int(os.environ.get(f"THOS_{suffix}_NUM_PREDICT", "1024")),
+        model=selected_model,
+        num_ctx=int(os.environ.get(f"THOS_{suffix}_NUM_CTX", "4096" if tier == "query" else "8192")),
+        num_predict=int(os.environ.get(f"THOS_{suffix}_NUM_PREDICT", "256" if tier == "query" else "1024")),
     )

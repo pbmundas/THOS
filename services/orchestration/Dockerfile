@@ -18,4 +18,4 @@ EXPOSE 8200
 
 # main.py only defines `app = FastAPI(...)` — it never calls uvicorn.run()
 # itself, so it must be launched via the uvicorn CLI, not `python main.py`.
-CMD ["uvicorn", "services.orchestration.main:app", "--host", "0.0.0.0", "--port", "8200"]
+CMD ["sh", "-c", "python -m services.detection.verify_sigmahq_rules && exec uvicorn services.orchestration.main:app --host 0.0.0.0 --port 8200"]

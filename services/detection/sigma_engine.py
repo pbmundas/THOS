@@ -187,9 +187,22 @@ def evaluate_all(records: list[dict], rules: list[dict] | None = None,
     if rules is None:
         rules = load_rules()
 
-    # Soft-prioritize rules tagged with this hunt's technique/tactic, but
-    # still evaluate every rule — a hypothesis's stated technique isn't
-    # the only thing that can show up in the evidence.
+        technique = technique_id.strip().lower()
+        tactic_tag = f"attack.{tactic.strip().lower().replace(' ', '_').replace('-', '_')}" if tactic else ""
+        if technique:
+            relevant_tags = {f"attack.{technique}"}
+            if "." in technique:
+                relevant_tags.add(f"attack.{technique.split('.', 1)[0]}")
+            rules = [rule for rule in rules if relevant_tags.intersection(
+                str(tag).lower() for tag in rule.get("tags", [])
+            )]
+        elif tactic_tag:
+            rules = [rule for rule in rules if tactic_tag in {
+                str(tag).lower() for tag in rule.get("tags", [])
+            }]
+
+    # Broad corpus-wide monitoring belongs to scheduled Detections. A
+    # hypothesis hunt evaluates only rules mapped to its ATT&CK scope.
     rule_matches = []
     matched_indices = set()
 

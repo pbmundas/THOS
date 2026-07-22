@@ -269,6 +269,18 @@ async def hunt_status(request: Request):
         return {"active": False, "active_count": 0, "available": False}
 
 
+@app.get("/api/hunts/history")
+async def hunt_history(request: Request, limit: int = 100):
+    control_plane.require_feature(request, "reports")
+    return await _upstream_json("GET", f"/hunts?limit={max(1, min(limit, 500))}")
+
+
+@app.get("/api/hunts/{hunt_id}/progress")
+async def hunt_progress(hunt_id: str, request: Request):
+    control_plane.require_feature(request, "hunts")
+    return await _upstream_json("GET", f"/hunts/{hunt_id}/progress")
+
+
 @app.post("/api/hunts/stream")
 async def stream_hunt(hunt: HuntRequest, request: Request):
     control_plane.require_feature(request, "hunts")

@@ -130,13 +130,15 @@ def _strip_markdown_fence(value: str) -> str:
     return text
 
 
-def _validate_query_tree(value: Any, depth: int = 0) -> None:
+def _validate_query_tree(value: Any, depth: int = 0, trusted_sigma: bool = False) -> None:
     if depth > 12:
         raise WazuhAPIError("Wazuh query exceeds the maximum nesting depth.")
     if isinstance(value, dict):
         for key, child in value.items():
             lowered_key = str(key).lower()
-            if lowered_key in _FORBIDDEN_QUERY_KEYS:
+            if lowered_key in _FORBIDDEN_QUERY_KEYS and not (
+                trusted_sigma and lowered_key == "query_string"
+            ):
                 raise WazuhAPIError(
                     f"Wazuh query contains forbidden construct: {key}."
                 )
@@ -157,12 +159,12 @@ def _validate_query_tree(value: Any, depth: int = 0) -> None:
                         raise WazuhAPIError(
                             "Wazuh query contains forbidden terms lookup."
                         )
-            _validate_query_tree(child, depth + 1)
+            _validate_query_tree(child, depth + 1, trusted_sigma)
     elif isinstance(value, list):
         if len(value) > 200:
             raise WazuhAPIError("Wazuh query contains an oversized value list.")
         for child in value:
-            _validate_query_tree(child, depth + 1)
+            _validate_query_tree(child, depth + 1, trusted_sigma)
 
 
 def _sanitize_query_fields(value: Any) -> None:
@@ -193,7 +195,7 @@ def _sanitize_query_fields(value: Any) -> None:
             _sanitize_query_fields(child)
 
 
-def _parse_query_clause(query: str) -> dict:
+def _parse_query_clause(query: str, trusted_sigma: bool = False) -> dict:
     """Accept JSON Query DSL or safely degrade plain text to a bounded search."""
     text = _strip_markdown_fence(query)
     if not text or text == "*":
@@ -222,13 +224,14 @@ def _parse_query_clause(query: str) -> dict:
     clause = payload.get("query", payload)
     if not isinstance(clause, dict):
         raise WazuhAPIError("Wazuh Query DSL 'query' must be a JSON object.")
-    _validate_query_tree(clause)
+    _validate_query_tree(clause, trusted_sigma=trusted_sigma)
     _sanitize_query_fields(clause)
     return clause
 
 
-def _build_search_body(query: str, lookback_minutes: int, limit: int) -> dict:
-    clause = _parse_query_clause(query)
+def _build_search_body(query: str, lookback_minutes: int, limit: int,
+                       trusted_sigma: bool = False) -> dict:
+    clause = _parse_query_clause(query, trusted_sigma=trusted_sigma)
     start = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
         minutes=lookback_minutes
     )
@@ -331,11 +334,11 @@ def _deduplicate(records: list[dict]) -> list[dict]:
     return [chosen[key] for key in order]
 
 
-def fetch_logs(query: str, limit: int = 25, **_ignored) -> dict:
+def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_ignored) -> dict:
     """Execute a bounded read-only search against the Wazuh Indexer."""
     cfg = _get_config()
     bounded_limit = max(1, min(int(limit), cfg["max_results"]))
-    body = _build_search_body(query, cfg["lookback_minutes"], bounded_limit)
+    body = _build_search_body(query, cfg["lookback_minutes"], bounded_limit, trusted_sigma)
     url = f"{cfg['base_url']}/{cfg['index_pattern']}/_search"
 
     with httpx.Client(

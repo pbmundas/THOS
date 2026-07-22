@@ -10,6 +10,7 @@ import re
 from services.siem.clients import ollama_generate
 from services.siem.siem_kb import get_field_mapping
 from services.observability import cache
+from services.reasoning.model_router import target_for
 
 SYSTEM_PROMPT = (
     "You are a SOC threat hunting query generation assistant. "
@@ -295,9 +296,10 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
     # The uploaded field inventory changes valid query syntax, so it is part
     # of the cache key. A schema upload invalidates only affected query-gen
     # entries without flushing unrelated hypotheses.
-    cache_version = "v4"
+    cache_version = "v5"
     field_signature = json.dumps(field_map, sort_keys=True, separators=(",", ":"))
-    cache_payload = f"{cache_version}|{siem_type}|{field_signature}|{hypothesis_text}"
+    query_model = target_for("query_gen").model
+    cache_payload = f"{cache_version}|{query_model}|{siem_type}|{field_signature}|{hypothesis_text}"
     cached_query = await asyncio.to_thread(cache.cache_get, "query_gen", cache_payload)
     if isinstance(cached_query, str) and cached_query.strip():
         validation = validate_and_normalize_query(cached_query, hypothesis_text, siem_type)

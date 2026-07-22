@@ -295,6 +295,9 @@ This phase applies deterministic detection rules and correlates threat intellige
 ## 🔎 Phase 4: Investigation & Deep Reasoning
 This phase represents the core analytical assessment and evidence verification.
 
+### ⚙️ Analysis Reliability
+{reasoning_reliability_section}
+
 ### 📝 Security Findings
 {findings}
 
@@ -362,7 +365,11 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   coverage_gaps: list[str] | None = None,
                   hunt_memory: list[dict] | None = None,
                   approval_id: str | None = None,
-                  human_approval_required: bool = False) -> str:
+                  human_approval_required: bool = False,
+                  reasoning_mode: str = "model",
+                  reasoning_degraded: bool = False,
+                  reasoning_attempts: int = 0,
+                  reasoning_error: str | None = None) -> str:
     """Render the markdown report and write it to disk. Returns the file path.
 
     `title`, if not given (empty string), is now derived automatically
@@ -393,6 +400,19 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     )
     mitre_section = _render_mitre_section(technique_id)
     sigma_section = _render_sigma_section(sigma_rule_matches or [], sigma_matched_count, records_analyzed)
+    if reasoning_degraded:
+        reasoning_reliability_section = (
+            "⚠️ **Deterministic evidence fallback used.** The reasoning model did not produce a "
+            f"valid response after {reasoning_attempts or 3} attempts. THOS still generated this "
+            "report from Sigma matches, normalized telemetry, coverage analysis, and verified "
+            "record citations. Human approval is required.\n\n"
+            f"- **Recorded strike reasons:** `{reasoning_error or 'No valid model response'}`"
+        )
+    else:
+        reasoning_reliability_section = (
+            f"✅ **Model reasoning completed and validated.** Mode: `{reasoning_mode or 'model'}`; "
+            f"attempts: `{reasoning_attempts or 1}`."
+        )
 
     # Format Hunt Memory section
     if not hunt_memory:
@@ -546,6 +566,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         threat_intel_section=threat_intel_section,
         coverage_gaps_section=coverage_gaps_section,
         verifier_section=verifier_section,
+        reasoning_reliability_section=reasoning_reliability_section,
         case_section=case_section,
         approval_section=approval_section,
         feedback_section=feedback_section,
@@ -620,6 +641,10 @@ async def write_report_node(state: dict) -> dict:
         hunt_memory=state.get("hunt_memory"),
         approval_id=state.get("approval_id"),
         human_approval_required=state.get("human_approval_required", False),
+        reasoning_mode=state.get("reasoning_mode") or "model",
+        reasoning_degraded=state.get("reasoning_degraded", False),
+        reasoning_attempts=state.get("reasoning_attempts", 0),
+        reasoning_error=state.get("reasoning_error"),
     )
     return {"report_path": path, "report_status": "generated"}
 

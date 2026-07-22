@@ -77,7 +77,7 @@ def test_merges_all_three_layers_and_tags_records(monkeypatch):
     assert enrichment["llm_indicator_matched_records"] == 1
 
 
-def test_empty_sigmahq_ruleset_still_works_and_notes_it(monkeypatch):
+def test_empty_sigmahq_ruleset_still_works(monkeypatch):
     processed_logs = [{"detail": "record 0"}]
 
     monkeypatch.setattr(soc_tools.sigmahq_engine, "evaluate_all",
@@ -95,7 +95,49 @@ def test_empty_sigmahq_ruleset_still_works_and_notes_it(monkeypatch):
     result = asyncio.run(soc_tools.run_soc_tools_node(state))
 
     assert result["sigma_matched_count"] == 0
-    assert "fetch_sigmahq_rules.py" in result["sigma_rule"]
+    assert "16 applicable rule" in result["sigma_rule"]
+
+
+def test_live_siem_uses_query_pushdown_not_local_evaluation(monkeypatch):
+    async def pushed(**kwargs):
+        assert kwargs["siem_type"] == "splunk"
+        return {
+            "processed_logs": [{
+                "timestamp": "2026-07-22T00:00:00Z", "host": "srv-1",
+                "event": "4688", "detail": "encoded powershell",
+                "_sigma_match": True, "_sigmahq_match": True,
+                "_sigma_rules": ["[sigmahq] hq-1:Encoded PowerShell"],
+            }],
+            "rule_matches": [{
+                "rule_id": "hq-1", "title": "Encoded PowerShell", "level": "high",
+                "source": "sigmahq", "matched_count": 1, "matched_indices": [0],
+            }],
+            "rules_evaluated": 1,
+            "coverage": {"relevant": 1, "ready": 1, "unsupported": 0, "truncated": 0},
+            "errors": [],
+        }
+
+    monkeypatch.setattr(soc_tools, "query_sigma_for_hunt", pushed)
+    monkeypatch.setattr(
+        soc_tools.sigmahq_engine, "evaluate_all",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("local evaluator must not run")),
+    )
+    monkeypatch.setattr(
+        soc_tools.sigma_engine, "evaluate_all",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("local evaluator must not run")),
+    )
+
+    async def fake_call_tool(name, args):
+        return {"event_ids": [], "keywords": []}
+
+    monkeypatch.setattr(soc_tools, "call_tool", fake_call_tool)
+    result = asyncio.run(soc_tools.run_soc_tools_node({
+        "siem_type": "splunk", "processed_logs": [], "technique_id": "T1059.001",
+        "hypothesis_text": "encoded PowerShell",
+    }))
+    assert result["enrichment"]["sigma_execution_mode"] == "siem_query_pushdown"
+    assert result["sigma_matched_count"] == 1
+    assert result["processed_logs"][0]["_sigma_match"] is True
 
 
 def test_sigma_and_indicator_work_start_concurrently(monkeypatch):

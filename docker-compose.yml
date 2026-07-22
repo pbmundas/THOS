@@ -34,6 +34,7 @@ volumes:
   postgres_data:
   redis_data:
   sigmahq_rules:
+  sigma_queries:
 
 services:
 
@@ -51,6 +52,10 @@ services:
     # shared or internet-facing host.
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      # Keep the small query model resident after the initializer warms it so
+      # the first analyst hunt uses the sub-second warm path.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
     networks:
       - thos-net
     # GPU inference: without this reservation, Ollama silently falls back to
@@ -87,7 +92,8 @@ services:
       - thos-net
     environment:
       OLLAMA_HOST: ollama:11434
-      MODEL_NAME: ${OLLAMA_MODEL:-qwen3:4b}
+      MODEL_NAMES: "${OLLAMA_MODEL:-qwen3:4b} ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}"
+      QUERY_MODEL: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
     deploy:
       resources:
         limits:
@@ -102,20 +108,22 @@ services:
     # actually pulled, instead of silently 404'ing at hunt time.
     command:
       - |
-        for i in 1 2 3 4 5; do
-          echo "[ollama-model-init] pull attempt $$i for $$MODEL_NAME";
-          if ollama pull "$$MODEL_NAME"; then
-            echo "[ollama-model-init] pull succeeded";
-            break;
+        for MODEL_NAME in $$MODEL_NAMES; do
+          READY=0;
+          for i in 1 2 3 4 5; do
+            echo "[ollama-model-init] pull attempt $$i for $$MODEL_NAME";
+            if ollama pull "$$MODEL_NAME"; then READY=1; break; fi;
+            echo "[ollama-model-init] pull failed, retrying in 10s...";
+            sleep 10;
+          done;
+          if [ "$$READY" != "1" ] || ! ollama list | grep -q "$$(echo $$MODEL_NAME | cut -d: -f1)"; then
+            echo "[ollama-model-init] FATAL: $$MODEL_NAME not present after retries";
+            exit 1;
           fi;
-          echo "[ollama-model-init] pull failed, retrying in 10s...";
-          sleep 10;
+          echo "[ollama-model-init] confirmed $$MODEL_NAME is available";
         done;
-        if ! ollama list | grep -q "$$(echo $$MODEL_NAME | cut -d: -f1)"; then
-          echo "[ollama-model-init] FATAL: $$MODEL_NAME not present after retries";
-          exit 1;
-        fi;
-        echo "[ollama-model-init] confirmed $$MODEL_NAME is available";
+        echo "[ollama-model-init] warming query model $$QUERY_MODEL";
+        ollama run "$$QUERY_MODEL" "Return only OK." >/dev/null;
     restart: "no"
 
   # ------------------------------------------------------------
@@ -262,6 +270,34 @@ services:
           cpus: "${SIGMAHQ_INIT_CPU_LIMIT:-1}"
           memory: ${SIGMAHQ_INIT_MEM_LIMIT:-512m}
 
+  # Compile the complete pinned corpus once. Hunts and scheduled detections
+  # reuse this catalog instead of compiling rules or downloading unfiltered
+  # enterprise telemetry at runtime.
+  sigma-query-init:
+    build:
+      context: .
+      dockerfile: services/detection/Dockerfile.sigma-query-init
+    container_name: thos-sigma-query-init
+    restart: "no"
+    environment:
+      SIGMAHQ_RULES_DIR: /rules
+      SIGMAHQ_MIN_RULES: ${SIGMAHQ_MIN_RULES:-2000}
+      SIGMA_QUERY_CATALOG_DIR: /catalog
+      SIGMA_QUERY_BACKENDS: ${SIGMA_QUERY_BACKENDS:-splunk,wazuh,qradar,logrhythm}
+    volumes:
+      - sigmahq_rules:/rules:ro
+      - sigma_queries:/catalog
+    depends_on:
+      sigmahq-rules-init:
+        condition: service_completed_successfully
+    networks:
+      - thos-net
+    deploy:
+      resources:
+        limits:
+          cpus: "${SIGMA_QUERY_INIT_CPU_LIMIT:-2}"
+          memory: ${SIGMA_QUERY_INIT_MEM_LIMIT:-2g}
+
   # ------------------------------------------------------------
   # 7. MCP Server — SOC Tools
   # ------------------------------------------------------------
@@ -278,8 +314,18 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
-      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${OLLAMA_MODEL:-qwen3:4b}}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}}
+      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
       THOS_FAST_GENERATION_TIMEOUT_SECONDS: ${THOS_FAST_GENERATION_TIMEOUT_SECONDS:-60}
+      THOS_FAST_GENERATION_RETRIES: ${THOS_FAST_GENERATION_RETRIES:-1}
+      THOS_FAST_NUM_CTX: ${THOS_FAST_NUM_CTX:-4096}
+      THOS_FAST_NUM_PREDICT: ${THOS_FAST_NUM_PREDICT:-256}
+      THOS_FAST_KEEP_ALIVE: ${THOS_FAST_KEEP_ALIVE:-30m}
+      THOS_QUERY_GENERATION_TIMEOUT_SECONDS: ${THOS_QUERY_GENERATION_TIMEOUT_SECONDS:-30}
+      THOS_QUERY_GENERATION_RETRIES: ${THOS_QUERY_GENERATION_RETRIES:-1}
+      THOS_QUERY_NUM_CTX: ${THOS_QUERY_NUM_CTX:-4096}
+      THOS_QUERY_NUM_PREDICT: ${THOS_QUERY_NUM_PREDICT:-256}
+      THOS_QUERY_KEEP_ALIVE: ${THOS_QUERY_KEEP_ALIVE:-30m}
       OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
@@ -310,6 +356,12 @@ services:
       WAZUH_LOOKBACK_MINUTES: ${WAZUH_LOOKBACK_MINUTES:-1440}
       WAZUH_REQUEST_TIMEOUT_SECONDS: ${WAZUH_REQUEST_TIMEOUT_SECONDS:-30}
       WAZUH_MAX_RESULTS: ${WAZUH_MAX_RESULTS:-1000}
+      SIGMAHQ_RULES_DIR: /repo/services/detection/sigma_rules_hq
+      SIGMAHQ_MIN_RULES: ${SIGMAHQ_MIN_RULES:-2000}
+      SIGMAHQ_REF: ${SIGMAHQ_REF:-282369fa76c5cd6103b055478fbaebec8530cfa5}
+      SIGMA_QUERY_CATALOG_DIR: /data/sigma_queries
+      SIGMA_HUNT_MAX_RULES: ${SIGMA_HUNT_MAX_RULES:-64}
+      SIGMA_QUERY_CONCURRENCY: ${SIGMA_QUERY_CONCURRENCY:-6}
     volumes:
       - ./data/reports:/data/reports
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
@@ -319,6 +371,7 @@ services:
       # The initializer guarantees this volume has the pinned community
       # corpus before MCP starts; MCP only receives a read-only view.
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
+      - sigma_queries:/data/sigma_queries:ro
     deploy:
       resources:
         limits:
@@ -335,6 +388,13 @@ services:
         condition: service_completed_successfully
       sigmahq-rules-init:
         condition: service_completed_successfully
+      sigma-query-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.detection.verify_sigmahq_rules", "--quiet"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
     networks:
       - thos-net
 
@@ -356,6 +416,11 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
       THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-qwen3:4b}}
       OLLAMA_GENERATION_TIMEOUT_SECONDS: ${OLLAMA_GENERATION_TIMEOUT_SECONDS:-180}
+      # Large evidence-grounded JSON responses on CPU can legitimately exceed
+      # the generic 180s transport window. Let one attempt finish instead of
+      # cancelling valid inference and multiplying latency across three strikes.
+      THOS_REASONING_GENERATION_TIMEOUT_SECONDS: ${THOS_REASONING_GENERATION_TIMEOUT_SECONDS:-360}
+      THOS_REASONING_KEEP_ALIVE: ${THOS_REASONING_KEEP_ALIVE:-30m}
       OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
       MAX_REASONING_FOLLOWUPS: ${MAX_REASONING_FOLLOWUPS:-1}
       MCP_SERVER_URL: http://mcp:8100/mcp
@@ -374,11 +439,19 @@ services:
       # Structured JSON logs to stdout (services/observability/logging_config.py).
       # One of DEBUG/INFO/WARNING/ERROR.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIGMAHQ_RULES_DIR: /repo/services/detection/sigma_rules_hq
+      SIGMAHQ_MIN_RULES: ${SIGMAHQ_MIN_RULES:-2000}
+      SIGMAHQ_REF: ${SIGMAHQ_REF:-282369fa76c5cd6103b055478fbaebec8530cfa5}
+      SIGMA_QUERY_CATALOG_DIR: /data/sigma_queries
+      SIGMA_HUNT_MAX_RULES: ${SIGMA_HUNT_MAX_RULES:-64}
+      SIGMA_QUERY_CONCURRENCY: ${SIGMA_QUERY_CONCURRENCY:-6}
     volumes:
       - ./data/reports:/data/reports
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
       - ./data/threat_intel:/data/threat_intel:ro
       - ./data/runtime:/data/runtime
+      - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
+      - sigma_queries:/data/sigma_queries:ro
     deploy:
       resources:
         limits:
@@ -386,10 +459,12 @@ services:
           memory: ${ORCHESTRATOR_MEM_LIMIT:-2g}
     depends_on:
       mcp:
-        condition: service_started
+        condition: service_healthy
       ollama:
         condition: service_healthy
       ollama-model-init:
+        condition: service_completed_successfully
+      sigma-query-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy

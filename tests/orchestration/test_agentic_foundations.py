@@ -43,6 +43,8 @@ def test_verifier_requires_valid_citations():
         "processed_logs": [{}],
     }))
     assert passed["verifier_result"]["status"] == "passed"
+    assert failed["verifier_result"]["status"] == "passed"
+    assert len(failed["verifier_result"]["repaired_references"]) == 1
     assert failed["human_approval_required"] is True
 
 
@@ -93,7 +95,7 @@ def test_verifier_proactively_creates_case_and_approval_on_failure():
         
         result = asyncio.run(verify_findings_node({
             "hunt_id": "test-hunt-id",
-            "findings": "- [hard-evidence] Unsupported (evidence: none; ref: 9)",
+            "findings": "- [hard-evidence] Unsupported claim without a record citation",
             "processed_logs": [{}],
             "technique_name": "Test Technique",
             "hunter_name": "analyst-bob",

@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from services.detection.bootstrap_sigmahq_rules import count_rules, ensure_rules
+from services.detection.verify_sigmahq_rules import verify_rules
 
 
 def _write_corpus(path: Path, count: int, version: str) -> None:
@@ -76,3 +77,12 @@ def test_download_below_minimum_fails_closed(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="expected at least 3"):
         ensure_rules(tmp_path / "vendor", target, 3, "pinned-commit", tmp_path / "fetch.py")
+
+
+def test_service_preflight_requires_count_and_pinned_version(tmp_path):
+    _write_corpus(tmp_path, 3, "Commit: pinned-commit")
+    assert verify_rules(tmp_path, 3, "pinned-commit") == 3
+    with pytest.raises(RuntimeError, match="at least 4"):
+        verify_rules(tmp_path, 4, "pinned-commit")
+    with pytest.raises(RuntimeError, match="does not contain pinned ref"):
+        verify_rules(tmp_path, 3, "different-commit")

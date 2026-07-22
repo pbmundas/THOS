@@ -230,8 +230,9 @@ data/reports/
 The report library renders that Markdown directly and provides both the original
 `.md` file and a styled PDF export. Reports are written only after reasoning
 returns a complete, schema-valid result. An empty, malformed, or truncated model
-response is retried up to three total attempts; if all three fail, the hunt ends
-with an explicit reason and no unfinished report is created.
+response is retried up to three total attempts. If all three fail, THOS records
+the strike reasons and completes a clearly marked deterministic evidence report
+that requires human approval; an unfinished model response is never published.
 
 ## Settings and local roles
 
@@ -270,9 +271,18 @@ startup, Compose first copies a reviewed corpus from
 `services/detection/sigma_rules_hq/`. If the repository contains only the
 version marker, the one-shot `sigmahq-rules-init` service downloads the exact
 commit configured by `SIGMAHQ_REF` and verifies at least
-`SIGMAHQ_MIN_RULES` rules before MCP can start. For air-gapped deployment,
+`SIGMAHQ_MIN_RULES` rules before MCP or the Orchestrator can start. Both
+services mount the same read-only corpus and run a fail-fast preflight, so SOC
+tools cannot silently fall back to `0 SigmaHQ rules`. For air-gapped deployment,
 run `python services/detection/fetch_sigmahq_rules.py --ref <commit>` on a
 connected review machine and commit the resulting directory.
+
+Hunts execute independently of the browser stream and therefore continue when
+an analyst reloads or navigates away. Every run is retained in PostgreSQL with
+its last stage, terminal status, report path, and failure reason. The Reports
+page exposes this run history. Reasoning still validates up to three model
+responses; if all fail, a citation-safe deterministic evidence analysis creates
+the report and requires human approval instead of silently losing the hunt.
 
 ---
 

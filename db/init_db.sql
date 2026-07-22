@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS hunts (
     hypothesis_id   TEXT,
     hypothesis_text TEXT,
     status          TEXT NOT NULL DEFAULT 'started',  -- started|running|completed|failed
+    last_stage      TEXT,
+    current_stage   TEXT,
+    failure_stage   TEXT,
+    failure_reason  TEXT,
+    outcome         JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -41,6 +46,24 @@ CREATE TABLE IF NOT EXISTS reports (
     file_path   TEXT NOT NULL,
     summary     TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (
+    run_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schedule_id     TEXT NOT NULL,
+    rule_id         TEXT NOT NULL,
+    rule_title      TEXT,
+    rule_source     TEXT,
+    level           TEXT,
+    siem_type       TEXT NOT NULL,
+    status          TEXT NOT NULL, -- detected|no_match|failed
+    events_matched  INTEGER NOT NULL DEFAULT 0,
+    matched_events  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    analysis        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    compiled_query  TEXT,
+    query_backend   TEXT,
+    error_msg       TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Agentic transformation foundations: a durable human-review queue and

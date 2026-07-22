@@ -16,6 +16,7 @@ import {
   PlayIcon,
   QueueListIcon,
   RadioIcon,
+  ShieldExclamationIcon,
   ShieldCheckIcon,
   SparklesIcon,
   Squares2X2Icon,
@@ -27,6 +28,7 @@ import logo from "./assets/appLogo.svg";
 import ChatPage from "./ChatPage";
 import HypothesisCreate from "./HypothesisCreate";
 import Settings from "./Settings";
+import Detections from "./Detections";
 
 const NODE_LABELS = {
   refresh_hearth_kb: "Refreshing hypothesis knowledge",
@@ -78,6 +80,7 @@ function eventReason(node, data = {}) {
   if (node === "coverage_gap") return `identified ${(data.coverage_gaps || []).length} coverage gaps`;
   if (node === "threat_intel") return `found ${(data.enrichment_hits || []).length} local IOC matches`;
   if (node === "reasoning" && data.reasoning_failed) return `failed after ${data.reasoning_attempts || 3} attempts; report generation was stopped`;
+  if (node === "reasoning" && data.reasoning_degraded) return `model attempts exhausted; completed with deterministic evidence fallback and human approval`;
   if (node === "reasoning" && data.reasoning_cache_hit) return "reused a previously validated reasoning result";
   if (node === "reasoning" && data.reasoning_attempts) return `returned a complete validated result on attempt ${data.reasoning_attempts}`;
   return NODE_REASONS[node] || "completed this hunt stage";
@@ -93,6 +96,18 @@ function moduleDetails(data = {}) {
     else details[key] = value;
   });
   return details;
+}
+
+function progressItem(step) {
+  const data = step?.output && typeof step.output === "object" ? step.output : {};
+  return {
+    id: step?.step_id || `${step?.node_name}-${step?.created_at || ""}`,
+    node: step?.node_name || "unknown",
+    label: NODE_LABELS[step?.node_name] || step?.node_name || "Unknown module",
+    duration: formatDuration(step?.duration_ms),
+    reason: eventReason(step?.node_name, data),
+    details: moduleDetails(data),
+  };
 }
 
 function readableHypothesisText(value) {
@@ -223,6 +238,7 @@ function App() {
   const [finalState, setFinalState] = useState(null);
   const [lastRun, setLastRun] = useState(null);
   const [reports, setReports] = useState([]);
+  const [huntHistory, setHuntHistory] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportQuery, setReportQuery] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
@@ -248,7 +264,7 @@ function App() {
       const payload = await api("/api/telemetry-sources");
       const items = Array.isArray(payload.items) && payload.items.length ? payload.items : [{ id: "folder", label: "Local folder" }];
       setActiveSources(items);
-      setSiemType((current) => items.some((item) => item.id === current) ? current : (payload.default || items[0].id || "folder"));
+      setSiemType(payload.default || items[0].id || "folder");
     } catch {
       setActiveSources([{ id: "folder", label: "Local folder" }]);
       setSiemType("folder");
@@ -256,15 +272,50 @@ function App() {
   }, []);
 
   const loadHuntStatus = useCallback(async () => {
-    try { const status = await api("/api/hunts/status"); setPlatformHuntActive(Boolean(status.active)); }
-    catch { setPlatformHuntActive(false); }
+    try {
+      const status = await api("/api/hunts/status");
+      const active = Boolean(status.active);
+      setPlatformHuntActive(active);
+      let hunt = status.hunt || null;
+      const rememberedId = window.localStorage.getItem("thos:active-hunt") || "";
+      if (!hunt && rememberedId) {
+        try { hunt = await api(`/api/hunts/${rememberedId}/progress`); }
+        catch { window.localStorage.removeItem("thos:active-hunt"); }
+      }
+      if (hunt) {
+        const id = String(hunt.hunt_id || "");
+        setHuntId(id);
+        setHuntTitle(`${hunt.hypothesis_id || "Dynamic hunt"} · ${String(hunt.hypothesis_text || "Scheduled or analyst hunt").slice(0, 140)}`);
+        setProgress((hunt.steps || []).map(progressItem));
+        setActiveNode(active ? (hunt.current_stage || "") : "");
+        setRunning(active);
+        if (active) {
+          window.localStorage.setItem("thos:active-hunt", id);
+          setHuntError("");
+          setFinalState(null);
+        } else {
+          window.localStorage.removeItem("thos:active-hunt");
+          setFinalState({ ...(hunt.outcome || {}), status: hunt.status });
+          setHuntError(hunt.status === "failed" ? (hunt.failure_reason || "Hunt failed") : "");
+        }
+      } else if (!active) {
+        setRunning(false);
+      }
+    } catch {
+      setPlatformHuntActive(false);
+    }
   }, []);
 
   const loadReports = useCallback(async () => {
     setReportsLoading(true);
     setReportError("");
     try {
-      setReports(await api("/api/reports"));
+      const [reportItems, historyItems] = await Promise.all([
+        api("/api/reports"),
+        api("/api/hunts/history?limit=100"),
+      ]);
+      setReports(Array.isArray(reportItems) ? reportItems : []);
+      setHuntHistory(Array.isArray(historyItems) ? historyItems : []);
     } catch (error) {
       setReportError(error.message);
     } finally {
@@ -302,7 +353,7 @@ function App() {
     if (authStatus !== "authenticated") return;
     const permissions = new Set(session.permissions || []);
     if (session.role === "SME") return;
-    const allowed = { hunts: permissions.has("hunts"), reports: permissions.has("reports"), settings: permissions.has("knowledge"), home: permissions.has("chat") };
+    const allowed = { hunts: permissions.has("hunts"), reports: permissions.has("reports"), detections: permissions.has("reports"), settings: permissions.has("knowledge"), home: permissions.has("chat") };
     if (!allowed[page]) setPage(allowed.hunts ? "hunts" : allowed.reports ? "reports" : allowed.settings ? "settings" : "home");
   }, [authStatus, page, session]);
 
@@ -378,7 +429,10 @@ function App() {
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line);
-          if (event.event === "hunt_started") setHuntId(event.hunt_id);
+          if (event.event === "hunt_started") {
+            setHuntId(event.hunt_id);
+            window.localStorage.setItem("thos:active-hunt", event.hunt_id);
+          }
           if (event.event === "node_started") setActiveNode(event.node || "");
           if (event.event === "node_complete") {
             setProgress((current) => [...current, {
@@ -394,6 +448,7 @@ function App() {
             setFinalState(event.state || {});
             setHuntId(event.hunt_id || "");
             setActiveNode("");
+            window.localStorage.removeItem("thos:active-hunt");
           }
         }
         if (done) break;
@@ -441,7 +496,7 @@ function App() {
 
   const initials = analyst.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AN";
   const can = (feature) => session.role === "SME" || session.permissions?.includes(feature);
-  const pageLabel = page === "hunts" ? "Hypothesis board" : page === "reports" ? "Hunt reports" : page === "settings" ? "Settings" : page === "create-hypothesis" ? "Create hypothesis" : "Workspace";
+  const pageLabel = page === "hunts" ? "Hunt Board" : page === "reports" ? "Reports" : page === "detections" ? "Detections" : page === "settings" ? "Settings" : page === "create-hypothesis" ? "Create Hunt" : "Workspace";
   const huntLocked = running || platformHuntActive;
   const completedModules = new Set(progress.map((item) => item.node)).size;
   const progressPercent = finalState && !huntError ? 100 : Math.min(96, Math.round((completedModules / Object.keys(NODE_LABELS).length) * 100));
@@ -456,17 +511,20 @@ function App() {
           <button className="mobile-close" onClick={() => setSidebarOpen(false)}><XMarkIcon /></button>
         </div>
         <nav className="nav-stack" aria-label="Primary navigation">
-          {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => { setPage("hunts"); setSidebarOpen(false); }}>
-            <Squares2X2Icon /><span>Hypothesis board</span><ChevronRightIcon className="nav-chevron" />
+          {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => { setPage("detections"); setSidebarOpen(false); }}>
+            <ShieldExclamationIcon /><span>Detections</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => { setPage("reports"); setSidebarOpen(false); }}>
-            <DocumentTextIcon /><span>Hunt reports</span><ChevronRightIcon className="nav-chevron" />
+          {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => { setPage("hunts"); setSidebarOpen(false); }}>
+            <Squares2X2Icon /><span>Hunt Board</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           {session.role === "SME" && <button className={page === "create-hypothesis" ? "active" : ""} onClick={() => { setPage("create-hypothesis"); setSidebarOpen(false); }}>
-            <LightBulbIcon /><span>Create hypothesis</span><ChevronRightIcon className="nav-chevron" />
+            <LightBulbIcon /><span>Create Hunt</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
+          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => { setPage("reports"); setSidebarOpen(false); }}>
+            <DocumentTextIcon /><span>Reports</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           {(can("settings") || can("knowledge")) && <button className={page === "settings" ? "active" : ""} onClick={() => { setPage("settings"); setSidebarOpen(false); }}>
-            <Cog6ToothIcon /><span>{session.role === "SME" ? "Settings" : "Knowledge base"}</span><ChevronRightIcon className="nav-chevron" />
+            <Cog6ToothIcon /><span>Settings</span><ChevronRightIcon className="nav-chevron" />
           </button>}
         </nav>
         <div className="sidebar-note">
@@ -582,7 +640,7 @@ function App() {
                 {expandedNode && expandedNode === activeNode && <div className="module-detail active-detail"><strong>{NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "This module is currently processing the hunt state."}</p><code>Module key: {activeNode}</code></div>}
                 <div className="progress-list">
                   {progress.map((item, index) => (
-                    <div className="progress-entry" key={`${item.node}-${index}`}><button className="progress-row" onClick={() => setExpandedNode(expandedNode === `${item.node}-${index}` ? "" : `${item.node}-${index}`)}>
+                    <div className="progress-entry" key={item.id || `${item.node}-${index}`}><button className="progress-row" onClick={() => setExpandedNode(expandedNode === `${item.node}-${index}` ? "" : `${item.node}-${index}`)}>
                       <span className="progress-check"><CheckCircleIcon /></span>
                       <div><strong>{item.label}</strong><p>{item.reason}</p></div>
                       <time>{item.duration}</time>
@@ -590,7 +648,7 @@ function App() {
                   ))}
                   {running && activeNode && <button className="progress-row current" onClick={() => setExpandedNode(expandedNode === activeNode ? "" : activeNode)}><span className="pulse-ring" /><div><strong>{NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "Module is working on the current hunt state."}</p></div><time>running</time></button>}
                 </div>
-                {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>Verified conclusion</h3><p>{finalState.reasoning_summary}</p></div>}
+                {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>{finalState.reasoning_degraded ? "Deterministic fallback conclusion" : "Verified conclusion"}</h3><p>{finalState.reasoning_summary}</p></div>}
               </section>
             )}
           </div>
@@ -601,6 +659,24 @@ function App() {
               <button className="secondary-button" onClick={loadReports} disabled={reportsLoading}><ArrowPathIcon className={reportsLoading ? "spinning" : ""} /> Refresh reports</button>
             </section>
             {reportError && <div className="alert error-alert"><ExclamationTriangleIcon />{reportError}</div>}
+            <section className="hunt-history panel">
+              <div className="hunt-history-heading"><div><h2>Hunt run history</h2><p>Every started hunt is retained with its terminal outcome and failure reason.</p></div><span>{huntHistory.length} runs</span></div>
+              <div className="hunt-history-list">
+                {huntHistory.map((hunt) => {
+                  const report = reports.find((item) => item.hunt_id === hunt.hunt_id);
+                  const degraded = Boolean(hunt.outcome?.reasoning_degraded);
+                  const failed = hunt.status === "failed";
+                  const failureReason = hunt.failure_reason || (failed ? "Hunt failed before a detailed reason was recorded." : "");
+                  return <article key={hunt.hunt_id} className={`hunt-history-row ${hunt.status}`}>
+                    <span className={`run-status run-${hunt.status}`}>{hunt.status}</span>
+                    <div><strong>{hunt.hypothesis_id || "Dynamic hypothesis"}</strong><code>{hunt.hunt_id}</code><small>{new Date(hunt.created_at).toLocaleString()} · Last stage: {hunt.last_stage || "started"}</small></div>
+                    <div className="run-outcome">{failed ? <p><ExclamationTriangleIcon />{failureReason}</p> : degraded ? <p className="degraded"><ShieldCheckIcon />Completed with deterministic evidence fallback; human approval required.</p> : <p className="successful"><CheckCircleIcon />Completed successfully</p>}{hunt.outcome?.reasoning_error && <details><summary>Reasoning strikes</summary><pre>{hunt.outcome.reasoning_error}</pre></details>}</div>
+                    {report ? <button className="secondary-button" onClick={() => openReport(report.filename)}>View report</button> : <span className="no-report">No report</span>}
+                  </article>;
+                })}
+                {!reportsLoading && !huntHistory.length && <p className="muted-list">No hunt runs have been recorded.</p>}
+              </div>
+            </section>
             <div className="report-layout">
               <aside className="report-index panel">
                 <div className="field search-field"><label htmlFor="report-search">Find a report</label><span><MagnifyingGlassIcon /></span><input id="report-search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Title, hunt ID, filename…" /></div>
@@ -634,7 +710,7 @@ function App() {
               </section>
             </div>
           </div>
-        ) : page === "create-hypothesis" && session.role === "SME" ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and approved MCP tools." /></div>}
+        ) : page === "detections" ? <Detections /> : page === "create-hypothesis" && session.role === "SME" ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and approved MCP tools." /></div>}
       </main>
       {readingHypothesis && <div className="hypothesis-reader-backdrop" role="presentation" onClick={() => setReadingHypothesis(null)}><section className="hypothesis-reader" role="dialog" aria-modal="true" aria-label={`Read hypothesis ${readingHypothesis.id}`} onClick={(event) => event.stopPropagation()}>
         <header><div><span className="status-pill status-indigo">{readingHypothesis.id}</span><span className="status-pill status-cyan">{readingHypothesis.technique || "Unmapped"}</span></div><button aria-label="Close hypothesis" onClick={() => setReadingHypothesis(null)}><XMarkIcon /></button></header>

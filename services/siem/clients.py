@@ -91,18 +91,26 @@ async def ollama_generate(prompt: str, model: str = None, system: str = None,
         "options": {
             "num_ctx": target.num_ctx,
             "num_predict": min(target.num_predict, 512),
+            "temperature": 0,
         },
+        "keep_alive": os.environ.get(f"THOS_{target.tier.upper()}_KEEP_ALIVE", "30m"),
     }
     if system:
         payload["system"] = system
 
     async def _do_request():
-        timeout = float(os.environ.get("THOS_FAST_GENERATION_TIMEOUT_SECONDS", "60")) if target.tier == "fast" else float(os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"))
+        timeout = float(os.environ.get(
+            f"THOS_{target.tier.upper()}_GENERATION_TIMEOUT_SECONDS",
+            os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"),
+        ))
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{target.host}/api/generate", json=payload)
             resp.raise_for_status()
             body = resp.json()
             return str(body.get("response") or (body.get("message") or {}).get("content") or "").strip()
 
-    retries = int(os.environ.get("OLLAMA_GENERATION_RETRIES", "3"))
+    retries = int(os.environ.get(
+        f"THOS_{target.tier.upper()}_GENERATION_RETRIES",
+        os.environ.get("OLLAMA_GENERATION_RETRIES", "3"),
+    ))
     return await async_retry(_do_request, retries=retries, what="clients.ollama_generate")

@@ -16,6 +16,13 @@ const jsonOptions = (method, body) => ({ method, headers: { "Content-Type": "app
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const CONNECTION_SIEMS = ["wazuh", "logrhythm", "splunk", "qradar", "folder"];
 
+function sigmaScheduleLabel(item) {
+  const count = Number(item.interval || 1);
+  if (item.frequency === "minutes") return `Every ${count} minute${count === 1 ? "" : "s"}, anchored at ${item.time}`;
+  if (item.frequency === "hourly") return `Every ${count} hour${count === 1 ? "" : "s"} at minute ${String(item.time || "00:00").slice(3)}`;
+  return count === 1 ? `Once a day at ${item.time}` : `${count} times a day, starting at ${item.time}`;
+}
+
 function Notice({ type = "success", children }) {
   return <div className={`settings-notice ${type}`}><span>{type === "error" ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}</span>{children}</div>;
 }
@@ -64,6 +71,8 @@ function SigmaTab({ activeSources }) {
   const [data, setData] = useState({ items: [], total: 0, schedules: [] });
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState("02:00");
+  const [frequency, setFrequency] = useState("daily");
+  const [interval, setInterval] = useState(1);
   const [siem, setSiem] = useState(activeSources[0]?.id || "folder");
   const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [notice, setNotice] = useState("");
@@ -71,14 +80,15 @@ function SigmaTab({ activeSources }) {
   useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [load]);
   useEffect(() => { if (!activeSources.some((item) => item.id === siem)) setSiem(activeSources[0]?.id || "folder"); }, [activeSources, siem]);
   const toggle = async (rule) => { try { await api(`/api/settings/sigma/${encodeURIComponent(rule.id)}`, jsonOptions("PUT", { enabled: !rule.enabled })); setData((current) => ({ ...current, items: current.items.map((item) => item.id === rule.id ? { ...item, enabled: !item.enabled } : item) })); } catch (error) { setNotice(error.message); } };
-  const schedule = async (rule) => { try { await api("/api/settings/schedules/sigma", jsonOptions("POST", { target_id: rule.id, title: rule.title, time, days, enabled: true, siem_type: siem })); setNotice(`Scheduled ${rule.title} at ${time} on ${siem}.`); load(); } catch (error) { setNotice(error.message); } };
+  const intervalMax = frequency === "minutes" ? 59 : 24;
+  const schedule = async (rule) => { try { const bounded = Math.max(1, Math.min(intervalMax, Number(interval) || 1)); await api("/api/settings/schedules/sigma", jsonOptions("POST", { target_id: rule.id, title: rule.title, time, frequency, interval: bounded, days, enabled: true, siem_type: siem })); setNotice(`Scheduled ${rule.title}: ${sigmaScheduleLabel({ frequency, interval: bounded, time })} on ${siem}.`); load(); } catch (error) { setNotice(error.message); } };
   const remove = async (id) => { await api(`/api/settings/schedules/sigma/${id}`, { method: "DELETE" }); load(); };
   return <div className="settings-stack"><section className="settings-card"><div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>Sigma rule catalogue</h3><p>{data.total.toLocaleString()} matching community and THOS rules. Disabled rules are excluded from every hunt.</p></div></div>
     {notice && <Notice type={notice.startsWith("Scheduled") ? "success" : "error"}>{notice}</Notice>}
-    <div className="sigma-controls"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule ID, title, or ATT&CK tag…" /><input type="time" value={time} onChange={(event) => setTime(event.target.value)} /><select aria-label="Sigma schedule SIEM" value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select><DayPicker value={days} onChange={setDays} /></div>
+    <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule ID, title, or ATT&CK tag…" /><label>Frequency<select aria-label="Sigma schedule frequency" value={frequency} onChange={(event) => { setFrequency(event.target.value); setInterval(1); }}><option value="minutes">Every N minutes</option><option value="hourly">Every N hours</option><option value="daily">N times per day</option></select></label><label>{frequency === "daily" ? "Runs per day" : "Every"}<input aria-label="Sigma schedule interval" type="number" min="1" max={intervalMax} value={interval} onChange={(event) => setInterval(event.target.value)} /></label><label>First run time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><label>Active SIEM<select aria-label="Sigma schedule SIEM" value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><DayPicker value={days} onChange={setDays} /></div>
     <div className="rule-list">{loading ? <p className="settings-muted">Loading Sigma catalogue…</p> : data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{rule.title}</strong><small>{rule.source} · {rule.level} · {rule.id}</small></div><button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.title}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
   </section>
-  <section className="settings-card"><h3>Scheduled Sigma validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No Sigma schedules configured.</p>}</div></section></div>;
+  <section className="settings-card"><h3>Scheduled Sigma validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{sigmaScheduleLabel(item)} · {item.siem_type} · {(item.days || []).map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No Sigma schedules configured.</p>}</div></section></div>;
 }
 
 function KnowledgeTab() {

@@ -288,12 +288,13 @@ are atomically persisted to `data/runtime/config.json`; all three runtime
 services mount that directory, and `services/runtime_config.py` provides the
 shared read path. Never commit that generated JSON file.
 
-Final reasoning is accepted only when it is non-empty, valid JSON, and contains
-the complete required report fields. The reasoning node makes at most three
-application-level attempts. After the third failure it sets
-`report_status=not_generated`, records the reasons from all strikes, and routes
-directly to the graph end; the reporter also independently refuses to write a
-file for a failed reasoning state.
+Final model reasoning is accepted only when it is non-empty, valid JSON, and
+contains the complete required report fields. The node makes at most three
+application-level attempts. If all three fail, THOS records every strike reason
+and produces a citation-safe deterministic evidence analysis from Sigma,
+telemetry, coverage, and enrichment results. That report is explicitly marked
+as fallback analysis and requires human approval. Only a failure of both model
+reasoning and the deterministic fallback ends without a report.
 
 ---
 
@@ -488,7 +489,7 @@ Documented extension points already called out in the codebase: a human-approval
 
 ### 13.4 Add custom detection rules
 
-- **SigmaHQ ruleset refresh:** run `services/detection/fetch_sigmahq_rules.py --ref <commit>` to re-vendor a reviewed community ruleset into `services/detection/sigma_rules_hq/` (updates `VERSION.txt`). If no vendored YAML is present, Compose's one-shot `sigmahq-rules-init` downloads the pinned `SIGMAHQ_REF` into the persistent `sigmahq_rules` volume and verifies `SIGMAHQ_MIN_RULES` before MCP starts.
+- **SigmaHQ ruleset refresh:** run `services/detection/fetch_sigmahq_rules.py --ref <commit>` to re-vendor a reviewed community ruleset into `services/detection/sigma_rules_hq/` (updates `VERSION.txt`). If no vendored YAML is present, Compose's one-shot `sigmahq-rules-init` downloads the pinned `SIGMAHQ_REF` into the persistent `sigmahq_rules` volume. MCP and Orchestrator mount that same volume and refuse to start until the pinned version and `SIGMAHQ_MIN_RULES` count pass preflight.
 - **THOS custom rules:** add a new `.yml` file to `services/detection/sigma_rules/` following the existing rule format; `sigma_engine.py` loads the directory automatically.
 
 ### 13.5 Tune LLM reasoning quality

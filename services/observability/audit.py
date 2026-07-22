@@ -106,6 +106,19 @@ async def log_hunt_step(hunt_id: str, node_name: str, output: dict, duration_ms:
            VALUES (%s, %s, %s, 'ok', %s)""",
         (hunt_id, node_name, json.dumps(output, default=str), duration_ms),
     )
+    await asyncio.to_thread(
+        _execute,
+        "UPDATE hunts SET last_stage = %s, updated_at = now() WHERE hunt_id = %s",
+        (node_name, hunt_id),
+    )
+
+
+async def log_hunt_stage_started(hunt_id: str, node_name: str):
+    await asyncio.to_thread(
+        _execute,
+        "UPDATE hunts SET current_stage = %s, updated_at = now() WHERE hunt_id = %s",
+        (node_name, hunt_id),
+    )
 
 
 async def log_tool_error(hunt_id: str, tool_name: str, error_msg: str, payload: dict | None = None):
@@ -117,11 +130,13 @@ async def log_tool_error(hunt_id: str, tool_name: str, error_msg: str, payload: 
     )
 
 
-async def log_hunt_complete(hunt_id: str, status: str):
+async def log_hunt_complete(hunt_id: str, status: str, failure_stage: str | None = None,
+                            failure_reason: str | None = None, outcome: dict | None = None):
     await asyncio.to_thread(
         _execute,
-        """UPDATE hunts SET status = %s, updated_at = now() WHERE hunt_id = %s""",
-        (status, hunt_id),
+        """UPDATE hunts SET status = %s, failure_stage = %s, failure_reason = %s,
+                  outcome = %s, current_stage = NULL, updated_at = now() WHERE hunt_id = %s""",
+        (status, failure_stage, failure_reason, json.dumps(outcome or {}, default=str), hunt_id),
     )
 
 
@@ -219,15 +234,141 @@ async def record_feedback(hunt_id: str, finding_ref: str | None, rating: str,
 async def ensure_agentic_schema() -> None:
     """Backfill Phase-2 tables for existing Postgres volumes at startup."""
     statements = (
+        """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS last_stage TEXT""",
+        """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS current_stage TEXT""",
+        """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS failure_stage TEXT""",
+        """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS failure_reason TEXT""",
+        """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS outcome JSONB NOT NULL DEFAULT '{}'::jsonb""",
         """CREATE TABLE IF NOT EXISTS hunt_approvals (approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending', reason TEXT, approval_type TEXT NOT NULL DEFAULT 'hunt_review', artifact_hash TEXT, decided_by TEXT, decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'hunt_review'""",
         """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS artifact_hash TEXT""",
         """CREATE TABLE IF NOT EXISTS finding_feedback (feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, finding_ref TEXT, rating TEXT NOT NULL, correction TEXT, analyst_name TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS cases (case_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', priority TEXT NOT NULL DEFAULT 'medium', assigned_to TEXT, summary TEXT, sla_due_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS case_events (event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE, actor TEXT, event_type TEXT NOT NULL, note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id TEXT NOT NULL, rule_id TEXT NOT NULL, rule_title TEXT, rule_source TEXT, level TEXT, siem_type TEXT NOT NULL, status TEXT NOT NULL, events_matched INTEGER NOT NULL DEFAULT 0, matched_events JSONB NOT NULL DEFAULT '[]'::jsonb, analysis JSONB NOT NULL DEFAULT '{}'::jsonb, compiled_query TEXT, query_backend TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
+        "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS query_backend TEXT",
     )
     for statement in statements:
         await asyncio.to_thread(_execute, statement, ())
+
+
+async def reconcile_incomplete_hunts() -> None:
+    """Close rows left running by a previous process or disconnected stream."""
+    await asyncio.to_thread(
+        _execute,
+        """UPDATE hunts h SET last_stage = latest.node_name
+           FROM (
+               SELECT DISTINCT ON (hunt_id) hunt_id, node_name
+               FROM hunt_steps ORDER BY hunt_id, created_at DESC
+           ) latest
+           WHERE h.hunt_id = latest.hunt_id AND h.last_stage IS NULL""",
+        (),
+    )
+    await asyncio.to_thread(
+        _execute,
+        """UPDATE hunts h
+           SET outcome = h.outcome || jsonb_build_object(
+               'report_status', 'generated',
+               'reasoning_mode', 'legacy_deterministic_fallback',
+               'reasoning_degraded', true,
+               'reasoning_error', 'Legacy run: reasoning model returned no final response; detailed strike reasons were not persisted by that version.'
+           )
+           FROM reports r
+           WHERE r.hunt_id = h.hunt_id
+             AND position('Degraded analysis:' in r.summary) = 1
+             AND NOT (h.outcome ? 'reasoning_degraded')""",
+        (),
+    )
+    await asyncio.to_thread(
+        _execute,
+        """UPDATE hunts
+           SET status = 'failed',
+               failure_stage = COALESCE(last_stage, 'orchestrator'),
+               failure_reason = COALESCE(
+                   failure_reason,
+                   'Hunt did not reach a terminal event because the orchestrator stopped or the client stream disconnected.'
+               ),
+               updated_at = now()
+           WHERE status IN ('started', 'running')""",
+        (),
+    )
+    await asyncio.to_thread(
+        _execute,
+        """UPDATE hunts
+           SET failure_stage = COALESCE(failure_stage, last_stage, 'unknown'),
+               failure_reason = COALESCE(
+                   failure_reason,
+                   'Legacy hunt failed before this version began persisting a detailed failure reason.'
+               ),
+               updated_at = now()
+           WHERE status = 'failed'
+             AND (failure_reason IS NULL OR btrim(failure_reason) = '')""",
+        (),
+    )
+
+
+async def list_hunts(limit: int = 100) -> list[dict]:
+    return await asyncio.to_thread(_fetch, """
+        SELECT h.hunt_id, h.hunter_name, h.hypothesis_id, h.hypothesis_text,
+               h.status, h.last_stage, h.failure_stage, h.failure_reason, h.outcome,
+               h.created_at, h.updated_at, r.file_path AS report_path, r.summary
+        FROM hunts h
+        LEFT JOIN LATERAL (
+            SELECT file_path, summary FROM reports
+            WHERE hunt_id = h.hunt_id ORDER BY created_at DESC LIMIT 1
+        ) r ON true
+        ORDER BY h.created_at DESC LIMIT %s
+    """, (max(1, min(limit, 500)),))
+
+
+async def hunt_progress(hunt_id: str | None = None, active_only: bool = False) -> dict | None:
+    where, params = "", ()
+    if hunt_id:
+        where, params = "WHERE hunt_id = %s", (hunt_id,)
+    elif active_only:
+        where = "WHERE status = 'running'"
+    rows = await asyncio.to_thread(_fetch, f"""
+        SELECT hunt_id, hunter_name, hypothesis_id, hypothesis_text, status,
+               last_stage, current_stage, failure_stage, failure_reason, outcome,
+               created_at, updated_at
+        FROM hunts {where} ORDER BY created_at DESC LIMIT 1
+    """, params)
+    if not rows:
+        return None
+    hunt = rows[0]
+    steps = await asyncio.to_thread(_fetch, """
+        SELECT step_id, node_name, output, duration_ms, status, error_msg, created_at
+        FROM hunt_steps WHERE hunt_id = %s ORDER BY created_at, step_id
+    """, (hunt["hunt_id"],))
+    return {**hunt, "steps": steps}
+
+
+async def log_sigma_detection(result: dict) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        INSERT INTO scheduled_sigma_detections (
+            schedule_id, rule_id, rule_title, rule_source, level, siem_type,
+            status, events_matched, matched_events, analysis, compiled_query,
+            query_backend, error_msg
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+    """, (
+        result.get("schedule_id"), result.get("rule_id"), result.get("rule_title"),
+        result.get("rule_source"), result.get("level"), result.get("siem_type"),
+        result.get("status"), int(result.get("events_matched", 0)),
+        json.dumps(result.get("matched_events", []), default=str),
+        json.dumps(result.get("analysis", {}), default=str), result.get("compiled_query"),
+        result.get("query_backend"), result.get("error"),
+    ))
+    return rows[0] if rows else None
+
+
+async def list_sigma_detections(limit: int = 100) -> list[dict]:
+    return await asyncio.to_thread(_fetch, """
+        SELECT * FROM scheduled_sigma_detections
+        WHERE status = 'detected' AND events_matched > 0
+        ORDER BY created_at DESC LIMIT %s
+    """, (max(1, min(limit, 500)),))
 
 
 async def hunt_metrics(hunt_id: str) -> list[dict]:

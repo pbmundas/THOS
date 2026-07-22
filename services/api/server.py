@@ -178,14 +178,15 @@ async def generate_siem_query(hypothesis_text: str, siem_type: str = "mock") -> 
 # ---------------------------------------------------------------
 @mcp.tool()
 def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
-                     log_source_path: str = "") -> dict:
+                     log_source_path: str = "", trusted_sigma: bool = False) -> dict:
     """Execute a SIEM query and fetch matching log records. In 'mock' mode
     returns synthetic records. In 'wazuh' mode, searches the Wazuh
     Indexer. In 'folder' mode, parses every supported
     log file (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) under
     log_source_path and returns records matching the query."""
     return siem_connector.fetch_logs(query, limit, siem_type=siem_type or None,
-                                      log_source_path=log_source_path)
+                                      log_source_path=log_source_path,
+                                      trusted_sigma=trusted_sigma)
 
 
 @mcp.tool()

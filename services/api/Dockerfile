@@ -16,4 +16,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8100
 
-CMD ["python", "-m", "services.api.server"]
+CMD ["sh", "-c", "python -m services.detection.verify_sigmahq_rules && exec python -m services.api.server"]

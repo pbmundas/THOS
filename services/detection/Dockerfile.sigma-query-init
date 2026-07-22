@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+WORKDIR /repo
+COPY requirements.txt /repo/requirements.txt
+RUN pip install --prefer-binary --no-cache-dir -r requirements.txt
+COPY services /repo/services
+
+ENV PYTHONPATH=/repo
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "-m", "services.detection.sigma_query_catalog", "build"]
