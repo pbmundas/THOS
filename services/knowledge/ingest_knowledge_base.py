@@ -28,6 +28,9 @@ from chromadb.config import Settings
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "chromadb")
 CHROMA_PORT = int(os.environ.get("CHROMA_PORT", "8000"))
 KB_ROOT = os.environ.get("KB_ROOT", "/data/knowledge_base")
+CYBER_CORPUS_MANIFEST = os.environ.get(
+    "CYBER_CORPUS_MANIFEST", "/data/knowledge_sources/cybersecurity_sources.json",
+)
 
 
 def get_client(retries: int = 20, delay: float = 3.0):
@@ -130,11 +133,37 @@ def ingest_siem_kb(client):
     print(f"[siem_kb] ingested {len(ids)} field mappings from {len(files)} file(s)")
 
 
+def ingest_cyber_corpus(client):
+    if os.environ.get("CYBER_CORPUS_ENABLED", "1") != "1":
+        print("[cyber_domain_kb] disabled")
+        return
+    try:
+        from services.knowledge.cyber_corpus import COLLECTION_NAME, ingest_manifest
+        configured_ids = {
+            item.strip()
+            for item in os.environ.get("CYBER_CORPUS_SOURCE_IDS", "").split(",")
+            if item.strip()
+        }
+        result = ingest_manifest(
+            client.get_or_create_collection(COLLECTION_NAME),
+            CYBER_CORPUS_MANIFEST,
+            source_ids=configured_ids or None,
+        )
+        print(f"[cyber_domain_kb] {json.dumps(result, default=str)}")
+        if result["status"] == "failed":
+            raise RuntimeError("one or more required cybersecurity sources failed")
+    except Exception as exc:
+        if os.environ.get("CYBER_CORPUS_REQUIRED", "0") == "1":
+            raise
+        print(f"[cyber_domain_kb] degraded: {exc}")
+
+
 def main():
     client = get_client()
     ingest_hearth(client)
     ingest_mitre(client)
     ingest_siem_kb(client)
+    ingest_cyber_corpus(client)
     print("Knowledge base ingestion complete.")
 
 

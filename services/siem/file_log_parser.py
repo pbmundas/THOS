@@ -38,6 +38,7 @@ import re
 import json
 import glob
 import datetime
+import hashlib
 import ipaddress
 import xml.etree.ElementTree as ET
 
@@ -476,6 +477,55 @@ _PARSERS = {
 }
 
 
+def _parse_generic_artifact(path: str):
+    """Represent every otherwise-unknown file as bounded forensic metadata.
+
+    Folder hunts must not silently ignore evidence just because its extension is
+    unfamiliar. Only a small sample is read here; full-file hashing and deeper
+    container/disk-image analysis belong to the dedicated forensic workflow.
+    """
+    sample_limit = 4 * 1024 * 1024
+    try:
+        stat = os.stat(path)
+        with open(path, "rb") as handle:
+            sample = handle.read(sample_limit)
+        strings = re.findall(rb"[\x20-\x7e]{6,}", sample)
+        preview = [value.decode("utf-8", errors="replace")[:240] for value in strings[:40]]
+        detail = json.dumps({
+            "artifact": os.path.basename(path),
+            "size_bytes": stat.st_size,
+            "extension": os.path.splitext(path)[1].lower() or "(none)",
+            "magic_hex": sample[:16].hex(),
+            "sample_bytes": len(sample),
+            "sample_sha256": hashlib.sha256(sample).hexdigest(),
+            "printable_strings_preview": preview,
+            "analysis_scope": "bounded artifact triage; use Forensics for full-file preservation and analysis",
+        }, ensure_ascii=False)
+        yield _norm(
+            timestamp=datetime.datetime.fromtimestamp(
+                stat.st_mtime, datetime.timezone.utc,
+            ).isoformat(),
+            event=f"artifact:{os.path.splitext(path)[1].lower() or 'unknown'}",
+            detail=detail[:20_000],
+            source_file=os.path.basename(path),
+            source_type="artifact",
+        )
+    except Exception as exc:  # noqa: BLE001 - one artifact cannot abort the folder
+        yield _norm(
+            event="artifact:error",
+            detail=f"Failed bounded artifact triage: {exc}",
+            source_file=os.path.basename(path),
+            source_type="artifact",
+        )
+
+
+def parse_file(path: str) -> list[dict]:
+    ext = os.path.splitext(path)[1].lower()
+    source_type = EXTENSION_MAP.get(ext)
+    parser = _PARSERS.get(source_type) if source_type else None
+    return list((parser or _parse_generic_artifact)(path))
+
+
 def list_supported_files(folder: str) -> list[str]:
     try:
         folder = validate_log_source_path(folder)
@@ -485,8 +535,13 @@ def list_supported_files(folder: str) -> list[str]:
         return []
     files = []
     for path in glob.glob(os.path.join(folder, "**", "*"), recursive=True):
-        if os.path.isfile(path) and os.path.splitext(path)[1].lower() in EXTENSION_MAP:
-            files.append(path)
+        real = os.path.realpath(path)
+        if (
+            os.path.isfile(real)
+            and (real == folder or real.startswith(folder + os.sep))
+            and not os.path.basename(real).startswith("_thos_")
+        ):
+            files.append(real)
     return sorted(files)
 
 
@@ -499,13 +554,7 @@ def parse_folder(folder: str, max_files: int | None = None) -> list[dict]:
 
     records: list[dict] = []
     for path in files:
-        ext = os.path.splitext(path)[1].lower()
-        source_type = EXTENSION_MAP[ext]
-        parser = _PARSERS.get(source_type)
-        if not parser:
-            continue
-        for rec in parser(path):
-            records.append(rec)
+        records.extend(parse_file(path))
     return records
 
 

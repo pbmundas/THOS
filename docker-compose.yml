@@ -35,6 +35,7 @@ volumes:
   redis_data:
   sigmahq_rules:
   sigma_queries:
+  chroma_embedding_cache:
 
 services:
 
@@ -160,18 +161,27 @@ services:
   # ------------------------------------------------------------
   kb-ingest:
     build:
-      context: ./services/knowledge
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/knowledge/Dockerfile
     container_name: thos-kb-ingest
     environment:
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
       KB_ROOT: /data/knowledge_base
+      CYBER_CORPUS_ENABLED: ${CYBER_CORPUS_ENABLED:-1}
+      CYBER_CORPUS_REQUIRED: ${CYBER_CORPUS_REQUIRED:-0}
+      CYBER_CORPUS_SOURCE_IDS: ${CYBER_CORPUS_SOURCE_IDS:-}
+      CYBER_CORPUS_MANIFEST: /data/knowledge_sources/cybersecurity_sources.json
     volumes:
       - ./data/knowledge_base:/data/knowledge_base:ro
+      - ./data/knowledge_sources:/data/knowledge_sources:ro
+      - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
+      - chroma_embedding_cache:/root/.cache/chroma
     depends_on:
       chromadb:
         condition: service_healthy
+      sigmahq-rules-init:
+        condition: service_completed_successfully
     networks:
       - thos-net
     deploy:
@@ -312,6 +322,7 @@ services:
     # over thos-net. Add back `ports: ["8100:8100"]` only for temporary
     # local debugging.
     environment:
+      TZ: ${TZ:-Asia/Kolkata}
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
       THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}}
@@ -329,6 +340,7 @@ services:
       OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
+      CYBER_KB_MAX_DISTANCE: ${CYBER_KB_MAX_DISTANCE:-1.35}
       REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
       MCP_PORT: 8100
@@ -362,12 +374,16 @@ services:
       SIGMA_QUERY_CATALOG_DIR: /data/sigma_queries
       SIGMA_HUNT_MAX_RULES: ${SIGMA_HUNT_MAX_RULES:-64}
       SIGMA_QUERY_CONCURRENCY: ${SIGMA_QUERY_CONCURRENCY:-6}
+      SIGMA_WEEKLY_MAX_RULES: ${SIGMA_WEEKLY_MAX_RULES:-0}
+      SIEM_SCHEMA_REFRESH_SECONDS: ${SIEM_SCHEMA_REFRESH_SECONDS:-604800}
+      SIEM_SCHEMA_RETENTION_SECONDS: ${SIEM_SCHEMA_RETENTION_SECONDS:-3024000}
     volumes:
       - ./data/reports:/data/reports
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
       - ./data/threat_intel:/data/threat_intel:ro
       - ./data/log_sources:/data/log_sources
       - ./data/runtime:/data/runtime
+      - chroma_embedding_cache:/root/.cache/chroma
       # The initializer guarantees this volume has the pinned community
       # corpus before MCP starts; MCP only receives a read-only view.
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
@@ -412,8 +428,12 @@ services:
     # does so over thos-net. Add back `ports: ["8200:8200"]` only for
     # temporary local debugging.
     environment:
+      TZ: ${TZ:-Asia/Kolkata}
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-qwen2.5-coder:1.5b-instruct}
+      THOS_FAST_NUM_CTX: ${THOS_FAST_NUM_CTX:-4096}
+      THOS_FAST_NUM_PREDICT: ${THOS_FAST_NUM_PREDICT:-512}
       THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-qwen3:4b}}
       OLLAMA_GENERATION_TIMEOUT_SECONDS: ${OLLAMA_GENERATION_TIMEOUT_SECONDS:-180}
       # Large evidence-grounded JSON responses on CPU can legitimately exceed
@@ -434,6 +454,9 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
       REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
       REPORTS_DIR: /data/reports
+      FORENSIC_ROOT: /data/log_sources/forensic
+      FORENSIC_MAX_RECORDS: ${FORENSIC_MAX_RECORDS:-50000}
+      FORENSIC_MAX_DOCUMENT_TEXT: ${FORENSIC_MAX_DOCUMENT_TEXT:-2097152}
       THOS_RUNTIME_CONFIG: /data/runtime/config.json
       DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
       # Structured JSON logs to stdout (services/observability/logging_config.py).
@@ -445,8 +468,11 @@ services:
       SIGMA_QUERY_CATALOG_DIR: /data/sigma_queries
       SIGMA_HUNT_MAX_RULES: ${SIGMA_HUNT_MAX_RULES:-64}
       SIGMA_QUERY_CONCURRENCY: ${SIGMA_QUERY_CONCURRENCY:-6}
+      SIGMA_DEDUP_WINDOW_SECONDS: ${SIGMA_DEDUP_WINDOW_SECONDS:-3600}
+      SIEM_SCHEMA_REFRESH_SECONDS: ${SIEM_SCHEMA_REFRESH_SECONDS:-604800}
     volumes:
       - ./data/reports:/data/reports
+      - ./data/log_sources:/data/log_sources
       - ./data/detection_rule_proposals:/data/detection_rule_proposals
       - ./data/threat_intel:/data/threat_intel:ro
       - ./data/runtime:/data/runtime
@@ -486,6 +512,8 @@ services:
       ORCHESTRATOR_URL: http://orchestrator:8200
       OLLAMA_HOST: http://ollama:11434
       THOS_RUNTIME_CONFIG: /data/runtime/config.json
+      SIEM_SCHEMA_REFRESH_INTERVAL_HOURS: ${SIEM_SCHEMA_REFRESH_INTERVAL_HOURS:-168}
+      SIEM_SCHEMA_REFRESH_RETRY_HOURS: ${SIEM_SCHEMA_REFRESH_RETRY_HOURS:-6}
       TZ: ${TZ:-Asia/Kolkata}
       SIGMAHQ_UI_RULES_DIR: /data/sigmahq
       SIGMA_LOCAL_UI_RULES_DIR: /data/sigma-local
@@ -508,12 +536,22 @@ services:
       CHATUI_USERS: ${CHATUI_USERS:-}
       REPORTS_DIR: /data/reports
       LOG_SOURCE_DIR: /data/log_sources
+      FORENSIC_ROOT: /data/log_sources/forensic
+      THOS_THREAT_INTEL_ROOT: /data/threat_intel
+      THOS_IOC_BLOCKLIST_PATH: /data/threat_intel/blocklist.json
+      THOS_IOC_LOCAL_SOURCE_ROOT: /data/ioc_sources
+      THOS_IOC_MAX_SOURCE_BYTES: ${THOS_IOC_MAX_SOURCE_BYTES:-104857600}
+      THOS_IOC_ALLOW_PRIVATE_FETCH: ${THOS_IOC_ALLOW_PRIVATE_FETCH:-0}
+      FORENSIC_MAX_FILE_BYTES: ${FORENSIC_MAX_FILE_BYTES:-21474836480}
+      FORENSIC_MAX_CASE_BYTES: ${FORENSIC_MAX_CASE_BYTES:-107374182400}
       # Structured gateway logs to stdout. One of DEBUG/INFO/WARNING/ERROR.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data/reports:/data/reports
       - ./data/log_sources:/data/log_sources
       - ./data/runtime:/data/runtime
+      - ./data/threat_intel:/data/threat_intel
+      - ./data/ioc_sources:/data/ioc_sources
       - ./services/detection/sigma_rules:/data/sigma-local:ro
       - sigmahq_rules:/data/sigmahq:ro
     deploy:

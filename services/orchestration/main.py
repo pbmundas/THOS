@@ -26,6 +26,7 @@ import secrets
 import uuid
 import asyncio
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -44,6 +45,8 @@ from services.observability.logging_config import (
 )
 from services.detection_engineering.rule_drafter import detection_rule_approval_error
 from services.runtime_config import get_value
+from services.agents.registry import agent_by_graph_node
+from services.reasoning.model_router import target_for
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -117,6 +120,9 @@ async def _enforce_hunt_rate_limit(hunter_name: str):
 _active_hunt_count = 0
 _active_hunt_lock = asyncio.Lock()
 _background_hunts: set[asyncio.Task] = set()
+_background_forensics: set[asyncio.Task] = set()
+_forensic_start_lock = asyncio.Lock()
+_forensic_worker_slot = asyncio.Semaphore(1)
 
 
 def _background_hunt_done(task: asyncio.Task) -> None:
@@ -129,6 +135,18 @@ def _background_hunt_done(task: asyncio.Task) -> None:
         return
     if error is not None:
         logger.error("background hunt worker crashed: %s", error)
+
+
+def _background_forensic_done(task: asyncio.Task) -> None:
+    _background_forensics.discard(task)
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error("background forensic worker crashed: %s", error)
 
 
 class _HuntSlot:
@@ -156,7 +174,7 @@ class _HuntSlot:
 async def _shutdown():
     # Cleanly tear down the shared MCP client session (see mcp_client.py)
     # and release pooled Postgres connections (see audit.py).
-    pending = list(_background_hunts)
+    pending = [*_background_hunts, *_background_forensics]
     for task in pending:
         task.cancel()
     if pending:
@@ -246,9 +264,17 @@ class ScheduledSigmaRequest(BaseModel):
     log_source_path: str | None = None
 
 
+class ForensicAnalyzeRequest(BaseModel):
+    case_id: str = Field(pattern=r"^[0-9a-fA-F-]{36}$")
+    case_title: str = Field(min_length=1, max_length=300)
+    case_dir: str = Field(min_length=1, max_length=4096)
+    examiner: str = Field(min_length=1, max_length=128)
+
+
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
     return {
         "hunt_id": hunt_id,
+        "hunt_started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "hunter_name": req.hunter_name,
         "siem_type": req.siem_type,
         "log_source_path": req.log_source_path,
@@ -288,11 +314,21 @@ async def hunt_history(limit: int = 100):
     return await audit.list_hunts(limit)
 
 
+@app.delete("/hunts", dependencies=[Depends(require_api_key)])
+async def clear_hunt_history():
+    status = await audit.active_hunt_status()
+    if status.get("active"):
+        raise HTTPException(status_code=409, detail="Hunt history cannot be cleared while a hunt is running")
+    return await audit.clear_hunt_history()
+
+
 @app.get("/hunts/{hunt_id}/progress", dependencies=[Depends(require_api_key)])
 async def hunt_progress(hunt_id: str):
     progress = await audit.hunt_progress(hunt_id=hunt_id)
     if progress is None:
         raise HTTPException(status_code=404, detail="hunt not found")
+    if progress.get("current_stage"):
+        progress["current_agent"] = _agent_stage(progress["current_stage"])
     return progress
 
 
@@ -300,12 +336,101 @@ async def hunt_progress(hunt_id: str):
 async def hunt_status():
     active = _active_hunt_count > 0
     progress = await audit.hunt_progress(active_only=True) if active else None
+    if progress and progress.get("current_stage"):
+        progress["current_agent"] = _agent_stage(progress["current_stage"])
     return {"active": active, "active_count": _active_hunt_count, "hunt": progress}
+
+
+async def _run_forensic_background(request: ForensicAnalyzeRequest) -> None:
+    from services.forensics.workflow import run_forensic_case
+
+    async def progress(event: dict) -> None:
+        if event.get("event") == "agent_started":
+            await audit.forensic_stage_started(request.case_id, str(event.get("stage", "")))
+        elif event.get("event") == "agent_complete":
+            await audit.log_forensic_step(request.case_id, event)
+
+    try:
+        async with _forensic_worker_slot:
+            result = await run_forensic_case(request.case_dir, progress)
+        await audit.complete_forensic_case(
+            request.case_id,
+            "completed",
+            report_path=str(result.get("report_path") or ""),
+            summary=str(result.get("summary") or ""),
+        )
+    except asyncio.CancelledError:
+        await asyncio.shield(audit.complete_forensic_case(
+            request.case_id, "failed", error_msg="Forensic analysis was interrupted during shutdown.",
+        ))
+        raise
+    except Exception as exc:  # noqa: BLE001 - persist a terminal case state
+        logger.exception("forensic analysis failed", extra={"case_id": request.case_id})
+        await audit.complete_forensic_case(request.case_id, "failed", error_msg=str(exc))
+
+
+@app.post("/forensics/analyze", dependencies=[Depends(require_api_key)], status_code=202)
+async def start_forensic_analysis(request: ForensicAnalyzeRequest):
+    try:
+        uuid.UUID(request.case_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="case_id must be a UUID") from exc
+    async with _forensic_start_lock:
+        created = await audit.create_forensic_case(
+            request.case_id, request.case_title.strip(), request.examiner.strip(), request.case_dir,
+        )
+        if created is None:
+            existing = await audit.get_forensic_case(request.case_id)
+            if existing is not None:
+                raise HTTPException(status_code=409, detail="forensic case already exists")
+            raise HTTPException(status_code=503, detail="forensic case store is unavailable")
+        task = asyncio.create_task(_run_forensic_background(request))
+        _background_forensics.add(task)
+        task.add_done_callback(_background_forensic_done)
+    return created
+
+
+@app.get("/forensics", dependencies=[Depends(require_api_key)])
+async def forensic_cases(limit: int = 100):
+    return await audit.list_forensic_cases(limit)
+
+
+@app.get("/forensics/{case_id}", dependencies=[Depends(require_api_key)])
+async def forensic_case(case_id: str):
+    result = await audit.get_forensic_case(case_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="forensic case not found")
+    return result
 
 
 @app.get("/sigma/detections", dependencies=[Depends(require_api_key)])
 async def scheduled_sigma_detections(limit: int = 100):
     return await audit.list_sigma_detections(limit)
+
+
+@app.post("/siem/schema/{siem_type}/discover", dependencies=[Depends(require_api_key)])
+async def discover_siem_schema(siem_type: str, sample_limit: int = 50):
+    if siem_type not in {"mock", "folder", "wazuh", "logrhythm", "splunk", "qradar"}:
+        raise HTTPException(status_code=404, detail="unsupported SIEM")
+    try:
+        return await call_tool("discover_siem_fields", {
+            "siem_type": siem_type,
+            "sample_limit": max(1, min(sample_limit, 200)),
+            "log_source_path": os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+            if siem_type == "folder" else "",
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/sigma/compile/{siem_type}", dependencies=[Depends(require_api_key)])
+async def compile_sigma_catalog_for_siem(siem_type: str):
+    if siem_type not in {"wazuh", "splunk", "qradar", "logrhythm"}:
+        raise HTTPException(status_code=404, detail="unsupported SIEM")
+    try:
+        return await call_tool("compile_sigma_rules_for_siem", {"siem_type": siem_type})
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/sigma/scheduled/run", dependencies=[Depends(require_api_key)])
@@ -318,6 +443,18 @@ async def run_scheduled_sigma(request: ScheduledSigmaRequest):
             siem_type=request.siem_type,
             log_source_path=request.log_source_path,
         )
+        if result.get("status") == "detected" and result.get("events_matched", 0):
+            triage = (result.get("analysis") or {}).get("triage") or {}
+            case = await audit.create_case(
+                None,
+                f"Scheduled detection: {result.get('rule_title') or result.get('rule_id')}",
+                str(triage.get("priority") or "medium"),
+                None,
+                str(triage.get("note") or result.get("analysis", {}).get("summary") or ""),
+                "scheduled-detection-agent",
+            )
+            if case:
+                result["case_id"] = str(case["case_id"])
         stored = await audit.log_sigma_detection(result)
         return stored or result
     except Exception as exc:  # noqa: BLE001 - persist a failed scheduled execution
@@ -375,6 +512,21 @@ def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
     return _NEXT_PIPELINE_NODE.get(completed_node)
 
 
+def _agent_stage(node_name: str) -> dict:
+    spec = agent_by_graph_node(node_name)
+    stage = {
+        "agent_id": spec.id if spec else node_name,
+        "agent_name": spec.name if spec else node_name.replace("_", " ").title(),
+        "activity": spec.purpose if spec else "Processes the current hunt stage.",
+        "model_tier": None,
+        "model_name": None,
+    }
+    if spec and spec.model_route:
+        target = target_for(spec.model_route)
+        stage.update({"model_tier": target.tier, "model_name": target.model})
+    return stage
+
+
 @app.post("/chat", dependencies=[Depends(require_api_key)])
 async def chat_with_model(request: ChatRequest):
     from services.chat_agent import chat
@@ -404,7 +556,12 @@ async def chat_with_model(request: ChatRequest):
             chat_memory.append_message,
             request.analyst,
             conversation["id"],
-            {"role": "assistant", "content": answer, "tools": result.get("tools_used", [])},
+            {
+                "role": "assistant",
+                "content": answer,
+                "tools": result.get("tools_used", []),
+                "sources": result.get("knowledge_sources", []),
+            },
         )
         return {
             **result,
@@ -688,7 +845,11 @@ async def run_hunt(req: HuntRequest):
                             # state mutation (for example a no-op KB refresh).
                             partial = {}
                         final_state.update(partial)
-                        await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
+                        stage = _agent_stage(node_name)
+                        await audit.log_hunt_step(
+                            hunt_id, node_name, partial, duration_ms,
+                            stage["agent_name"], stage["model_tier"], stage["model_name"],
+                        )
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
@@ -786,7 +947,10 @@ async def run_hunt_stream(req: HuntRequest):
         try:
             await publish({"event": "hunt_started", "hunt_id": hunt_id})
             await audit.log_hunt_stage_started(hunt_id, "refresh_hearth_kb")
-            await publish({"event": "node_started", "node": "refresh_hearth_kb"})
+            await publish({
+                "event": "node_started", "node": "refresh_hearth_kb",
+                **_agent_stage("refresh_hearth_kb"),
+            })
             try:
                 async for step in compiled_graph.astream(state, stream_mode="updates"):
                     for node_name, partial in step.items():
@@ -794,13 +958,25 @@ async def run_hunt_stream(req: HuntRequest):
                         last_step_at = time.perf_counter()
                         partial = {} if partial is None else partial
                         final_state.update(partial)
-                        await audit.log_hunt_step(hunt_id, node_name, partial, duration_ms)
-                        await publish({"event": "node_complete", "node": node_name,
-                                       "duration_ms": duration_ms, "data": partial})
+                        stage = _agent_stage(node_name)
+                        await audit.log_hunt_step(
+                            hunt_id, node_name, partial, duration_ms,
+                            stage["agent_name"], stage["model_tier"], stage["model_name"],
+                        )
+                        await publish({
+                            "event": "node_complete", "node": node_name,
+                            "duration_ms": duration_ms,
+                            "completed_at": datetime.now().astimezone().isoformat(),
+                            "data": partial,
+                            **stage,
+                        })
                         next_node = _next_pipeline_node(node_name, final_state)
                         if next_node:
                             await audit.log_hunt_stage_started(hunt_id, next_node)
-                            await publish({"event": "node_started", "node": next_node})
+                            await publish({
+                                "event": "node_started", "node": next_node,
+                                **_agent_stage(next_node),
+                            })
             except Exception as exc:
                 import traceback
                 trace = traceback.format_exc()

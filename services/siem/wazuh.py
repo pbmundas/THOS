@@ -334,6 +334,65 @@ def _deduplicate(records: list[dict]) -> list[dict]:
     return [chosen[key] for key in order]
 
 
+def discover_fields() -> list[dict[str, Any]]:
+    """Read the Indexer's field capabilities without retrieving event values.
+
+    A recent-event sample can contain only one log family and therefore hide
+    valid fields used by other agents or decoders. Field capabilities provide
+    the complete searchable schema needed for safe detection-rule compilation.
+    """
+    cfg = _get_config()
+    url = f"{cfg['base_url']}/{cfg['index_pattern']}/_field_caps"
+    with httpx.Client(
+        auth=(cfg["username"], cfg["password"]),
+        headers={"Accept": "application/json"},
+        timeout=cfg["timeout_seconds"],
+        verify=cfg["verify"],
+    ) as client:
+        def _get_field_caps():
+            result = client.get(
+                url,
+                params={
+                    "fields": "*",
+                    "ignore_unavailable": "true",
+                    "allow_no_indices": "true",
+                },
+            )
+            if result.status_code >= 500:
+                result.raise_for_status()
+            return result
+
+        response = sync_retry(_get_field_caps, what="wazuh indexer field capabilities")
+
+    if response.status_code in (401, 403):
+        raise WazuhAPIError(
+            f"Wazuh Indexer field discovery is not authorized (HTTP {response.status_code})."
+        )
+    if response.status_code >= 400:
+        raise WazuhAPIError(
+            f"Wazuh Indexer field discovery failed: HTTP {response.status_code} - "
+            f"{response.text[:500]}"
+        )
+    try:
+        raw_fields = response.json().get("fields", {})
+    except ValueError as exc:
+        raise WazuhAPIError("Wazuh Indexer returned non-JSON field capabilities.") from exc
+    if not isinstance(raw_fields, dict):
+        raise WazuhAPIError("Wazuh Indexer field capabilities are malformed.")
+
+    fields: list[dict[str, Any]] = []
+    for name, capabilities in sorted(raw_fields.items(), key=lambda pair: pair[0].casefold()):
+        if str(name).startswith("_") or not isinstance(capabilities, dict):
+            continue
+        types = sorted({
+            str(details.get("type") or field_type)
+            for field_type, details in capabilities.items()
+            if isinstance(details, dict)
+        })
+        fields.append({"name": str(name), "type": "|".join(types) or "unknown", "sample": None})
+    return fields
+
+
 def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_ignored) -> dict:
     """Execute a bounded read-only search against the Wazuh Indexer."""
     cfg = _get_config()

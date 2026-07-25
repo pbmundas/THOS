@@ -333,7 +333,96 @@ THOS remains fully on-premises and now extends its original hunt pipeline with:
 - **Communication and Learning:** prepares audience-aware report summaries and captures analyst feedback. Export labelled examples with `GET /learning/feedback-export` for offline on-prem evaluation or fine-tuning.
 - **Performance Metrics:** `GET /hunts/{hunt_id}/metrics` reports per-node timings from the audit trail.
 
+## Schema-aware scheduled detection pipeline
+
+THOS now uses one shared `discover -> cache -> compile -> run -> triage` path
+for continuous Sigma coverage:
+
+1. Every active live SIEM is sampled with a bounded read-only query. THOS
+   inventories fields from the connector's retained raw vendor payload, infers
+   types, redacts secret-like sample values, and stores a versioned snapshot in
+   Redis.
+2. The new snapshot is diffed against the prior one. Added, removed, and
+   type-changed fields remain visible as schema drift instead of being silently
+   overwritten. A stale snapshot remains usable when the weekly refresh fails.
+3. Sigma rules are recompiled against the discovered schema. Splunk and Wazuh
+   use the audited pySigma backends bundled by this repository. QRadar and
+   LogRhythm remain fail-closed until audited backends are added; rules with
+   missing fields are reported as uncompilable rather than silently skipped.
+4. Scheduled rules execute their cached native queries without an LLM. Repeated
+   hits are fingerprinted in Redis, so only new events create a formal detection
+   case. Triage is deterministic from Sigma and local MITRE metadata, preserving
+   GPU capacity for analyst reasoning.
+
+The gateway runs schema discovery and compilation every seven days for
+connection-tested live SIEMs. SMEs can also trigger the same governed operation
+from **Settings > SIEM & fields > Discover & compile**. Manual one-column CSV
+inventories remain available for air-gapped or least-privilege deployments that
+do not allow sample queries.
+
 All agentic write paths are approval-gated or confined to staging. The live detection ruleset is never modified automatically.
+
+## Testing all agents and Ask THOS product knowledge
+
+THOS now keeps every runtime agent in a canonical registry and validates the
+registry against its implementation, LangGraph node, and regression-test
+mapping. The first check has no service or model dependency:
+
+```powershell
+.\scripts\test-agents.ps1 contracts
+```
+
+Run focused offline behavior and product-knowledge tests with:
+
+```powershell
+.\scripts\test-agents.ps1 offline
+```
+
+Run the complete regression suite with `.\scripts\test-agents.ps1 full`. After
+the Docker stack is running, use `.\scripts\test-agents.ps1 live` and complete
+the evidence-driven acceptance scenarios in
+[`docs/AGENT-TESTING.md`](docs/AGENT-TESTING.md).
+
+Ask THOS no longer depends on model memory for THOS product facts. It receives
+a versioned built-in product catalog on every product question, cites `PK-*`
+source identifiers, keeps uploaded organizational documents as a separate RAG
+source, and exposes the selected product sources in chat responses. Ask THOS is
+routed to the dedicated fast-tier local model so routine product and SOC
+questions do not consume the larger hunt-reasoning tier.
+
+## Digital forensic examination
+
+The **Forensics** menu accepts one or more logs, archives, documents, packet
+captures, disk images, or other evidence files. Original uploads are retained
+under `data/log_sources/forensic/<UTC date>/<date-serial-case>/`. Intake records
+the collector/tool, legal authority, original and stored names, size, and
+SHA-256 in a chain-of-custody manifest. Full-file size and hash are independently
+verified before analysis; any mismatch fails the case closed.
+
+The Forensic Intake, Artifact Analysis, Detection Correlation, Timeline, and
+Reporting agents run sequentially with persisted names, activities, durations,
+and model metadata. These integrity-sensitive stages are deterministic and do
+not use a language model. Known logs use the same normalized analysis path as
+active SIEM hunts; unknown files receive bounded artifact triage. The
+orchestrator image includes `ewf-tools` and Sleuth Kit for E01/Ex01 and raw-image
+metadata. Missing or proprietary decoders are recorded as limitations.
+
+The **Reports** page separates Hunt and Forensic records. SME administrators can
+remove either report from the active library; removal is recoverable from the
+server-side `.trash` archive.
+
+## Governed cybersecurity knowledge and model adaptation
+
+THOS uses a license-controlled cybersecurity corpus for MITRE ATT&CK, CISA KEV,
+NIST incident-response/framework/logging guidance, and the pinned SigmaHQ rule
+set. Each retrieved excerpt carries a `CYBER:*` citation and provenance.
+Ask THOS withholds uncited cybersecurity claims, and hunt reasoning treats
+external knowledge as context rather than proof of activity.
+
+The model-adaptation workflow intentionally keeps volatile intelligence in RAG
+and fine-tunes only stable behaviors after human verification and evaluation
+gates. See
+[`docs/CYBERSECURITY-MODEL-ADAPTATION.md`](docs/CYBERSECURITY-MODEL-ADAPTATION.md).
 
 ## Agentic Configuration
 

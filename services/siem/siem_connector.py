@@ -79,7 +79,10 @@ def _cache_payload(siem_type: str, query: str, limit: int,
 
 
 def _cached_fetch(siem_type: str, query: str, limit: int, producer,
-                  log_source_path: str = "", trusted_sigma: bool = False) -> dict:
+                  log_source_path: str = "", trusted_sigma: bool = False,
+                  use_cache: bool = True) -> dict:
+    if not use_cache:
+        return producer()
     payload = _cache_payload(siem_type, query, limit, log_source_path, trusted_sigma)
     cached = cache.cache_get("siem_fetch", payload)
     if cached is not None:
@@ -110,7 +113,8 @@ def _mock_logs(query: str, limit: int) -> list[dict]:
 
 
 def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
-                log_source_path: str = "", trusted_sigma: bool = False) -> dict:
+                log_source_path: str = "", trusted_sigma: bool = False,
+                bypass_cache: bool = False) -> dict:
     """
     Execute a SIEM query and return matching log records.
 
@@ -130,7 +134,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
                 "query": query,
                 "record_count": min(limit, 25),
                 "logs": _mock_logs(query, limit),
-            })
+            }, use_cache=not bypass_cache)
 
     if siem_type in ("folder", "local_folder", "file", "local"):
         folder = log_source_path or DEFAULT_LOG_SOURCE_DIR
@@ -143,6 +147,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             "folder", query, limit,
             lambda: file_log_parser.fetch_from_folder(folder, query=query, limit=limit),
             log_source_path=folder,
+            use_cache=not bypass_cache,
         )
 
     if siem_type == "logrhythm":
@@ -150,6 +155,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             return _cached_fetch(
                 "logrhythm", query, limit,
                 lambda: logrhythm_connector.fetch_logs(query, limit),
+                use_cache=not bypass_cache,
             )
         except logrhythm_connector.LogRhythmConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -168,6 +174,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             return _cached_fetch(
                 "splunk", query, limit,
                 lambda: splunk_connector.fetch_logs(query, limit),
+                use_cache=not bypass_cache,
             )
         except splunk_connector.SplunkConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -186,6 +193,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
             return _cached_fetch(
                 "qradar", query, limit,
                 lambda: qradar_connector.fetch_logs(query, limit),
+                use_cache=not bypass_cache,
             )
         except qradar_connector.QRadarConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -205,6 +213,7 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
                 "wazuh", query, limit,
                 lambda: wazuh_connector.fetch_logs(query, limit, trusted_sigma=trusted_sigma),
                 trusted_sigma=trusted_sigma,
+                use_cache=not bypass_cache,
             )
         except wazuh_connector.WazuhConfigError as e:
             return {

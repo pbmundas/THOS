@@ -92,6 +92,8 @@ class HuntState(TypedDict, total=False):
     # Set by report node
     report_path: Optional[str]
     report_status: Optional[str]
+    hunt_started_at: Optional[str]
+    hunt_completed_at: Optional[str]
 
     # Bookkeeping
     iteration: int

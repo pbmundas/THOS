@@ -23,9 +23,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sigma": {"disabled_rule_ids": [], "schedules": []},
     "hypothesis_schedules": [],
     "custom_hypotheses": [],
+    "ioc_sources": [],
     "siem": {},
     "siem_field_mappings": {},
     "siem_field_inventory": {},
+    "maintenance": {
+        "schema_refresh_enabled": True,
+        "schema_refresh_interval_hours": 168,
+        "schema_refresh_retry_hours": 6,
+        "schema_refresh_last_started_at": "",
+        "schema_refresh_last_completed_at": "",
+        "schema_refresh_last_status": "never",
+        "schema_refresh_last_error": "",
+    },
     "users": [],
 }
 

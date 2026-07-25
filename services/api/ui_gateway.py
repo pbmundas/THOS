@@ -16,9 +16,10 @@ import re
 import secrets
 import sys
 from typing import AsyncIterator
+import uuid
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -69,8 +70,12 @@ logger = logging.getLogger(__name__)
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://orchestrator:8200").rstrip("/")
 ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "thos_change_me_orchestrator_key")
 REPORTS_DIR = Path(os.environ.get("REPORTS_DIR", "/data/reports"))
+FORENSIC_ROOT = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic"))
 STATIC_DIR = Path(os.environ.get("UI_STATIC_DIR", "/app/static"))
 _UPSTREAM_HEADERS = {"Authorization": f"Bearer {ORCHESTRATOR_API_KEY}"}
+FORENSIC_MAX_FILE_BYTES = int(os.environ.get("FORENSIC_MAX_FILE_BYTES", str(20 * 1024 * 1024 * 1024)))
+FORENSIC_MAX_CASE_BYTES = int(os.environ.get("FORENSIC_MAX_CASE_BYTES", str(100 * 1024 * 1024 * 1024)))
+_forensic_intake_lock = asyncio.Lock()
 
 
 def _parse_accounts() -> list[tuple[str, str]]:
@@ -155,7 +160,7 @@ async def require_ui_auth(request: Request, call_next):
     user = control_plane.get_user(valid_user) or {}
     request.state.analyst = valid_user
     request.state.display_name = user.get("display_name") or valid_user
-    request.state.role = user.get("role", "Analyst")
+    request.state.role = user.get("role", "Expert")
     request.state.permissions = set(user.get("permissions", []))
     return await call_next(request)
 
@@ -232,10 +237,10 @@ async def logout():
 
 @app.get("/api/session")
 async def session(request: Request):
+    user = control_plane.get_user(request.state.analyst) or {}
     return {
         "analyst": request.state.analyst,
-        "display_name": request.state.display_name,
-        "role": request.state.role,
+        **control_plane.public_user(user),
         "permissions": sorted(request.state.permissions),
     }
 
@@ -250,7 +255,7 @@ async def hypotheses(request: Request):
     recent = {item.get("hypothesis_id"): item for item in last_runs}
     custom = read_config().get("custom_hypotheses", [])
     return [
-        {**item, **({
+        {**item, "severity": control_plane.hypothesis_severity(item), **({
             "last_ran_at": recent[item.get("id")].get("last_ran_at"),
             "last_run_status": recent[item.get("id")].get("status"),
         } if item.get("id") in recent else {})}
@@ -275,6 +280,12 @@ async def hunt_history(request: Request, limit: int = 100):
     return await _upstream_json("GET", f"/hunts?limit={max(1, min(limit, 500))}")
 
 
+@app.delete("/api/hunts/history")
+async def clear_hunt_history(request: Request):
+    control_plane.require_feature(request, "reports", admin_only=True)
+    return await _upstream_json("DELETE", "/hunts")
+
+
 @app.get("/api/hunts/{hunt_id}/progress")
 async def hunt_progress(hunt_id: str, request: Request):
     control_plane.require_feature(request, "hunts")
@@ -285,7 +296,7 @@ async def hunt_progress(hunt_id: str, request: Request):
 async def stream_hunt(hunt: HuntRequest, request: Request):
     control_plane.require_feature(request, "hunts")
     if not control_plane.is_active_telemetry_source(hunt.siem_type):
-        raise HTTPException(status_code=422, detail="Telemetry source is not active; save and successfully test it in Settings")
+        raise HTTPException(status_code=422, detail="Telemetry source is not active; save and successfully test it in Configuration")
     status = await _upstream_json("GET", "/hunt/status")
     if status.get("active"):
         raise HTTPException(status_code=409, detail="A hunt is already running. Wait for it to complete before starting another hypothesis.")
@@ -353,10 +364,17 @@ def _hunt_id(markdown: str) -> str:
 def _report_metadata(path: Path, content: str | None = None) -> dict:
     text = content if content is not None else path.read_text(encoding="utf-8", errors="replace")
     stat = path.stat()
+    report_type = "forensic" if (
+        path.name.upper().startswith("FORENSIC_")
+        or "Report classification:** Digital forensic technical report" in text
+    ) else "hunt"
+    case_match = re.search(r"\*\*Case ID:\*\*\s*`([^`]+)`", text) if report_type == "forensic" else None
     return {
         "filename": path.name,
         "title": _first_heading(text, path.stem.replace("_", " ")),
+        "type": report_type,
         "hunt_id": _hunt_id(text),
+        "case_id": case_match.group(1) if case_match else "",
         "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         "size": stat.st_size,
     }
@@ -368,6 +386,161 @@ async def list_reports(request: Request):
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     reports = [_report_metadata(path) for path in REPORTS_DIR.glob("*.md") if path.is_file()]
     return sorted(reports, key=lambda item: item["modified"], reverse=True)
+
+
+@app.delete("/api/reports/{filename}")
+async def delete_report(filename: str, request: Request):
+    control_plane.require_feature(request, "reports", admin_only=True)
+    path = _safe_report(filename)
+    trash = (REPORTS_DIR / ".trash").resolve()
+    if trash.parent != REPORTS_DIR.resolve():
+        raise HTTPException(status_code=500, detail="invalid report archive path")
+    trash.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    archived = (trash / f"{stamp}_{path.name}").resolve()
+    if archived.parent != trash:
+        raise HTTPException(status_code=500, detail="invalid report archive target")
+    path.replace(archived)
+    logger.info(
+        "report removed from the active library",
+        extra={"report": path.name, "actor": request.state.analyst, "archived": str(archived)},
+    )
+    return {"deleted": path.name, "recoverable": True, "archived_path": str(archived)}
+
+
+def _safe_evidence_name(filename: str, fallback: str) -> str:
+    base = Path(filename or "").name
+    safe = re.sub(r"[^A-Za-z0-9._() -]+", "_", base).strip(" .")
+    return safe[:180] or fallback
+
+
+async def _new_forensic_case_dir(label: str) -> Path:
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    prefix = datetime.now(timezone.utc).strftime("%Y%m%d")
+    safe_label = re.sub(r"[^A-Za-z0-9_-]+", "-", label).strip("-")[:80] or "evidence"
+    root = FORENSIC_ROOT.resolve()
+    day_root = (root / date).resolve()
+    if day_root.parent != root:
+        raise HTTPException(status_code=500, detail="invalid forensic storage path")
+    day_root.mkdir(parents=True, exist_ok=True)
+    async with _forensic_intake_lock:
+        for serial in range(1, 10000):
+            candidate = (day_root / f"{prefix}-{serial:04d}-{safe_label}").resolve()
+            if candidate.parent != day_root:
+                continue
+            try:
+                candidate.mkdir()
+                return candidate
+            except FileExistsError:
+                continue
+    raise HTTPException(status_code=507, detail="daily forensic case serial space is exhausted")
+
+
+@app.post("/api/forensics/cases", status_code=202)
+async def create_forensic_case(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    case_title: str = Form(...),
+    acquired_from: str = Form(""),
+    legal_authority: str = Form(""),
+    notes: str = Form(""),
+):
+    control_plane.require_feature(request, "forensics")
+    title = case_title.strip()
+    if not title or len(title) > 300:
+        raise HTTPException(status_code=422, detail="case title must contain 1-300 characters")
+    if not files:
+        raise HTTPException(status_code=422, detail="at least one evidence file is required")
+    case_id = str(uuid.uuid4())
+    case_dir = await _new_forensic_case_dir(title)
+    evidence, case_bytes = [], 0
+    try:
+        for index, upload in enumerate(files, start=1):
+            evidence_id = f"E{index:04d}"
+            original_name = _safe_evidence_name(upload.filename or "", f"evidence-{index}")
+            stored_name = f"{evidence_id}_{original_name}"
+            target = (case_dir / stored_name).resolve()
+            if target.parent != case_dir:
+                raise HTTPException(status_code=422, detail="invalid evidence filename")
+            digest = hashlib.sha256()
+            size = 0
+            with target.open("xb") as handle:
+                while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    case_bytes += len(chunk)
+                    if size > FORENSIC_MAX_FILE_BYTES:
+                        raise HTTPException(status_code=413, detail=f"{original_name} exceeds the evidence file limit")
+                    if case_bytes > FORENSIC_MAX_CASE_BYTES:
+                        raise HTTPException(status_code=413, detail="forensic case exceeds the total upload limit")
+                    digest.update(chunk)
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            evidence.append({
+                "evidence_id": evidence_id,
+                "original_name": original_name,
+                "stored_name": stored_name,
+                "size_bytes": size,
+                "sha256": digest.hexdigest(),
+                "content_type": upload.content_type or "application/octet-stream",
+            })
+        manifest = {
+            "case_id": case_id,
+            "case_title": title,
+            "examiner": request.state.analyst,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "acquired_from": acquired_from.strip()[:1000],
+            "legal_authority": legal_authority.strip()[:2000],
+            "notes": notes.strip()[:10000],
+            "evidence": evidence,
+        }
+        manifest_path = case_dir / "_thos_chain_of_custody.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        for item in evidence:
+            try:
+                (case_dir / item["stored_name"]).chmod(0o440)
+            except OSError:
+                logger.warning("could not mark evidence read-only", extra={"evidence": item["evidence_id"]})
+        result = await _upstream_json("POST", "/forensics/analyze", json={
+            "case_id": case_id,
+            "case_title": title,
+            "case_dir": str(case_dir),
+            "examiner": request.state.analyst,
+        })
+        return {**result, "evidence": evidence}
+    except Exception as exc:
+        try:
+            (case_dir / "_thos_intake_failed.json").write_text(json.dumps({
+                "case_id": case_id,
+                "case_title": title,
+                "examiner": request.state.analyst,
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc),
+                "completed_evidence": evidence,
+                "partial_bytes_received": case_bytes,
+            }, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        logger.exception(
+            "forensic intake failed; preserving any uploaded bytes for administrator review",
+            extra={"case_id": case_id, "case_dir": str(case_dir)},
+        )
+        raise
+    finally:
+        for upload in files:
+            await upload.close()
+
+
+@app.get("/api/forensics")
+async def list_forensic_cases(request: Request, limit: int = 100):
+    control_plane.require_feature(request, "forensics")
+    return await _upstream_json("GET", f"/forensics?limit={max(1, min(limit, 500))}")
+
+
+@app.get("/api/forensics/{case_id}")
+async def read_forensic_case(case_id: str, request: Request):
+    control_plane.require_feature(request, "forensics")
+    return await _upstream_json("GET", f"/forensics/{case_id}")
 
 
 @app.get("/api/reports/{filename}")

@@ -5,12 +5,15 @@ import {
   ArrowPathIcon,
   Bars3Icon,
   CheckCircleIcon,
+  ChevronDoubleLeftIcon,
+  ChevronDoubleRightIcon,
   ChevronRightIcon,
   ClockIcon,
   Cog6ToothIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
+  FingerPrintIcon,
   LightBulbIcon,
   MagnifyingGlassIcon,
   PlayIcon,
@@ -20,6 +23,7 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   Squares2X2Icon,
+  TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import ReactMarkdown from "react-markdown";
@@ -29,6 +33,7 @@ import ChatPage from "./ChatPage";
 import HypothesisCreate from "./HypothesisCreate";
 import Settings from "./Settings";
 import Detections from "./Detections";
+import Forensics from "./Forensics";
 
 const NODE_LABELS = {
   refresh_hearth_kb: "Refreshing hypothesis knowledge",
@@ -39,7 +44,7 @@ const NODE_LABELS = {
   siem_fetch: "Fetching logs from SIEM",
   log_processing: "Normalizing and deduplicating logs",
   guardrail: "Screening untrusted telemetry",
-  soc_tools: "Running SOC tools (Sigma and enrichment)",
+  soc_tools: "Running detection and enrichment tools",
   coverage_gap: "Checking telemetry coverage gaps",
   threat_intel: "Enriching indicators with threat intelligence",
   reasoning: "Reasoning over evidence",
@@ -57,7 +62,7 @@ const NODE_REASONS = {
   siem_fetch: "retrieves bounded telemetry from the selected source",
   log_processing: "normalizes evidence and removes duplicates",
   guardrail: "screens untrusted log text before model use",
-  soc_tools: "runs SigmaHQ, local Sigma, and enrichment concurrently",
+  soc_tools: "runs community rules, local rules, and enrichment concurrently",
   coverage_gap: "checks whether available telemetry supports a conclusion",
   threat_intel: "compares observed indicators with local intelligence",
   reasoning: "turns evidence into cited findings",
@@ -71,11 +76,24 @@ function formatDuration(value) {
   return milliseconds < 1000 ? `${Math.max(0, Math.round(milliseconds))} ms` : `${(milliseconds / 1000).toFixed(2)} s`;
 }
 
+function formatLocalTimestamp(value) {
+  const parsed = value ? new Date(value) : new Date();
+  if (Number.isNaN(parsed.getTime())) return "—";
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+}
+
 function eventReason(node, data = {}) {
   if (node === "siem_fetch") return `retrieved ${data.record_count || 0} matching records`;
   if (node === "log_processing") return `retained ${(data.processed_logs || []).length} normalized records`;
   if (node === "soc_tools") {
-    return `evaluated ${(data.enrichment || {}).sigma_rules_evaluated || 0} rules; flagged ${data.sigma_matched_count || 0} records`;
+    const enrichment = data.enrichment || {};
+    const evaluated = enrichment.sigma_rules_evaluated || 0;
+    const unsupported = enrichment.sigma_query_coverage?.unsupported || 0;
+    if (!evaluated && unsupported) {
+      return `0 executable rules; ${unsupported} blocked by unavailable telemetry fields; flagged ${data.sigma_matched_count || 0} records`;
+    }
+    return `evaluated ${evaluated} rules; flagged ${data.sigma_matched_count || 0} records`;
   }
   if (node === "coverage_gap") return `identified ${(data.coverage_gaps || []).length} coverage gaps`;
   if (node === "threat_intel") return `found ${(data.enrichment_hits || []).length} local IOC matches`;
@@ -89,11 +107,17 @@ function eventReason(node, data = {}) {
 function moduleDetails(data = {}) {
   const details = {};
   Object.entries(data).forEach(([key, value]) => {
-    if (["logs", "processed_logs", "findings"].includes(key) && Array.isArray(value)) details[key] = `${value.length} item(s)`;
-    else if (Array.isArray(value)) details[key] = value.length <= 8 ? value : `${value.length} item(s)`;
-    else if (value && typeof value === "object") details[key] = Object.keys(value).length <= 12 ? value : `${Object.keys(value).length} field(s)`;
-    else if (typeof value === "string") details[key] = value.length > 500 ? `${value.slice(0, 500)}…` : value;
-    else details[key] = value;
+    const displayKey = {
+      sigma_rule: "detection_summary",
+      sigma_matched_refs: "detection_matched_references",
+      sigma_rule_matches: "detection_rule_matches",
+      sigma_matched_count: "detection_matched_count",
+    }[key] || key;
+    if (["logs", "processed_logs", "findings"].includes(key) && Array.isArray(value)) details[displayKey] = `${value.length} item(s)`;
+    else if (Array.isArray(value)) details[displayKey] = value.length <= 8 ? value : `${value.length} item(s)`;
+    else if (value && typeof value === "object") details[displayKey] = Object.keys(value).length <= 12 ? value : `${Object.keys(value).length} field(s)`;
+    else if (typeof value === "string") details[displayKey] = value.length > 500 ? `${value.slice(0, 500)}…` : value;
+    else details[displayKey] = value;
   });
   return details;
 }
@@ -103,10 +127,13 @@ function progressItem(step) {
   return {
     id: step?.step_id || `${step?.node_name}-${step?.created_at || ""}`,
     node: step?.node_name || "unknown",
+    agentName: step?.agent_name || NODE_LABELS[step?.node_name] || step?.node_name || "Unknown agent",
+    modelTier: step?.model_tier || "",
+    modelName: step?.model_name || "",
     label: NODE_LABELS[step?.node_name] || step?.node_name || "Unknown module",
-    duration: formatDuration(step?.duration_ms),
+    completedAt: formatLocalTimestamp(step?.created_at),
     reason: eventReason(step?.node_name, data),
-    details: moduleDetails(data),
+    details: { ...moduleDetails(data), execution_duration: formatDuration(step?.duration_ms) },
   };
 }
 
@@ -213,14 +240,16 @@ function LoginPage({ onAuthenticated, checking = false }) {
 function App() {
   const [authStatus, setAuthStatus] = useState("checking");
   const [analyst, setAnalyst] = useState("");
-  const [session, setSession] = useState({ display_name: "", role: "Analyst", permissions: [] });
+  const [session, setSession] = useState({ display_name: "", role: "Expert", permissions: [] });
   const [page, setPage] = useState("hunts");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hypotheses, setHypotheses] = useState([]);
   const [hypothesisError, setHypothesisError] = useState("");
   const [loadingHypotheses, setLoadingHypotheses] = useState(true);
   const [query, setQuery] = useState("");
   const [tactic, setTactic] = useState("All tactics");
+  const [severity, setSeverity] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [readingHypothesis, setReadingHypothesis] = useState(null);
   const [activeSources, setActiveSources] = useState([{ id: "folder", label: "Local folder" }]);
@@ -233,6 +262,7 @@ function App() {
   const [huntTitle, setHuntTitle] = useState("");
   const [progress, setProgress] = useState([]);
   const [activeNode, setActiveNode] = useState("");
+  const [activeAgent, setActiveAgent] = useState(null);
   const [expandedNode, setExpandedNode] = useState("");
   const [huntError, setHuntError] = useState("");
   const [finalState, setFinalState] = useState(null);
@@ -241,6 +271,7 @@ function App() {
   const [huntHistory, setHuntHistory] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportQuery, setReportQuery] = useState("");
+  const [reportType, setReportType] = useState("all");
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState("");
@@ -288,6 +319,7 @@ function App() {
         setHuntTitle(`${hunt.hypothesis_id || "Dynamic hunt"} · ${String(hunt.hypothesis_text || "Scheduled or analyst hunt").slice(0, 140)}`);
         setProgress((hunt.steps || []).map(progressItem));
         setActiveNode(active ? (hunt.current_stage || "") : "");
+        setActiveAgent(active ? (hunt.current_agent || null) : null);
         setRunning(active);
         if (active) {
           window.localStorage.setItem("thos:active-hunt", id);
@@ -337,14 +369,14 @@ function App() {
     return () => { active = false; window.removeEventListener("thos:unauthorized", unauthorized); };
   }, []);
   useEffect(() => {
-    if (authStatus === "authenticated" && (session.role === "SME" || session.permissions?.includes("hunts"))) {
+    if (authStatus === "authenticated" && (["Admin", "SME"].includes(session.role) || session.permissions?.includes("hunts"))) {
       loadHypotheses();
       loadTelemetrySources();
       loadHuntStatus();
     }
   }, [authStatus, session, loadHypotheses, loadTelemetrySources, loadHuntStatus]);
   useEffect(() => {
-    if (authStatus !== "authenticated" || !(session.role === "SME" || session.permissions?.includes("hunts"))) return undefined;
+    if (authStatus !== "authenticated" || !(["Admin", "SME"].includes(session.role) || session.permissions?.includes("hunts"))) return undefined;
     const timer = window.setInterval(loadHuntStatus, 3000);
     return () => window.clearInterval(timer);
   }, [authStatus, session, loadHuntStatus]);
@@ -352,16 +384,16 @@ function App() {
   useEffect(() => {
     if (authStatus !== "authenticated") return;
     const permissions = new Set(session.permissions || []);
-    if (session.role === "SME") return;
-    const allowed = { hunts: permissions.has("hunts"), reports: permissions.has("reports"), detections: permissions.has("reports"), settings: permissions.has("knowledge"), home: permissions.has("chat") };
-    if (!allowed[page]) setPage(allowed.hunts ? "hunts" : allowed.reports ? "reports" : allowed.settings ? "settings" : "home");
+    if (["Admin", "SME"].includes(session.role)) return;
+    const allowed = { hunts: permissions.has("hunts"), forensics: permissions.has("forensics"), reports: permissions.has("reports"), detections: permissions.has("reports"), settings: true, home: permissions.has("chat") };
+    if (!allowed[page]) setPage(allowed.hunts ? "hunts" : allowed.forensics ? "forensics" : allowed.reports ? "reports" : allowed.settings ? "settings" : "home");
   }, [authStatus, page, session]);
 
   const authenticated = (payload) => { setAnalyst(payload.analyst || payload.username || "analyst"); setSession(payload); setAuthStatus("authenticated"); };
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     setAnalyst("");
-    setSession({ display_name: "", role: "Analyst", permissions: [] });
+    setSession({ display_name: "", role: "Expert", permissions: [] });
     setAuthStatus("unauthenticated");
   };
 
@@ -373,18 +405,38 @@ function App() {
   const filteredHypotheses = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return hypotheses.filter((item) => {
+      if (severity !== "all" && (item.severity || "medium") !== severity) return false;
       if (tactic !== "All tactics" && item.tactic !== tactic) return false;
       if (!needle) return true;
       return [item.id, item.title, item.tactic, item.technique, item.text]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
-  }, [hypotheses, query, tactic]);
+  }, [hypotheses, query, tactic, severity]);
+
+  const groupedHypotheses = useMemo(
+    () => ["critical", "high", "medium", "low"]
+      .map((type) => ({
+        severity: type,
+        items: filteredHypotheses.filter((item) => (item.severity || "medium") === type),
+      }))
+      .filter((group) => group.items.length),
+    [filteredHypotheses],
+  );
+
+  useEffect(() => {
+    if (!filteredHypotheses.some((item) => item.id === selectedId)) {
+      setSelectedId(filteredHypotheses[0]?.id || "");
+    }
+  }, [filteredHypotheses, selectedId]);
 
   const filteredReports = useMemo(() => {
     const needle = reportQuery.trim().toLowerCase();
-    return reports.filter((item) => !needle || `${item.title} ${item.filename} ${item.hunt_id || ""}`.toLowerCase().includes(needle));
-  }, [reports, reportQuery]);
+    return reports.filter((item) => {
+      if (reportType !== "all" && item.type !== reportType) return false;
+      return !needle || `${item.title} ${item.filename} ${item.hunt_id || ""} ${item.case_id || ""}`.toLowerCase().includes(needle);
+    });
+  }, [reports, reportQuery, reportType]);
 
   const runHunt = useCallback(async ({ hypothesisId = null, hypothesisText = null, hypothesisTactic = "", hypothesisTechnique = "", title }) => {
     if (running || platformHuntActive) {
@@ -398,6 +450,7 @@ function App() {
     setHuntTitle(title);
     setProgress([]);
     setActiveNode("");
+    setActiveAgent(null);
     setExpandedNode("");
     setHuntError("");
     setFinalState(null);
@@ -433,14 +486,20 @@ function App() {
             setHuntId(event.hunt_id);
             window.localStorage.setItem("thos:active-hunt", event.hunt_id);
           }
-          if (event.event === "node_started") setActiveNode(event.node || "");
+          if (event.event === "node_started") {
+            setActiveNode(event.node || "");
+            setActiveAgent(event);
+          }
           if (event.event === "node_complete") {
             setProgress((current) => [...current, {
               node: event.node,
+              agentName: event.agent_name || NODE_LABELS[event.node] || event.node,
+              modelTier: event.model_tier || "",
+              modelName: event.model_name || "",
               label: NODE_LABELS[event.node] || event.node,
-              duration: formatDuration(event.duration_ms),
+              completedAt: formatLocalTimestamp(event.completed_at),
               reason: eventReason(event.node, event.data),
-              details: moduleDetails(event.data),
+              details: { ...moduleDetails(event.data), execution_duration: formatDuration(event.duration_ms) },
             }]);
           }
           if (event.event === "error") setHuntError(event.error || "Hunt failed");
@@ -448,6 +507,7 @@ function App() {
             setFinalState(event.state || {});
             setHuntId(event.hunt_id || "");
             setActiveNode("");
+            setActiveAgent(null);
             window.localStorage.removeItem("thos:active-hunt");
           }
         }
@@ -492,11 +552,34 @@ function App() {
     if (filename) openReport(filename);
   };
 
+  const deleteSelectedReport = async () => {
+    if (!selectedReport || session.role !== "Admin") return;
+    if (!window.confirm(`Remove ${selectedReport.filename} from the active report library? It will remain in the server-side recovery archive.`)) return;
+    try {
+      await api(`/api/reports/${encodeURIComponent(selectedReport.filename)}`, { method: "DELETE" });
+      setSelectedReport(null);
+      await loadReports();
+    } catch (error) {
+      setReportError(error.message);
+    }
+  };
+
+  const clearHuntHistory = async () => {
+    if (session.role !== "Admin") return;
+    if (!window.confirm("Clear all hunt run history? Generated reports remain in the report library.")) return;
+    try {
+      await api("/api/hunts/history", { method: "DELETE" });
+      setHuntHistory([]);
+    } catch (error) {
+      setReportError(error.message);
+    }
+  };
+
   if (authStatus !== "authenticated") return <LoginPage checking={authStatus === "checking"} onAuthenticated={authenticated} />;
 
   const initials = analyst.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AN";
-  const can = (feature) => session.role === "SME" || session.permissions?.includes(feature);
-  const pageLabel = page === "hunts" ? "Hunt Board" : page === "reports" ? "Reports" : page === "detections" ? "Detections" : page === "settings" ? "Settings" : page === "create-hypothesis" ? "Create Hunt" : "Workspace";
+  const can = (feature) => ["Admin", "SME"].includes(session.role) || session.permissions?.includes(feature);
+  const pageLabel = page === "hunts" ? "Hunt Operations" : page === "forensics" ? "Digital Forensics" : page === "reports" ? "Investigation Reports" : page === "detections" ? "Detection Operations" : page === "settings" ? "Configuration" : page === "create-hypothesis" ? "Hypothesis Authoring" : "Workspace";
   const huntLocked = running || platformHuntActive;
   const completedModules = new Set(progress.map((item) => item.node)).size;
   const progressPercent = finalState && !huntError ? 100 : Math.min(96, Math.round((completedModules / Object.keys(NODE_LABELS).length) * 100));
@@ -504,11 +587,12 @@ function App() {
   return (
     <div className="soc-shell">
       {sidebarOpen && <button className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`soc-sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
+      <aside className={`soc-sidebar ${sidebarOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="brand-block">
           <span className="brand-mark"><img src={logo} alt="" /></span>
           <div><strong>THOS</strong><small>Threat Hunting OS</small></div>
           <button className="mobile-close" onClick={() => setSidebarOpen(false)}><XMarkIcon /></button>
+          <button className="desktop-sidebar-toggle" onClick={() => setSidebarCollapsed(true)} title="Hide navigation" aria-label="Hide navigation"><ChevronDoubleLeftIcon /></button>
         </div>
         <nav className="nav-stack" aria-label="Primary navigation">
           {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => { setPage("detections"); setSidebarOpen(false); }}>
@@ -517,28 +601,29 @@ function App() {
           {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => { setPage("hunts"); setSidebarOpen(false); }}>
             <Squares2X2Icon /><span>Hunt Board</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {session.role === "SME" && <button className={page === "create-hypothesis" ? "active" : ""} onClick={() => { setPage("create-hypothesis"); setSidebarOpen(false); }}>
-            <LightBulbIcon /><span>Create Hunt</span><ChevronRightIcon className="nav-chevron" />
+          {can("forensics") && <button className={page === "forensics" ? "active" : ""} onClick={() => { setPage("forensics"); setSidebarOpen(false); }}>
+            <FingerPrintIcon /><span>Forensics</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => { setPage("reports"); setSidebarOpen(false); }}>
             <DocumentTextIcon /><span>Reports</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {(can("settings") || can("knowledge")) && <button className={page === "settings" ? "active" : ""} onClick={() => { setPage("settings"); setSidebarOpen(false); }}>
-            <Cog6ToothIcon /><span>Settings</span><ChevronRightIcon className="nav-chevron" />
-          </button>}
+          <button className={page === "settings" ? "active" : ""} onClick={() => { setPage("settings"); setSidebarOpen(false); }}>
+            <Cog6ToothIcon /><span>Configuration</span><ChevronRightIcon className="nav-chevron" />
+          </button>
         </nav>
         <div className="sidebar-note">
           <span><ShieldCheckIcon /></span>
           <div><strong>On-prem intelligence</strong><p>Evidence and model inference remain inside your environment.</p></div>
         </div>
         <div className="analyst-card">
-          <span className="avatar">{initials}</span>
+          {session.avatar_url ? <img className="avatar" src={session.avatar_url} alt="" /> : <span className="avatar">{initials}</span>}
           <div><strong>{session.display_name || analyst}</strong><small>{session.role} · authenticated</small></div>
           <button className="logout-button" onClick={logout} title="Sign out" aria-label="Sign out"><ArrowLeftOnRectangleIcon /></button>
         </div>
       </aside>
 
-      <main className="soc-main">
+      {sidebarCollapsed && <button className="sidebar-reveal" onClick={() => setSidebarCollapsed(false)} title="Show navigation" aria-label="Show navigation"><ChevronDoubleRightIcon /></button>}
+      <main className={`soc-main ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <header className="topbar">
           <button className="menu-button" onClick={() => setSidebarOpen(true)}><Bars3Icon /></button>
           <div className="breadcrumb"><span>Operations</span><ChevronRightIcon />{pageLabel}</div>
@@ -549,13 +634,16 @@ function App() {
           <div className="page-wrap">
             <section className="page-heading">
               <div>
-                <StatusPill tone="indigo"><SparklesIcon /> HEARTH catalogue</StatusPill>
-                <h1>Choose the next hunt</h1>
-                <p>Search the complete hypothesis catalogue, select a tile, or run a hypothesis directly.</p>
+                <StatusPill tone="indigo"><SparklesIcon /> Curated hypothesis catalog</StatusPill>
+                <h1>Threat Hunting Operations</h1>
+                <p>Prioritize hypotheses by severity, review the investigative scope, and launch a governed hunt workflow.</p>
               </div>
-              <button className="secondary-button" onClick={loadHypotheses} disabled={loadingHypotheses}>
-                <ArrowPathIcon className={loadingHypotheses ? "spinning" : ""} /> Refresh catalogue
-              </button>
+              <div className="page-heading-actions">
+                {["Admin", "SME"].includes(session.role) && <button className="primary-button" onClick={() => setPage("create-hypothesis")}><LightBulbIcon /> Create hunt hypothesis</button>}
+                <button className="secondary-button" onClick={loadHypotheses} disabled={loadingHypotheses}>
+                  <ArrowPathIcon className={loadingHypotheses ? "spinning" : ""} /> Refresh catalog
+                </button>
+              </div>
             </section>
 
             <section className="control-deck panel">
@@ -569,6 +657,12 @@ function App() {
                 <label htmlFor="tactic-filter">ATT&CK tactic</label>
                 <select id="tactic-filter" value={tactic} onChange={(event) => setTactic(event.target.value)}>
                   {tactics.map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </div>
+              <div className="field compact-field">
+                <label htmlFor="hypothesis-severity">Severity</label>
+                <select id="hypothesis-severity" value={severity} onChange={(event) => setSeverity(event.target.value)}>
+                  <option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
                 </select>
               </div>
               <div className="field compact-field">
@@ -589,7 +683,7 @@ function App() {
             </section>
 
             <section className="catalogue-bar">
-              <div><h2>Hunting hypotheses</h2><p>{filteredHypotheses.length} of {hypotheses.length} shown</p></div>
+              <div><h2>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</h2><p>{filteredHypotheses.length} hypotheses in the selected severity view</p></div>
               <button className="primary-button" disabled={!selectedId || huntLocked} onClick={runSelected}><PlayIcon /> Run selected hypothesis</button>
             </section>
 
@@ -598,8 +692,11 @@ function App() {
             {loadingHypotheses ? (
               <div className="tile-grid">{Array.from({ length: 6 }).map((_, index) => <div className="hypothesis-tile tile-skeleton" key={index} />)}</div>
             ) : filteredHypotheses.length ? (
-              <div className="tile-grid">
-                {filteredHypotheses.map((item) => {
+              <div className="severity-catalog">
+                {groupedHypotheses.map((group) => <section className={`severity-group severity-group-${group.severity}`} key={group.severity}>
+                  <header><div><span className={`detection-level level-${group.severity}`}>{group.severity}</span><h3>{group.severity[0].toUpperCase() + group.severity.slice(1)} severity</h3></div><small>{group.items.length} hypotheses</small></header>
+                  <div className="tile-grid">
+                  {group.items.map((item) => {
                   const selected = selectedId === item.id;
                   return (
                     <article className={`hypothesis-tile ${selected ? "selected" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}>
@@ -607,6 +704,7 @@ function App() {
                         <button className="tile-radio" aria-label={`Select ${item.title}`} onClick={(event) => { event.stopPropagation(); setSelectedId(item.id); }}><span /></button>
                         <StatusPill tone="indigo">{item.id}</StatusPill>
                         <StatusPill tone="cyan">{item.technique || "Unmapped"}</StatusPill>
+                        <span className={`detection-level level-${item.severity || "medium"}`}>{item.severity || "medium"}</span>
                       </div>
                       <h3>{item.title}</h3>
                       <p className="hypothesis-copy">{readableHypothesisText(item.text)}</p>
@@ -620,8 +718,10 @@ function App() {
                     </article>
                   );
                 })}
+                  </div>
+                </section>)}
               </div>
-            ) : <EmptyState icon={MagnifyingGlassIcon} title="No hypotheses match" body="Try another keyword or clear the tactic filter." />}
+            ) : <EmptyState icon={MagnifyingGlassIcon} title={severity === "all" ? "No hypotheses match" : `No ${severity} severity hypotheses match`} body="Try another keyword, tactic, or severity type." />}
 
             {(running || huntId || huntError || finalState) && (
               <section className="hunt-console panel">
@@ -634,33 +734,33 @@ function App() {
                 </div>
                 {huntError && <div className="alert error-alert"><ExclamationTriangleIcon />{huntError}</div>}
                 <button className="pipeline-overview" onClick={() => activeNode && setExpandedNode(expandedNode === activeNode ? "" : activeNode)} disabled={!activeNode}>
-                  <span className="pipeline-overview-copy"><strong>{activeNode ? `Running: ${NODE_LABELS[activeNode] || activeNode}` : finalState ? "Pipeline complete" : "Preparing pipeline"}</strong><small>{completedModules} module(s) completed · {progressPercent}%</small></span>
+                  <span className="pipeline-overview-copy"><strong>{activeNode ? `Running: ${activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}` : finalState ? "Agent workflow complete" : "Preparing agent workflow"}</strong><small>{completedModules} agent stage(s) completed · {progressPercent}%</small></span>
                   <span className="pipeline-track"><i style={{ width: `${progressPercent}%` }} /></span><b>{progressPercent}%</b>
                 </button>
-                {expandedNode && expandedNode === activeNode && <div className="module-detail active-detail"><strong>{NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "This module is currently processing the hunt state."}</p><code>Module key: {activeNode}</code></div>}
+                {expandedNode && expandedNode === activeNode && <div className="module-detail active-detail"><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{activeAgent?.activity || NODE_REASONS[activeNode] || "This agent is processing the current hunt state."}</p><code>{activeAgent?.model_name ? `Model: ${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "Model: none (deterministic/tool stage)"}</code></div>}
                 <div className="progress-list">
                   {progress.map((item, index) => (
                     <div className="progress-entry" key={item.id || `${item.node}-${index}`}><button className="progress-row" onClick={() => setExpandedNode(expandedNode === `${item.node}-${index}` ? "" : `${item.node}-${index}`)}>
                       <span className="progress-check"><CheckCircleIcon /></span>
-                      <div><strong>{item.label}</strong><p>{item.reason}</p></div>
-                      <time>{item.duration}</time>
+                      <div><strong>{item.agentName}</strong><p>{item.reason}</p><small>{item.label} · {item.modelName ? `${item.modelName} (${item.modelTier} tier)` : "deterministic/tool stage"}</small></div>
+                      <time title="Local completion timestamp">{item.completedAt}</time>
                     </button>{expandedNode === `${item.node}-${index}` && <div className="module-detail"><pre>{JSON.stringify(item.details, null, 2)}</pre></div>}</div>
                   ))}
-                  {running && activeNode && <button className="progress-row current" onClick={() => setExpandedNode(expandedNode === activeNode ? "" : activeNode)}><span className="pulse-ring" /><div><strong>{NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "Module is working on the current hunt state."}</p></div><time>running</time></button>}
+                  {running && activeNode && <button className="progress-row current" onClick={() => setExpandedNode(expandedNode === activeNode ? "" : activeNode)}><span className="pulse-ring" /><div><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "Agent is working on the current hunt state."}</p><small>{activeAgent?.model_name ? `${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "deterministic/tool stage"}</small></div><time>running</time></button>}
                 </div>
                 {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>{finalState.reasoning_degraded ? "Deterministic fallback conclusion" : "Verified conclusion"}</h3><p>{finalState.reasoning_summary}</p></div>}
               </section>
             )}
           </div>
-        ) : page === "reports" ? (
+        ) : page === "forensics" ? <Forensics onOpenReport={openReport} /> : page === "reports" ? (
           <div className="page-wrap reports-page">
             <section className="page-heading">
-              <div><StatusPill tone="cyan"><DocumentTextIcon /> Evidence library</StatusPill><h1>Hunt reports</h1><p>Read generated Markdown as a polished investigation record or export the same structure to PDF.</p></div>
+              <div><StatusPill tone="cyan"><DocumentTextIcon /> Evidence library</StatusPill><h1>Hunt and forensic reports</h1><p>Keep threat-hunting and technical digital-forensic reports clearly classified, searchable, and exportable.</p></div>
               <button className="secondary-button" onClick={loadReports} disabled={reportsLoading}><ArrowPathIcon className={reportsLoading ? "spinning" : ""} /> Refresh reports</button>
             </section>
             {reportError && <div className="alert error-alert"><ExclamationTriangleIcon />{reportError}</div>}
             <section className="hunt-history panel">
-              <div className="hunt-history-heading"><div><h2>Hunt run history</h2><p>Every started hunt is retained with its terminal outcome and failure reason.</p></div><span>{huntHistory.length} runs</span></div>
+              <div className="hunt-history-heading"><div><h2>Hunt Run Audit History</h2><p>Every started hunt is retained with its terminal outcome and failure reason.</p></div><div className="history-heading-actions"><span>{huntHistory.length} runs</span>{session.role === "Admin" && <button className="danger-button" disabled={!huntHistory.length || platformHuntActive} onClick={clearHuntHistory}><TrashIcon /> Clear history</button>}</div></div>
               <div className="hunt-history-list">
                 {huntHistory.map((hunt) => {
                   const report = reports.find((item) => item.hunt_id === hunt.hunt_id);
@@ -680,12 +780,15 @@ function App() {
             <div className="report-layout">
               <aside className="report-index panel">
                 <div className="field search-field"><label htmlFor="report-search">Find a report</label><span><MagnifyingGlassIcon /></span><input id="report-search" value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Title, hunt ID, filename…" /></div>
+                <div className="report-type-filter">
+                  {["all", "hunt", "forensic"].map((type) => <button key={type} className={reportType === type ? "active" : ""} onClick={() => setReportType(type)}>{type}</button>)}
+                </div>
                 <div className="report-count"><QueueListIcon />{filteredReports.length} reports</div>
                 <div className="report-list">
                   {filteredReports.map((item) => (
                     <button key={item.filename} className={selectedReport?.filename === item.filename ? "active" : ""} onClick={() => openReport(item.filename)}>
                       <span className="report-doc-icon"><DocumentTextIcon /></span>
-                      <span><strong>{item.title}</strong><small>{new Date(item.modified).toLocaleString()}</small><em>{item.hunt_id || item.filename}</em></span>
+                      <span><strong>{item.title}</strong><small>{item.type} · {new Date(item.modified).toLocaleString()}</small><em>{item.hunt_id || item.case_id || item.filename}</em></span>
                       <ChevronRightIcon />
                     </button>
                   ))}
@@ -698,6 +801,7 @@ function App() {
                     <div className="report-toolbar">
                       <div><span>Investigation report</span><strong>{selectedReport.filename}</strong></div>
                       <div>
+                        {session.role === "Admin" && <button className="danger-button" onClick={deleteSelectedReport}><TrashIcon /> Delete</button>}
                         <a className="secondary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/markdown`} download><ArrowDownTrayIcon /> Markdown</a>
                         <a className="primary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/pdf`} download><ArrowDownTrayIcon /> Download PDF</a>
                       </div>
@@ -706,11 +810,11 @@ function App() {
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedReport.content}</ReactMarkdown>
                     </article>
                   </>
-                ) : <EmptyState icon={DocumentTextIcon} title="Select a hunt report" body="Choose a report from the library to view its fully rendered Markdown." />}
+                ) : <EmptyState icon={DocumentTextIcon} title="Select a report" body="Choose a hunt or forensic report from the classified library." />}
               </section>
             </div>
           </div>
-        ) : page === "detections" ? <Detections /> : page === "create-hypothesis" && session.role === "SME" ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and approved MCP tools." /></div>}
+        ) : page === "detections" ? <Detections /> : page === "create-hypothesis" && ["Admin", "SME"].includes(session.role) ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} onSessionChange={(profile) => { setSession((current) => ({ ...current, ...profile })); setAnalyst(profile.display_name || analyst); }} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and approved MCP tools." /></div>}
       </main>
       {readingHypothesis && <div className="hypothesis-reader-backdrop" role="presentation" onClick={() => setReadingHypothesis(null)}><section className="hypothesis-reader" role="dialog" aria-modal="true" aria-label={`Read hypothesis ${readingHypothesis.id}`} onClick={(event) => event.stopPropagation()}>
         <header><div><span className="status-pill status-indigo">{readingHypothesis.id}</span><span className="status-pill status-cyan">{readingHypothesis.technique || "Unmapped"}</span></div><button aria-label="Close hypothesis" onClick={() => setReadingHypothesis(null)}><XMarkIcon /></button></header>

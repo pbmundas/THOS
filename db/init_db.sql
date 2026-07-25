@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS hunt_steps (
     status      TEXT NOT NULL DEFAULT 'ok',  -- ok|error
     error_msg   TEXT,
     duration_ms INTEGER,
+    agent_name  TEXT,
+    model_tier  TEXT,
+    model_name  TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -48,6 +51,34 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS forensic_cases (
+    case_id         UUID PRIMARY KEY,
+    case_title      TEXT NOT NULL,
+    examiner        TEXT NOT NULL,
+    evidence_path   TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'queued', -- queued|running|completed|failed
+    current_stage   TEXT,
+    report_path     TEXT,
+    summary         TEXT,
+    error_msg       TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS forensic_steps (
+    step_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    case_id       UUID NOT NULL REFERENCES forensic_cases(case_id) ON DELETE CASCADE,
+    stage         TEXT NOT NULL,
+    agent_name    TEXT NOT NULL,
+    activity      TEXT,
+    status        TEXT NOT NULL DEFAULT 'ok',
+    duration_ms   INTEGER,
+    model_tier    TEXT,
+    model_name    TEXT,
+    output        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (
     run_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     schedule_id     TEXT NOT NULL,
@@ -63,6 +94,7 @@ CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (
     compiled_query  TEXT,
     query_backend   TEXT,
     error_msg       TEXT,
+    case_id          UUID,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -111,3 +143,6 @@ CREATE TABLE IF NOT EXISTS case_events (
     note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE scheduled_sigma_detections
+    ADD COLUMN IF NOT EXISTS case_id UUID REFERENCES cases(case_id) ON DELETE SET NULL;

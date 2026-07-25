@@ -10,7 +10,7 @@ async function api(path, options = {}) {
   return payload;
 }
 
-const EMPTY = { title: "", text: "", tactic: "Execution", technique: "" };
+const EMPTY = { title: "", text: "", tactic: "Execution", technique: "", severity: "medium" };
 
 export default function HypothesisCreate({ onCreated }) {
   const [form, setForm] = useState(EMPTY);
@@ -44,7 +44,7 @@ export default function HypothesisCreate({ onCreated }) {
   };
 
   return <div className="page-wrap create-hypothesis-page">
-    <section className="page-heading"><div><span className="status-pill status-indigo"><LightBulbIcon /> SME authoring</span><h1>Create a hunting hypothesis</h1><p>Publish a reviewed organizational hypothesis into the shared catalogue. Analysts can read and run it from the board.</p></div></section>
+    <section className="page-heading"><div><span className="status-pill status-indigo"><LightBulbIcon /> Governed authoring</span><h1>Hunting Hypothesis Authoring</h1><p>Publish a reviewed organizational hypothesis with an operational severity for prioritization, scheduling, and investigation.</p></div></section>
     <section className="settings-card hypothesis-author-card">
       <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>Hypothesis definition</h3><p>Use observable behavior and identify the ATT&CK context. THOS assigns the next custom ID automatically.</p></div></div>
       {notice && <div className={`settings-notice ${notice.startsWith("Created") || notice.startsWith("Deleted") ? "success" : "error"}`}><span>{notice.startsWith("Created") ? <CheckCircleIcon /> : <BeakerIcon />}</span>{notice}</div>}
@@ -52,6 +52,7 @@ export default function HypothesisCreate({ onCreated }) {
         <label>Title<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Concise behavior being investigated" /></label>
         <label>MITRE tactic<input value={form.tactic} onChange={(event) => setForm({ ...form, tactic: event.target.value })} placeholder="Execution" /></label>
         <label>Technique ID (optional)<input value={form.technique} onChange={(event) => setForm({ ...form, technique: event.target.value.toUpperCase() })} placeholder="T1059.001" /></label>
+        <label>Severity<select value={form.severity} onChange={(event) => setForm({ ...form, severity: event.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
       </div>
       <label className="hypothesis-body-field">Hypothesis and investigation guidance<textarea value={form.text} onChange={(event) => setForm({ ...form, text: event.target.value })} placeholder="Describe the suspicious behavior, expected telemetry, useful baselines, and important limitations…" /></label>
       <div className="settings-actions"><button className="primary-button" disabled={saving || form.title.trim().length < 8 || form.text.trim().length < 20 || form.tactic.trim().length < 2} onClick={create}><PlusIcon /> {saving ? "Creating…" : "Create hypothesis"}</button></div>

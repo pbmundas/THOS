@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from collections import Counter
 from datetime import datetime, timezone
 
 from services.detection import sigma_engine, sigmahq_engine
+from services.detection.alert_triage import triage_detection
 from services.detection.sigma_query_catalog import applicable_rules, find_rule
 from services.mcp.mcp_client import call_tool
+from services.observability import cache
 from services.siem.log_processing import process_logs_node
 
 
 LOCAL_SOURCES = {"folder", "local_folder", "file", "local", "mock"}
 EVENT_FIELDS = ("timestamp", "host", "user", "event", "src_ip", "dst_ip", "detail", "source_file")
+RECURRING_HIT_NAMESPACE = "scheduled_detection_hits"
 
 
 def _selected_local_rule(rule_id: str):
@@ -56,6 +60,75 @@ def _analysis(events: list[dict], query_count: int, method: str) -> dict:
         "first_event_at": timestamps[0] if timestamps else None,
         "last_event_at": timestamps[-1] if timestamps else None,
         "generated_at": datetime.now(timezone.utc).isoformat(), "method": method,
+    }
+
+
+def _timestamp_bucket(value: object, window_seconds: int) -> str:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return str(int(parsed.timestamp()) // window_seconds)
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def event_fingerprint(event: dict, window_seconds: int = 3600) -> str:
+    """Fingerprint one event without retaining sensitive values in Redis keys."""
+    payload = {
+        "host": event.get("host"),
+        "user": event.get("user"),
+        "event": event.get("event"),
+        "src_ip": event.get("src_ip"),
+        "dst_ip": event.get("dst_ip"),
+        "source_file": event.get("source_file"),
+        "timestamp_window": _timestamp_bucket(event.get("timestamp"), window_seconds),
+        "detail_hash": hashlib.sha256(
+            str(event.get("detail") or "").encode("utf-8", errors="replace")
+        ).hexdigest()[:16],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def deduplicate_recurring_hits(
+    rule_id: str,
+    siem_type: str,
+    current_hits: list[dict],
+    *,
+    schedule_id: str = "",
+    window_seconds: int | None = None,
+) -> tuple[list[dict], dict]:
+    """Suppress events already returned by the previous scheduled execution."""
+    window = max(
+        60,
+        int(window_seconds or os.environ.get("SIGMA_DEDUP_WINDOW_SECONDS", "3600")),
+    )
+    identity = f"{schedule_id}:{rule_id}:{siem_type}"
+    previous = cache.cache_get(RECURRING_HIT_NAMESPACE, identity)
+    previous_fingerprints = set(
+        previous.get("fingerprints", [])
+        if isinstance(previous, dict)
+        else []
+    )
+    current = [(event_fingerprint(event, window), event) for event in current_hits]
+    fresh = [event for fingerprint, event in current if fingerprint not in previous_fingerprints]
+    cache.cache_set(
+        RECURRING_HIT_NAMESPACE,
+        identity,
+        {
+            "fingerprints": sorted({fingerprint for fingerprint, _event in current}),
+            "stored_at": datetime.now(timezone.utc).isoformat(),
+            "window_seconds": window,
+        },
+        ttl=max(window * 3, 3600),
+    )
+    return fresh, {
+        "raw_events_matched": len(current_hits),
+        "new_events_matched": len(fresh),
+        "duplicates_suppressed": len(current_hits) - len(fresh),
+        "fingerprint_window_seconds": window,
     }
 
 
@@ -153,9 +226,18 @@ async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_
         events = [_event_view(record, index) for index, record in enumerate(processed)]
         method = "precompiled Sigma query executed in the SIEM"
         query = entry["query"]
-    return {
+    raw_events = events
+    events, deduplication = deduplicate_recurring_hits(
+        rule_id,
+        siem_type,
+        raw_events,
+        schedule_id=schedule_id,
+    )
+    result = {
         "schedule_id": schedule_id, **metadata, "rule_source": source, "siem_type": siem_type,
         "status": "detected" if events else "no_match", "events_matched": len(events),
         "matched_events": events[:200], "compiled_query": query, "query_backend": siem_type,
-        "analysis": _analysis(events, 1, method),
+        "analysis": {**_analysis(events, 1, method), "deduplication": deduplication},
     }
+    result["analysis"]["triage"] = triage_detection(result)
+    return result

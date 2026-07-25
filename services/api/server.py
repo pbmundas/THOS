@@ -178,7 +178,8 @@ async def generate_siem_query(hypothesis_text: str, siem_type: str = "mock") -> 
 # ---------------------------------------------------------------
 @mcp.tool()
 def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
-                     log_source_path: str = "", trusted_sigma: bool = False) -> dict:
+                     log_source_path: str = "", trusted_sigma: bool = False,
+                     bypass_cache: bool = False) -> dict:
     """Execute a SIEM query and fetch matching log records. In 'mock' mode
     returns synthetic records. In 'wazuh' mode, searches the Wazuh
     Indexer. In 'folder' mode, parses every supported
@@ -186,7 +187,54 @@ def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
     log_source_path and returns records matching the query."""
     return siem_connector.fetch_logs(query, limit, siem_type=siem_type or None,
                                       log_source_path=log_source_path,
-                                      trusted_sigma=trusted_sigma)
+                                      trusted_sigma=trusted_sigma,
+                                      bypass_cache=bypass_cache)
+
+
+@mcp.tool()
+def discover_siem_fields(
+    siem_type: str,
+    sample_limit: int = 50,
+    log_source_path: str = "",
+) -> dict:
+    """Sample a bounded recent event set and cache the raw vendor field schema."""
+    from services.siem.schema_discovery import discover_siem_fields as discover
+    return discover(siem_type, sample_limit, log_source_path)
+
+
+@mcp.tool()
+def get_cached_siem_schema(siem_type: str) -> dict:
+    """Read the most recent schema snapshot, returning stale data with a flag."""
+    from services.siem.schema_discovery import get_cached_siem_schema as get_schema
+    return get_schema(siem_type)
+
+
+@mcp.tool()
+def alert_on_schema_drift(siem_type: str) -> dict:
+    """Return the added, removed, and type-changed fields from the last refresh."""
+    from services.siem.schema_discovery import alert_on_schema_drift as get_drift
+    return get_drift(siem_type)
+
+
+@mcp.tool()
+def compile_sigma_rule_to_query(rule_id: str, siem_type: str) -> dict:
+    """Compile one Sigma rule against the cached live SIEM schema."""
+    from services.detection.sigma_query_catalog import compile_sigma_rule_to_query as compile_rule
+    return compile_rule(rule_id, siem_type)
+
+
+@mcp.tool()
+def compile_sigma_rules_for_siem(siem_type: str) -> dict:
+    """Run the resource-bounded weekly Sigma compilation pass for one SIEM."""
+    from services.detection.sigma_query_catalog import compile_sigma_rules_for_siem as compile_rules
+    return compile_rules(siem_type)
+
+
+@mcp.tool()
+def flag_uncompilable_rules(siem_type: str) -> list[dict]:
+    """List rules whose fields or backend cannot be mapped safely."""
+    from services.detection.sigma_query_catalog import flag_uncompilable_rules as failures
+    return failures(siem_type)
 
 
 @mcp.tool()
@@ -250,6 +298,27 @@ def search_knowledge_base(query: str, n_results: int = 5) -> list[dict]:
     return custom_kb.search(query, n_results)
 
 
+@mcp.tool()
+def search_thos_product_knowledge(query: str, n_results: int = 6) -> list[dict]:
+    """Search the built-in, versioned THOS product catalog. This is separate
+    from analyst-uploaded organizational documents and requires no vector
+    database or model call."""
+    from services.knowledge.product_knowledge import search_product_knowledge
+    return search_product_knowledge(query, n_results)
+
+
+@mcp.tool()
+def search_cyber_knowledge(
+    query: str,
+    n_results: int = 6,
+    domains: list[str] | None = None,
+) -> list[dict]:
+    """Search the governed cybersecurity corpus. Every result has a CYBER
+    citation ID plus publisher, license, trust tier, and retrieval timestamp."""
+    from services.knowledge.cyber_retrieval import search
+    return search(query, n_results, domains)
+
+
 # ---------------------------------------------------------------
 # Cache / rate limiting
 # ---------------------------------------------------------------
@@ -277,7 +346,9 @@ def write_hunt_report(hunt_id: str, title: str, hypothesis: str, technique_id: s
                        hypothesis_id: str = "", log_source: str = "",
                        ingestion_diagnostics: str = "", hunter_name: str = "",
                        cover_style: str = "1", sigma_matched_count: int = 0,
-                       records_analyzed: int = 0) -> dict:
+                       records_analyzed: int = 0,
+                       hunt_started_at: str = "",
+                       hunt_completed_at: str = "") -> dict:
     """Write the final markdown threat hunt report to the shared reports
     volume. `title` may be left empty — the report will auto-derive a
     short title from technique/tactic/hypothesis_id rather than using
@@ -290,6 +361,8 @@ def write_hunt_report(hunt_id: str, title: str, hypothesis: str, technique_id: s
         ingestion_diagnostics=ingestion_diagnostics, hunter_name=hunter_name,
         cover_style=cover_style, sigma_matched_count=sigma_matched_count,
         records_analyzed=records_analyzed,
+        hunt_started_at=hunt_started_at,
+        hunt_completed_at=hunt_completed_at,
     )
     return {"report_path": path}
 

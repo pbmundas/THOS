@@ -1,0 +1,43 @@
+{
+  "case_id": "7745b254-ea38-48bc-9846-4044b84e5598",
+  "case_title": "1",
+  "examiner": "analyst",
+  "received_at": "2026-07-25T19:14:15.698930+00:00",
+  "acquired_from": "Windows",
+  "legal_authority": "NA",
+  "notes": "",
+  "evidence": [
+    {
+      "evidence_id": "E0001",
+      "original_name": "NTUSER slack.DAT",
+      "stored_name": "E0001_NTUSER slack.DAT",
+      "size_bytes": 4370432,
+      "sha256": "aff9ffc0922a33810e74404be5371acf2325a8ef8260c0b05ddeb744af114fa0",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "evidence_id": "E0002",
+      "original_name": "exec_sysmon_1_lolbin_renamed_regsvr32_scrobj.evtx",
+      "stored_name": "E0002_exec_sysmon_1_lolbin_renamed_regsvr32_scrobj.evtx",
+      "size_bytes": 69632,
+      "sha256": "4baa0bc603d1e8b50212e60931431c5c6f7bf35fcdedb80bf6ab1fc77907ec04",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "evidence_id": "E0003",
+      "original_name": "Remote_Pwd_Reset_RPC_Admin_Mimikatz_PostZeroLogon.pcapng",
+      "stored_name": "E0003_Remote_Pwd_Reset_RPC_Admin_Mimikatz_PostZeroLogon.pcapng",
+      "size_bytes": 18980,
+      "sha256": "6a11a675f6d4216b3770ee54731dc673609f96fee0a550936f842585f76da4f3",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "evidence_id": "E0004",
+      "original_name": "CredAccess_BackupMasterKey_LSARPC_43_RetrievePrivateData.pcapng",
+      "stored_name": "E0004_CredAccess_BackupMasterKey_LSARPC_43_RetrievePrivateData.pcapng",
+      "size_bytes": 5424,
+      "sha256": "139135166ab9e78d8cf5f1b1788315adbbd36c371ab920368ecd022e3c8719a5",
+      "content_type": "application/octet-stream"
+    }
+  ]
+}

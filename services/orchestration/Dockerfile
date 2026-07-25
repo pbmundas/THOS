@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /repo
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ewf-tools sleuthkit \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /repo/requirements.txt

@@ -1,0 +1,10 @@
+{"id":"attack-t1003","domain":"threat_hunting","query":"What is ATT&CK T1003 credential dumping and which defensive data is relevant?","expected_source_ids":["mitre_attack_enterprise"]}
+{"id":"attack-powershell","domain":"threat_detection","query":"Which ATT&CK technique covers PowerShell and what behavior should detection engineering consider?","expected_source_ids":["mitre_attack_enterprise","sigmahq_rules"]}
+{"id":"ir-lifecycle","domain":"incident_response","query":"How should incident response be integrated into cybersecurity risk management?","expected_source_ids":["nist_sp_800_61r3","nist_csf_2"]}
+{"id":"log-planning","domain":"log_analysis","query":"What are the core organizational practices for cybersecurity log management?","expected_source_ids":["nist_sp_800_92"]}
+{"id":"security-testing","domain":"red_teaming","query":"How should an organization plan and conduct technical security tests and assessments?","expected_source_ids":["nist_sp_800_115"]}
+{"id":"detection-rule","domain":"detection_engineering","query":"What metadata, log source, detection logic, false positives, and severity belong in a detection rule?","expected_source_ids":["sigmahq_rules"]}
+{"id":"kev-priority","domain":"advisories","query":"Which source authoritatively identifies vulnerabilities known to be exploited in the wild?","expected_source_ids":["cisa_kev"]}
+{"id":"purple-validation","domain":"purple_teaming","query":"How can ATT&CK-mapped adversary behavior and detection rules be used to validate defensive coverage?","expected_source_ids":["mitre_attack_enterprise","sigmahq_rules"]}
+{"id":"framework-govern","domain":"frameworks","query":"Which CSF 2.0 function addresses cybersecurity governance?","expected_source_ids":["nist_csf_2"]}
+{"id":"abstain-private-intel","domain":"threat_hunting","query":"What unpublished indicators did a private incident-response company observe today?","expected_source_ids":[],"should_abstain":true}

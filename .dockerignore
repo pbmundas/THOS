@@ -1,0 +1,9 @@
+.git
+.pytest_cache
+work
+**/__pycache__
+**/*.pyc
+services/ui/node_modules
+services/ui/dist
+data/log_sources
+data/reports

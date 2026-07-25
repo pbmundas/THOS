@@ -13,6 +13,7 @@ from services.verification.verifier import verify_findings_node
 from services.reporting.report import (
     _render_cover,
     _representative_log_sample,
+    write_report,
     write_report_node,
 )
 
@@ -124,6 +125,7 @@ def test_write_report_node_with_lifecycle_fields():
         
         state = {
             "hunt_id": "test-hunt-123",
+            "hunt_started_at": "2026-07-26T09:00:00+05:30",
             "hypothesis_text": "Hypothesis check",
             "technique_id": "T1059",
             "technique_name": "Command and Scripting Interpreter",
@@ -159,3 +161,37 @@ def test_write_report_node_with_lifecycle_fields():
         assert kwargs["guardrail_result"] == {"status": "clean", "scanned_records": 1, "hits": []}
         assert kwargs["case_id"] == "mock-case-123"
         assert kwargs["approval_id"] == "mock-approval-123"
+        assert kwargs["hunt_started_at"] == "2026-07-26T09:00:00+05:30"
+        assert kwargs["hunt_completed_at"]
+        assert result["hunt_completed_at"] == kwargs["hunt_completed_at"]
+
+
+def test_hunt_report_contains_local_audit_timestamps(tmp_path):
+    generated_at = datetime.datetime(
+        2026, 7, 26, 10, 15, 30,
+        tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30)),
+    )
+    with patch("services.reporting.report.REPORTS_DIR", str(tmp_path)), \
+         patch("services.reporting.report._local_now", return_value=generated_at):
+        path = write_report(
+            hunt_id="hunt-timing-1",
+            title="Timestamp Test",
+            hypothesis="Test report audit timestamps",
+            technique_id="T1059",
+            technique_name="Command and Scripting Interpreter",
+            tactic="Execution",
+            summary="No malicious activity found.",
+            queries="event_id:4688",
+            findings="No findings.",
+            recommendations="Continue monitoring.",
+            log_sample="[]",
+            hunt_started_at="2026-07-26T10:00:00+05:30",
+            hunt_completed_at="2026-07-26T10:15:25+05:30",
+        )
+
+    with open(path, encoding="utf-8") as report_file:
+        content = report_file.read()
+    assert "## Hunt Timing & Audit Trail" in content
+    assert "| Hunt started | 2026-07-26 10:00:00 +0530" in content
+    assert "| Hunt completed | 2026-07-26 10:15:25 +0530" in content
+    assert "| Report generated | 2026-07-26 10:15:30 +0530" in content

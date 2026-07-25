@@ -99,12 +99,25 @@ async def log_hunt_start(hunt_id: str, hunter_name: str, hypothesis_id: str | No
     )
 
 
-async def log_hunt_step(hunt_id: str, node_name: str, output: dict, duration_ms: int | None = None):
+async def log_hunt_step(
+    hunt_id: str,
+    node_name: str,
+    output: dict,
+    duration_ms: int | None = None,
+    agent_name: str | None = None,
+    model_tier: str | None = None,
+    model_name: str | None = None,
+):
     await asyncio.to_thread(
         _execute,
-        """INSERT INTO hunt_steps (hunt_id, node_name, output, status, duration_ms)
-           VALUES (%s, %s, %s, 'ok', %s)""",
-        (hunt_id, node_name, json.dumps(output, default=str), duration_ms),
+        """INSERT INTO hunt_steps (
+               hunt_id, node_name, output, status, duration_ms,
+               agent_name, model_tier, model_name
+           ) VALUES (%s, %s, %s, 'ok', %s, %s, %s, %s)""",
+        (
+            hunt_id, node_name, json.dumps(output, default=str), duration_ms,
+            agent_name, model_tier, model_name,
+        ),
     )
     await asyncio.to_thread(
         _execute,
@@ -239,18 +252,97 @@ async def ensure_agentic_schema() -> None:
         """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS failure_stage TEXT""",
         """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS failure_reason TEXT""",
         """ALTER TABLE hunts ADD COLUMN IF NOT EXISTS outcome JSONB NOT NULL DEFAULT '{}'::jsonb""",
+        """ALTER TABLE hunt_steps ADD COLUMN IF NOT EXISTS agent_name TEXT""",
+        """ALTER TABLE hunt_steps ADD COLUMN IF NOT EXISTS model_tier TEXT""",
+        """ALTER TABLE hunt_steps ADD COLUMN IF NOT EXISTS model_name TEXT""",
         """CREATE TABLE IF NOT EXISTS hunt_approvals (approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending', reason TEXT, approval_type TEXT NOT NULL DEFAULT 'hunt_review', artifact_hash TEXT, decided_by TEXT, decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'hunt_review'""",
         """ALTER TABLE hunt_approvals ADD COLUMN IF NOT EXISTS artifact_hash TEXT""",
         """CREATE TABLE IF NOT EXISTS finding_feedback (feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE CASCADE, finding_ref TEXT, rating TEXT NOT NULL, correction TEXT, analyst_name TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS cases (case_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', priority TEXT NOT NULL DEFAULT 'medium', assigned_to TEXT, summary TEXT, sla_due_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS case_events (event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE, actor TEXT, event_type TEXT NOT NULL, note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS forensic_cases (case_id UUID PRIMARY KEY, case_title TEXT NOT NULL, examiner TEXT NOT NULL, evidence_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, report_path TEXT, summary TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS forensic_steps (step_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES forensic_cases(case_id) ON DELETE CASCADE, stage TEXT NOT NULL, agent_name TEXT NOT NULL, activity TEXT, status TEXT NOT NULL DEFAULT 'ok', duration_ms INTEGER, model_tier TEXT, model_name TEXT, output JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id TEXT NOT NULL, rule_id TEXT NOT NULL, rule_title TEXT, rule_source TEXT, level TEXT, siem_type TEXT NOT NULL, status TEXT NOT NULL, events_matched INTEGER NOT NULL DEFAULT 0, matched_events JSONB NOT NULL DEFAULT '[]'::jsonb, analysis JSONB NOT NULL DEFAULT '{}'::jsonb, compiled_query TEXT, query_backend TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS query_backend TEXT",
+        "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS case_id UUID REFERENCES cases(case_id) ON DELETE SET NULL",
     )
     for statement in statements:
         await asyncio.to_thread(_execute, statement, ())
+
+
+async def create_forensic_case(
+    case_id: str, case_title: str, examiner: str, evidence_path: str,
+) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        INSERT INTO forensic_cases (case_id, case_title, examiner, evidence_path, status)
+        VALUES (%s, %s, %s, %s, 'queued')
+        ON CONFLICT (case_id) DO NOTHING
+        RETURNING *
+    """, (case_id, case_title, examiner, evidence_path))
+    return rows[0] if rows else None
+
+
+async def forensic_stage_started(case_id: str, stage: str) -> None:
+    await asyncio.to_thread(_execute, """
+        UPDATE forensic_cases
+        SET status = 'running', current_stage = %s, updated_at = now()
+        WHERE case_id = %s
+    """, (stage, case_id))
+
+
+async def log_forensic_step(case_id: str, event: dict) -> None:
+    await asyncio.to_thread(_execute, """
+        INSERT INTO forensic_steps (
+            case_id, stage, agent_name, activity, status, duration_ms,
+            model_tier, model_name, output
+        ) VALUES (%s, %s, %s, %s, 'ok', %s, %s, %s, %s)
+    """, (
+        case_id, event.get("stage"), event.get("agent_name"), event.get("activity"),
+        event.get("duration_ms"), event.get("model_tier"), event.get("model_name"),
+        json.dumps(event.get("output") or {}, default=str),
+    ))
+
+
+async def complete_forensic_case(
+    case_id: str,
+    status: str,
+    *,
+    report_path: str | None = None,
+    summary: str | None = None,
+    error_msg: str | None = None,
+) -> None:
+    await asyncio.to_thread(_execute, """
+        UPDATE forensic_cases
+        SET status = %s, current_stage = NULL, report_path = %s,
+            summary = %s, error_msg = %s, updated_at = now()
+        WHERE case_id = %s
+    """, (status, report_path, summary, error_msg, case_id))
+
+
+async def list_forensic_cases(limit: int = 100) -> list[dict]:
+    return await asyncio.to_thread(_fetch, """
+        SELECT case_id, case_title, examiner, evidence_path, status, current_stage,
+               report_path, summary, error_msg, created_at, updated_at
+        FROM forensic_cases ORDER BY created_at DESC LIMIT %s
+    """, (max(1, min(limit, 500)),))
+
+
+async def get_forensic_case(case_id: str) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        SELECT case_id, case_title, examiner, evidence_path, status, current_stage,
+               report_path, summary, error_msg, created_at, updated_at
+        FROM forensic_cases WHERE case_id = %s
+    """, (case_id,))
+    if not rows:
+        return None
+    steps = await asyncio.to_thread(_fetch, """
+        SELECT step_id, stage, agent_name, activity, status, duration_ms,
+               model_tier, model_name, output, created_at
+        FROM forensic_steps WHERE case_id = %s ORDER BY created_at, step_id
+    """, (case_id,))
+    return {**rows[0], "steps": steps}
 
 
 async def reconcile_incomplete_hunts() -> None:
@@ -322,6 +414,16 @@ async def list_hunts(limit: int = 100) -> list[dict]:
     """, (max(1, min(limit, 500)),))
 
 
+async def clear_hunt_history() -> dict:
+    """Remove hunt-run audit rows while leaving generated report files intact."""
+    rows = await asyncio.to_thread(
+        _fetch,
+        "DELETE FROM hunts RETURNING hunt_id",
+        (),
+    )
+    return {"cleared": len(rows), "hunt_ids": [str(row["hunt_id"]) for row in rows]}
+
+
 async def hunt_progress(hunt_id: str | None = None, active_only: bool = False) -> dict | None:
     where, params = "", ()
     if hunt_id:
@@ -338,7 +440,8 @@ async def hunt_progress(hunt_id: str | None = None, active_only: bool = False) -
         return None
     hunt = rows[0]
     steps = await asyncio.to_thread(_fetch, """
-        SELECT step_id, node_name, output, duration_ms, status, error_msg, created_at
+        SELECT step_id, node_name, agent_name, model_tier, model_name,
+               output, duration_ms, status, error_msg, created_at
         FROM hunt_steps WHERE hunt_id = %s ORDER BY created_at, step_id
     """, (hunt["hunt_id"],))
     return {**hunt, "steps": steps}
@@ -349,8 +452,8 @@ async def log_sigma_detection(result: dict) -> dict | None:
         INSERT INTO scheduled_sigma_detections (
             schedule_id, rule_id, rule_title, rule_source, level, siem_type,
             status, events_matched, matched_events, analysis, compiled_query,
-            query_backend, error_msg
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            query_backend, error_msg, case_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
     """, (
         result.get("schedule_id"), result.get("rule_id"), result.get("rule_title"),
@@ -358,7 +461,7 @@ async def log_sigma_detection(result: dict) -> dict | None:
         result.get("status"), int(result.get("events_matched", 0)),
         json.dumps(result.get("matched_events", []), default=str),
         json.dumps(result.get("analysis", {}), default=str), result.get("compiled_query"),
-        result.get("query_backend"), result.get("error"),
+        result.get("query_backend"), result.get("error"), result.get("case_id"),
     ))
     return rows[0] if rows else None
 

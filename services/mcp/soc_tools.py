@@ -114,7 +114,7 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     mode_text = ("locally evaluated because the source has no query engine" if siem_type in LOCAL_SOURCES
                  else "precompiled and executed in the SIEM; only matched events were returned")
     sigma_rule_text = (
-        f"# Sigma query execution — {rules_evaluated} applicable rule query/rules(s) {mode_text}; "
+        f"# Detection query execution — {rules_evaluated} applicable rule query/rules(s) {mode_text}; "
         f"{len(rule_matches)} rule(s) matched {len(sigma_refs)} record(s).\n"
     )
     if coverage.get("unsupported") or coverage.get("truncated") or coverage.get("errors"):

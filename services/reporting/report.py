@@ -42,6 +42,37 @@ REPORTS_DIR = os.environ.get("REPORTS_DIR", "/data/reports")
 MAX_TITLE_LEN = 90
 
 
+def _local_now() -> datetime.datetime:
+    """Return a timezone-aware timestamp in the host's local timezone."""
+    return datetime.datetime.now().astimezone()
+
+
+def _as_local_datetime(value, fallback: datetime.datetime | None = None) -> datetime.datetime:
+    """Normalize an ISO string or datetime into the local timezone."""
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            parsed = None
+    if not isinstance(parsed, datetime.datetime):
+        parsed = fallback or _local_now()
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    target_timezone = (
+        fallback.tzinfo
+        if isinstance(fallback, datetime.datetime) and fallback.tzinfo is not None
+        else _local_now().tzinfo
+    )
+    return parsed.astimezone(target_timezone)
+
+
+def _format_local_timestamp(value, fallback: datetime.datetime | None = None) -> str:
+    timestamp = _as_local_datetime(value, fallback)
+    timezone_name = timestamp.tzname() or "local"
+    return f"{timestamp.strftime('%Y-%m-%d %H:%M:%S %z')} ({timezone_name})"
+
+
 def _short_title(hypothesis_id: str, technique_id: str, technique_name: str,
                   tactic: str, hypothesis: str) -> str:
     """Build a short, human-scannable report title. Never the full
@@ -69,11 +100,13 @@ COVER_EXECUTIVE_TEMPLATE = """\
 > ## 📋 Executive Summary Cover
 >
 > **What was investigated:** {technique_name_or_na} activity ({tactic_or_na}),
-> initiated {generated_human}.
+> initiated {hunt_started_at}.
 >
 > **Bottom line:** {bottom_line}
 >
 > **Analyst / requested by:** {hunter_name}
+> **Hunt completed:** {hunt_completed_at}
+> **Report generated:** {report_generated_at}
 > **Full technical detail follows below.**
 
 ---
@@ -92,7 +125,9 @@ COVER_ANALYST_TEMPLATE = """\
 > | Records analyzed | {records_analyzed} |
 > | Sigma rules matched | {sigma_rules_matched} |
 > | Sigma-flagged records | {sigma_matched_records} |
-> | Generated | {timestamp} UTC |
+> | Hunt started | {hunt_started_at} |
+> | Hunt completed | {hunt_completed_at} |
+> | Report generated | {report_generated_at} |
 
 ---
 
@@ -116,8 +151,11 @@ def _render_cover(cover_style: str, hunt_id: str, hypothesis_id: str, technique_
                    technique_name: str, tactic: str, log_source: str, hunter_name: str,
                    records_analyzed: int, sigma_rules_matched: int, sigma_matched_records: int,
                    findings: str, timestamp: datetime.datetime,
-                   verification_passed: bool = True) -> str:
-    generated_human = timestamp.strftime("%Y-%m-%d %H:%M UTC")
+                   verification_passed: bool = True,
+                   hunt_started_at=None, hunt_completed_at=None) -> str:
+    report_generated_at = _format_local_timestamp(timestamp)
+    hunt_started_at = _format_local_timestamp(hunt_started_at, timestamp)
+    hunt_completed_at = _format_local_timestamp(hunt_completed_at, timestamp)
     if str(cover_style) == "2":
         return COVER_ANALYST_TEMPLATE.format(
             hunt_id=hunt_id or "n/a",
@@ -129,12 +167,16 @@ def _render_cover(cover_style: str, hunt_id: str, hypothesis_id: str, technique_
             records_analyzed=records_analyzed,
             sigma_rules_matched=sigma_rules_matched,
             sigma_matched_records=sigma_matched_records,
-            timestamp=timestamp.isoformat(),
+            hunt_started_at=hunt_started_at,
+            hunt_completed_at=hunt_completed_at,
+            report_generated_at=report_generated_at,
         )
     return COVER_EXECUTIVE_TEMPLATE.format(
         technique_name_or_na=technique_name or "an unspecified technique",
         tactic_or_na=tactic or "unspecified tactic",
-        generated_human=generated_human,
+        hunt_started_at=hunt_started_at,
+        hunt_completed_at=hunt_completed_at,
+        report_generated_at=report_generated_at,
         bottom_line=(
             _bottom_line(findings, sigma_matched_records)
             if verification_passed
@@ -239,6 +281,16 @@ def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_
 
 REPORT_TEMPLATE = """\
 {cover}# Threat Hunt Report: {title}
+
+## Hunt Timing & Audit Trail
+
+| Event | Local timestamp |
+|---|---|
+| Hunt started | {hunt_started_at} |
+| Hunt completed | {hunt_completed_at} |
+| Report generated | {report_generated_at} |
+
+_Timestamps include the local UTC offset and timezone. Hunt completion marks the end of the investigative agent stages immediately before report rendering._
 
 ---
 
@@ -369,7 +421,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   reasoning_mode: str = "model",
                   reasoning_degraded: bool = False,
                   reasoning_attempts: int = 0,
-                  reasoning_error: str | None = None) -> str:
+                  reasoning_error: str | None = None,
+                  hunt_started_at=None,
+                  hunt_completed_at=None) -> str:
     """Render the markdown report and write it to disk. Returns the file path.
 
     `title`, if not given (empty string), is now derived automatically
@@ -379,7 +433,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     """
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    timestamp = datetime.datetime.utcnow()
+    timestamp = _local_now()
+    normalized_hunt_started_at = _as_local_datetime(hunt_started_at, timestamp)
+    normalized_hunt_completed_at = _as_local_datetime(hunt_completed_at, timestamp)
     resolved_title = title.strip() if title and title.strip() and title != hypothesis else ""
     if not resolved_title:
         resolved_title = _short_title(hypothesis_id, technique_id, technique_name, tactic, hypothesis)
@@ -387,7 +443,8 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     # Include a short hunt_id suffix so two reports generated in the same
     # second (same slug) never silently overwrite each other on disk.
     hunt_suffix = f"_{hunt_id[:8]}" if hunt_id else ""
-    filename = f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_{_slugify(resolved_title)}{hunt_suffix}.md"
+    utc_timestamp = timestamp.astimezone(datetime.timezone.utc)
+    filename = f"{utc_timestamp.strftime('%Y%m%dT%H%M%SZ')}_{_slugify(resolved_title)}{hunt_suffix}.md"
     path = os.path.join(REPORTS_DIR, filename)
 
     cover = _render_cover(
@@ -397,6 +454,8 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         sigma_rules_matched=len(sigma_rule_matches or []), sigma_matched_records=sigma_matched_count,
         findings=findings, timestamp=timestamp,
         verification_passed=(verifier_result or {}).get("status", "passed") == "passed",
+        hunt_started_at=normalized_hunt_started_at,
+        hunt_completed_at=normalized_hunt_completed_at,
     )
     mitre_section = _render_mitre_section(technique_id)
     sigma_section = _render_sigma_section(sigma_rule_matches or [], sigma_matched_count, records_analyzed)
@@ -545,6 +604,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         title=resolved_title,
         hunt_id=hunt_id,
         timestamp=timestamp.isoformat(),
+        hunt_started_at=_format_local_timestamp(normalized_hunt_started_at),
+        hunt_completed_at=_format_local_timestamp(normalized_hunt_completed_at),
+        report_generated_at=_format_local_timestamp(timestamp),
         hypothesis_id=hypothesis_id or "n/a",
         log_source=log_source or "mock (synthetic logs)",
         technique_id=technique_id or "n/a",
@@ -609,6 +671,7 @@ async def write_report_node(state: dict) -> dict:
             "error": state.get("error") or "Report not generated because reasoning did not complete.",
         }
 
+    hunt_completed_at = _local_now().isoformat(timespec="seconds")
     path = write_report(
         hunt_id=state.get("hunt_id", ""),
         title="",  # always auto-derived now — see write_report docstring
@@ -645,8 +708,14 @@ async def write_report_node(state: dict) -> dict:
         reasoning_degraded=state.get("reasoning_degraded", False),
         reasoning_attempts=state.get("reasoning_attempts", 0),
         reasoning_error=state.get("reasoning_error"),
+        hunt_started_at=state.get("hunt_started_at"),
+        hunt_completed_at=hunt_completed_at,
     )
-    return {"report_path": path, "report_status": "generated"}
+    return {
+        "report_path": path,
+        "report_status": "generated",
+        "hunt_completed_at": hunt_completed_at,
+    }
 
 
 def list_reports() -> list[dict]:

@@ -26,7 +26,7 @@ _DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
 _AGENT_TIERS = {
     "query_gen": "query", "indicator_deriver": "fast", "communication": "fast",
-    "chat": "reasoning",
+    "chat": "fast",
     "supervisor": "reasoning", "reasoning": "reasoning", "coverage_gap": "reasoning",
     "verifier": "verifier", "detection_engineering": "coding", "guardrail": "guard",
 }
@@ -43,10 +43,10 @@ def target_for(agent: str) -> ModelTarget:
     suffix = tier.upper()
     runtime_model = str(get_value("models", "default_model", default="") or "").strip()
     configured_model = os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL)
-    # The settings-page default controls quality-sensitive reasoning/chat
-    # behavior. Query generation and lightweight extraction keep their
-    # dedicated low-latency models so changing the default cannot accidentally
-    # put the larger reasoning model back on either latency-critical path.
+    # The settings-page default controls quality-sensitive reasoning behavior.
+    # Query generation, Ask THOS, communication, and lightweight extraction keep
+    # their dedicated low-latency models so changing the default cannot
+    # accidentally put the larger reasoning model on a latency-critical path.
     selected_model = configured_model if tier in {"query", "fast"} else (runtime_model or configured_model)
     return ModelTarget(
         tier=tier,

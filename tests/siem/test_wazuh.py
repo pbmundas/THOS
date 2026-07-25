@@ -190,3 +190,58 @@ def test_fetch_logs_posts_only_to_configured_search_endpoint(monkeypatch):
     assert result["record_count"] == 1
     assert result["total_hits"] == 1
     assert result["logs"][0]["host"] == "linux-victim"
+
+
+def test_discover_fields_uses_read_only_field_capabilities(monkeypatch):
+    monkeypatch.setenv("WAZUH_INDEXER_URL", "https://wazuh.indexer:9200")
+    monkeypatch.setenv("WAZUH_INDEXER_USERNAME", "thos_reader")
+    monkeypatch.setenv("WAZUH_INDEXER_PASSWORD", "secret")
+    monkeypatch.setenv("WAZUH_INDEX_SOURCE", "both")
+    monkeypatch.setenv("WAZUH_VERIFY_SSL", "0")
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "fields": {
+                    "data.win.eventdata.commandLine": {
+                        "keyword": {"type": "keyword", "searchable": True},
+                    },
+                    "data.audit.exe": {
+                        "keyword": {"type": "keyword", "searchable": True},
+                    },
+                    "_id": {"_id": {"type": "_id", "searchable": True}},
+                }
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, **kwargs):
+            captured["url"] = url
+            captured["request"] = kwargs
+            return FakeResponse()
+
+    monkeypatch.setattr(wazuh.httpx, "Client", FakeClient)
+
+    fields = wazuh.discover_fields()
+
+    assert captured["url"].endswith(
+        "/wazuh-alerts-*,wazuh-archives-*/_field_caps"
+    )
+    assert captured["request"]["params"]["fields"] == "*"
+    assert [item["name"] for item in fields] == [
+        "data.audit.exe",
+        "data.win.eventdata.commandLine",
+    ]
