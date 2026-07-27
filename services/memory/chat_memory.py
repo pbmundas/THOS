@@ -51,6 +51,19 @@ def _clean_message(message: dict) -> dict | None:
             for item in sources[:8]
             if isinstance(item, dict) and item.get("id")
         ]
+    agents = message.get("agents")
+    if isinstance(agents, list):
+        cleaned["agents"] = [
+            {
+                "agent_id": str(item.get("agent_id", ""))[:120],
+                "agent_name": str(item.get("agent_name", ""))[:160],
+                "model_tier": str(item.get("model_tier", ""))[:40],
+                "model_name": str(item.get("model_name", ""))[:160],
+                "duration_ms": max(0, int(item.get("duration_ms") or 0)),
+            }
+            for item in agents[:8]
+            if isinstance(item, dict) and item.get("agent_name")
+        ]
     if message.get("error"):
         cleaned["error"] = True
     cleaned["created_at"] = str(message.get("created_at") or _now())

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowPathIcon, BeakerIcon, BookOpenIcon, CheckCircleIcon, ClockIcon,
   CloudArrowUpIcon, Cog6ToothIcon, CpuChipIcon, ExclamationTriangleIcon,
-  GlobeAltIcon, KeyIcon, PlusIcon, ShieldCheckIcon, TrashIcon,
+  GlobeAltIcon, KeyIcon, MagnifyingGlassIcon, PlusIcon, QueueListIcon, ShieldCheckIcon, TrashIcon,
   UserCircleIcon, UserGroupIcon,
 } from "@heroicons/react/24/outline";
 
@@ -16,13 +16,32 @@ async function api(path, options = {}) {
 const jsonOptions = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const CONNECTION_SIEMS = ["wazuh", "logrhythm", "splunk", "qradar", "folder"];
-const ALL_FEATURES = ["hunts", "forensics", "reports", "chat", "knowledge", "settings"];
+const ALL_FEATURES = ["hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings"];
 
 function scheduleLabel(item) {
   const count = Number(item.interval || 1);
   if (item.frequency === "minutes") return `Every ${count} minute${count === 1 ? "" : "s"}, anchored at ${item.time}`;
   if (item.frequency === "hourly") return `Every ${count} hour${count === 1 ? "" : "s"} at minute ${String(item.time || "00:00").slice(3)}`;
   return count === 1 ? `Once a day at ${item.time}` : `${count} times a day, starting at ${item.time}`;
+}
+
+function schedulePerformance(item) {
+  const stats = Object.values(item.last_result?.target_duration_stats || {});
+  const p50 = Math.max(0, ...stats.map((entry) => Number(entry.p50_duration_ms || 0)));
+  const p95 = Math.max(0, ...stats.map((entry) => Number(entry.p95_duration_ms || 0)));
+  const plan = item.last_result?.adaptive_plan;
+  const duration = (milliseconds) => {
+    const minutes = Math.round(milliseconds / 60000);
+    return minutes < 1 ? "<1m" : `${minutes}m`;
+  };
+  const parts = [];
+  if (p50) parts.push(`p50 ${duration(p50)}`);
+  if (p95) parts.push(`p95 ${duration(p95)}`);
+  if (plan) {
+    parts.push(`adaptive batch ${plan.adaptive_batch_size}`);
+    parts.push(`${plan.maintenance_window_minutes}m window`);
+  }
+  return parts.length ? ` · ${parts.join(" · ")}` : "";
 }
 
 function Notice({ type = "success", children }) {
@@ -70,7 +89,7 @@ function GeneralTab({ activeSources }) {
 
 function DetectionRulesTab({ activeSources }) {
   const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState("severity");
+  const [severity, setSeverity] = useState("all");
   const [data, setData] = useState({ items: [], total: 0, schedules: [] });
   const [time, setTime] = useState("02:00");
   const [frequency, setFrequency] = useState("daily");
@@ -79,9 +98,9 @@ function DetectionRulesTab({ activeSources }) {
   const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [notice, setNotice] = useState("");
   const load = useCallback(async () => {
-    try { setData(await api(`/api/settings/sigma?query=${encodeURIComponent(query)}&page_size=100&sort_by=${sortBy}`)); }
+    try { setData(await api(`/api/settings/sigma?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
     catch (error) { setNotice(error.message); }
-  }, [query, sortBy]);
+  }, [query, severity]);
   useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [load]);
   useEffect(() => { if (!activeSources.some((item) => item.id === siem)) setSiem(activeSources[0]?.id || "folder"); }, [activeSources, siem]);
   const toggle = async (rule) => {
@@ -97,6 +116,18 @@ function DetectionRulesTab({ activeSources }) {
       load();
     } catch (error) { setNotice(error.message); }
   };
+  const scheduleCatalog = async () => {
+    try {
+      const bounded = Math.max(1, Math.min(intervalMax, Number(interval) || 1));
+      await api("/api/settings/schedules/sigma", jsonOptions("POST", {
+        target_id: "__all_compatible__", title: "All schema-compatible Sigma rules",
+        schedule_scope: "catalog", time, frequency, interval: bounded, days,
+        enabled: true, siem_type: siem,
+      }));
+      setNotice(`Scheduled all schema-compatible Sigma rules in rotating batches on ${siem}.`);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
   const remove = async (id) => { await api(`/api/settings/schedules/sigma/${id}`, { method: "DELETE" }); load(); };
   return <div className="settings-stack">
     <section className="settings-card">
@@ -104,16 +135,81 @@ function DetectionRulesTab({ activeSources }) {
       {notice && <Notice type={notice.startsWith("Scheduled") ? "success" : "error"}>{notice}</Notice>}
       <div className="sigma-controls">
         <input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule ID, title, or ATT&CK tag…" />
-        <label>Sort<select value={sortBy} onChange={(event) => setSortBy(event.target.value)}><option value="severity">Severity</option><option value="title">Title</option></select></label>
+        <label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label>
         <label>Frequency<select value={frequency} onChange={(event) => { setFrequency(event.target.value); setInterval(1); }}><option value="minutes">Every N minutes</option><option value="hourly">Every N hours</option><option value="daily">N times per day</option></select></label>
         <label>{frequency === "daily" ? "Runs per day" : "Every"}<input type="number" min="1" max={intervalMax} value={interval} onChange={(event) => setInterval(event.target.value)} /></label>
         <label>First run time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label>
         <label>Active SIEM<select value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <DayPicker value={days} onChange={setDays} />
       </div>
+      <div className="settings-actions"><button className="primary-button" disabled={!days.length || !["wazuh", "splunk"].includes(siem)} onClick={scheduleCatalog}><ClockIcon /> Schedule all compatible rules</button></div>
       <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{rule.title}</strong><small>{rule.source} · {rule.severity || rule.level} severity · {rule.id}</small></div><button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.title}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
     <section className="settings-card"><h3>Scheduled detection validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{item.severity || "medium"} severity · {scheduleLabel(item)} · {item.siem_type} · {(item.days || []).map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No detection schedules configured.</p>}</div></section>
+  </div>;
+}
+
+function YaraRulesTab() {
+  const [query, setQuery] = useState("");
+  const [severity, setSeverity] = useState("all");
+  const [data, setData] = useState({ items: [], total: 0, schedules: [] });
+  const [path, setPath] = useState("/data/log_sources");
+  const [time, setTime] = useState("03:00");
+  const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [notice, setNotice] = useState("");
+  const [working, setWorking] = useState(false);
+  const load = useCallback(async () => {
+    try { setData(await api(`/api/settings/yara?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
+    catch (error) { setNotice(error.message); }
+  }, [query, severity]);
+  useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [load]);
+  const toggle = async (rule) => {
+    try { await api(`/api/settings/yara/${encodeURIComponent(rule.id)}`, jsonOptions("PUT", { enabled: !rule.enabled })); load(); }
+    catch (error) { setNotice(error.message); }
+  };
+  const scan = async (ruleId = null) => {
+    setWorking(true);
+    try {
+      const result = await api("/api/yara/scan", jsonOptions("POST", { path, recursive: true, rule_id: ruleId }));
+      setNotice(`YARA scanned ${result.files_scanned} file(s); ${result.match_count} match(es) found.`);
+    } catch (error) { setNotice(error.message); }
+    finally { setWorking(false); }
+  };
+  const schedule = async (rule) => {
+    try {
+      await api("/api/settings/schedules/yara", jsonOptions("POST", {
+        target_id: rule.id, title: rule.title, time, frequency: "daily",
+        interval: 1, days, enabled: true, siem_type: "folder", log_source_path: path,
+      }));
+      setNotice(`Scheduled ${rule.title} against ${path}.`);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
+  const scheduleBundle = async () => {
+    try {
+      await api("/api/settings/schedules/yara", jsonOptions("POST", {
+        target_id: "__all_enabled__", title: "All enabled YARA rules",
+        schedule_scope: "catalog", time, frequency: "daily", interval: 1,
+        days, enabled: true, siem_type: "folder", log_source_path: path,
+      }));
+      setNotice(`Scheduled the enabled YARA bundle against changed files under ${path}.`);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
+  const remove = async (id) => { await api(`/api/settings/schedules/yara/${id}`, { method: "DELETE" }); load(); };
+  return <div className="settings-stack">
+    <section className="settings-card">
+      <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>YARA rule catalog and scanning</h3><p>Compile enabled rules and scan managed forensic or local evidence with bounded file-size, file-count, and timeout controls.</p></div></div>
+      {notice && <Notice type={/scanned|Scheduled/.test(notice) ? "success" : "error"}>{notice}</Notice>}
+      <p className="settings-muted">
+        Managed community catalog: {data.catalog?.ready_rules || 0} ready rules from {data.catalog?.ready_files || 0} compatible files
+        {data.catalog?.invalid_files ? ` · ${data.catalog.invalid_files} incompatible upstream files quarantined` : ""}
+        {data.catalog?.compiled_at ? ` · compiled ${new Date(data.catalog.compiled_at).toLocaleString()}` : ""}.
+      </p>
+      <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button><button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button></div>
+      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{rule.title}</strong><small>{rule.source} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.title}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+    </section>
+    <section className="settings-card"><h3>Scheduled YARA scans</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{item.severity || "medium"} severity · {item.time} · {item.log_source_path} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No YARA schedules configured.</p>}</div></section>
   </div>;
 }
 
@@ -148,7 +244,7 @@ function KnowledgeTab() {
   </div>;
 }
 
-function HypothesisScheduleTab({ hypotheses, activeSources }) {
+function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
   const [schedules, setSchedules] = useState([]);
   const [severity, setSeverity] = useState("all");
   const [selectedTargets, setSelectedTargets] = useState([]);
@@ -183,7 +279,10 @@ function HypothesisScheduleTab({ hypotheses, activeSources }) {
   const toggleTarget = (id) => setSelectedTargets((current) => (
     current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
   ));
-  const selectSeverityGroup = () => setSelectedTargets(severityHypotheses.map((item) => item.id));
+  const allListedSelected = severityHypotheses.length > 0 && selectedTargets.length === severityHypotheses.length;
+  const toggleAllListed = () => setSelectedTargets(
+    allListedSelected ? [] : severityHypotheses.map((item) => item.id),
+  );
   const create = async () => {
     const first = hypotheses.find((item) => item.id === selectedTargets[0]);
     const groupSelected = selectedTargets.length > 1;
@@ -212,20 +311,27 @@ function HypothesisScheduleTab({ hypotheses, activeSources }) {
     } catch (error) { setNotice(error.message); }
   };
   const remove = async (id) => { await api(`/api/settings/schedules/hypothesis/${id}`, { method: "DELETE" }); load(); };
+  const applyRecommended = async () => {
+    try {
+      const result = await api("/api/settings/schedules/recommended", { method: "POST" });
+      setNotice(`Recommended load-balanced schedule created for ${result.hypothesis_count} hypotheses, Sigma, and YARA.`);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
   return <div className="settings-stack">
-    <section className="settings-card"><div className="settings-card-title"><span><ClockIcon /></span><div><h3>Hypothesis scheduler</h3><p>Select a severity type, then schedule one hypothesis, a subset, or the complete severity group. Group hunts run sequentially.</p></div></div>
+    <section className="settings-card"><div className="settings-card-title"><span><ClockIcon /></span><div><h3>Hypothesis scheduler</h3><p>Filter by severity, review the resulting hypotheses, select any subset or every listed item, then create one sequential group schedule.</p></div></div>
       {notice && <Notice type={notice.includes("created") ? "success" : "error"}>{notice}</Notice>}
       <div className="settings-form-grid"><label>Severity<select value={severity} onChange={(event) => { setSeverity(event.target.value); setSelectedTargets([]); }}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><label>Run time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><label>Active telemetry source<select value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div>
-      <div className="severity-selection-header"><div><strong>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</strong><small>{selectedTargets.length} of {severityHypotheses.length} selected</small></div><span><button className="secondary-button compact" type="button" onClick={selectSeverityGroup} disabled={!severityHypotheses.length}>{severity === "all" ? "Select all groups" : "Select severity group"}</button><button className="secondary-button compact" type="button" onClick={() => setSelectedTargets([])} disabled={!selectedTargets.length}>Clear selection</button></span></div>
+      <div className="severity-selection-header"><div><strong>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</strong><small>{selectedTargets.length} of {severityHypotheses.length} listed hypotheses selected</small></div><span><button className="secondary-button compact" type="button" onClick={toggleAllListed} disabled={!severityHypotheses.length}>{allListedSelected ? "Clear all listed" : "Select all listed"}</button></span></div>
       <div className="hypothesis-schedule-selector">{hypothesisGroups.map((group) => <section className="hypothesis-schedule-group" key={group.severity}><header><span className={`detection-level level-${group.severity}`}>{group.severity}</span><small>{group.items.length}</small></header>{group.items.map((item) => <label key={item.id} className={selectedTargets.includes(item.id) ? "selected" : ""}><input type="checkbox" checked={selectedTargets.includes(item.id)} onChange={() => toggleTarget(item.id)} /><span><strong>{item.id} · {item.title}</strong><small>{item.tactic || "Unassigned tactic"} · {item.technique || "Unmapped"}</small></span></label>)}</section>)}{!severityHypotheses.length && <p className="settings-muted">No hypotheses are assigned to this severity type.</p>}</div>
       <DayPicker value={days} onChange={setDays} />
-      <div className="settings-actions"><button className="primary-button" disabled={!selectedTargets.length || !days.length} onClick={create}><PlusIcon /> Schedule selected ({selectedTargets.length})</button></div>
+      <div className="settings-actions"><button className="primary-button" disabled={!selectedTargets.length || !days.length} onClick={create}><PlusIcon /> Schedule selected ({selectedTargets.length})</button>{isAdmin && <button className="secondary-button" onClick={applyRecommended}><ClockIcon /> Apply recommended schedule</button>}</div>
     </section>
-    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
+    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}{schedulePerformance(item)}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
   </div>;
 }
 
-function SiemTab({ activeSources, onTelemetryChange }) {
+export function SiemTab({ activeSources, onTelemetryChange }) {
   const [siem, setSiem] = useState("wazuh");
   const [schema, setSchema] = useState({});
   const [values, setValues] = useState({});
@@ -265,7 +371,7 @@ function SiemTab({ activeSources, onTelemetryChange }) {
 }
 
 function IOCSourcesTab({ isAdmin }) {
-  const initial = { name: "", kind: "remote", location: "", confidence: "medium", enabled: true, time: "00:00", frequency: "daily", interval: 1, days: [0, 1, 2, 3, 4, 5, 6] };
+  const initial = { name: "", kind: "remote", location: "", category: "uncategorized", severity: "medium", confidence: "medium", enabled: true, time: "00:00", frequency: "daily", interval: 1, days: [0, 1, 2, 3, 4, 5, 6] };
   const [sources, setSources] = useState([]);
   const [form, setForm] = useState(initial);
   const [file, setFile] = useState(null);
@@ -280,7 +386,7 @@ function IOCSourcesTab({ isAdmin }) {
   const upload = async () => {
     if (!file || !form.name.trim()) return;
     const payload = new FormData();
-    payload.append("file", file); payload.append("name", form.name); payload.append("confidence", form.confidence);
+    payload.append("file", file); payload.append("name", form.name); payload.append("category", form.category); payload.append("severity", form.severity); payload.append("confidence", form.confidence);
     try { await api("/api/settings/ioc-sources/upload", { method: "POST", body: payload }); setNotice(`Uploaded ${file.name}. Use Refresh to normalize its indicators.`); setFile(null); load(); }
     catch (error) { setNotice(error.message); }
   };
@@ -297,7 +403,7 @@ function IOCSourcesTab({ isAdmin }) {
     finally { setWorking(""); }
   };
   const update = async (source, patch) => {
-    const payload = Object.fromEntries(["name", "kind", "location", "confidence", "enabled", "time", "frequency", "interval", "days"].map((key) => [key, patch[key] ?? source[key]]));
+    const payload = Object.fromEntries(["name", "kind", "location", "category", "severity", "confidence", "enabled", "time", "frequency", "interval", "days"].map((key) => [key, patch[key] ?? source[key]]));
     try { await api(`/api/settings/ioc-sources/${source.id}`, jsonOptions("PUT", payload)); load(); }
     catch (error) { setNotice(error.message); }
   };
@@ -313,6 +419,8 @@ function IOCSourcesTab({ isAdmin }) {
         <label>Source name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Approved intelligence feed" /></label>
         <label>Source type<select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option value="remote">Remote file URL</option><option value="local">Managed local path</option></select></label>
         <label>Location<input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder={form.kind === "remote" ? "https://provider.example/feed.json" : "/data/ioc_sources/source.dat"} /></label>
+        <label>Category<input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} placeholder="phishing, botnet-c2, malware" /></label>
+        <label>Severity<select value={form.severity} onChange={(event) => setForm({ ...form, severity: event.target.value })}><option>informational</option><option>low</option><option>medium</option><option>high</option><option>critical</option></select></label>
         <label>Confidence<select value={form.confidence} onChange={(event) => setForm({ ...form, confidence: event.target.value })}><option>low</option><option>medium</option><option>high</option></select></label>
         <label>Frequency<select value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value, interval: 1 })}><option value="minutes">Every N minutes</option><option value="hourly">Every N hours</option><option value="daily">N times per day</option></select></label>
         <label>{form.frequency === "daily" ? "Runs per day" : "Every"}<input type="number" min="1" max={form.frequency === "minutes" ? 59 : 24} value={form.interval} onChange={(event) => setForm({ ...form, interval: Number(event.target.value) })} /></label>
@@ -322,7 +430,7 @@ function IOCSourcesTab({ isAdmin }) {
       <div className="settings-actions"><button className="secondary-button" disabled={!sources.length || working} onClick={refreshAll}><ArrowPathIcon className={working === "all" ? "spinning" : ""} /> Fetch all now</button><button className="primary-button" disabled={!form.name.trim() || !form.location.trim() || !form.days.length} onClick={create}><PlusIcon /> Add source</button></div>
       <div className="upload-zone"><CloudArrowUpIcon /><div><strong>{file?.name || "Upload any IOC source file"}</strong><small>Text, CSV, JSON, STIX, XML, archives, or other provider file formats · bounded by server policy</small></div><label className="secondary-button">Choose file<input type="file" hidden onChange={(event) => setFile(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={!file || !form.name.trim()} onClick={upload}><CloudArrowUpIcon /> Upload source</button></div>
     </section>
-    <section className="settings-card"><h3>Configured intelligence sources</h3><div className="schedule-list">{sources.map((source) => <div key={source.id}><span><strong>{source.name}</strong><small>{source.kind} · {source.confidence} confidence · {scheduleLabel(source)} · {source.last_status || "never"}{source.last_result?.extracted_count != null ? ` · ${source.last_result.extracted_count} indicators` : ""}</small><code>{source.location}</code></span><button className={`switch ${source.enabled ? "on" : ""}`} onClick={() => update(source, { enabled: !source.enabled })} aria-label={`${source.enabled ? "Disable" : "Enable"} ${source.name}`}><span /></button><button className="secondary-button compact" disabled={Boolean(working)} onClick={() => refresh(source.id)}><ArrowPathIcon className={working === source.id ? "spinning" : ""} /> Refresh</button>{isAdmin && <button onClick={() => remove(source.id)}><TrashIcon /></button>}</div>)}{!sources.length && <p className="settings-muted">No IOC sources configured.</p>}</div></section>
+    <section className="settings-card"><h3>Configured intelligence sources</h3><div className="schedule-list">{sources.map((source) => <div key={source.id}><span><strong>{source.name}</strong><small>{source.category || "uncategorized"} · {source.severity || "medium"} severity · {source.confidence} confidence · {scheduleLabel(source)} · {source.last_status || "never"}{source.last_result?.extracted_count != null ? ` · ${source.last_result.extracted_count} indicators` : ""}</small><code>{source.location}</code></span><button className={`switch ${source.enabled ? "on" : ""}`} onClick={() => update(source, { enabled: !source.enabled })} aria-label={`${source.enabled ? "Disable" : "Enable"} ${source.name}`}><span /></button><button className="secondary-button compact" disabled={Boolean(working)} onClick={() => refresh(source.id)}><ArrowPathIcon className={working === source.id ? "spinning" : ""} /> Refresh</button>{isAdmin && <button onClick={() => remove(source.id)}><TrashIcon /></button>}</div>)}{!sources.length && <p className="settings-muted">No IOC sources configured.</p>}</div></section>
   </div>;
 }
 
@@ -330,6 +438,7 @@ function AccountTab({ session, onSessionChange }) {
   const [profile, setProfile] = useState({ display_name: session.display_name || "", email: session.email || "" });
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "", confirm: "" });
   const [avatar, setAvatar] = useState(null);
+  const [platformLogo, setPlatformLogo] = useState(null);
   const [notice, setNotice] = useState("");
   useEffect(() => { api("/api/account").then((item) => setProfile({ display_name: item.display_name || "", email: item.email || "" })).catch((error) => setNotice(error.message)); }, []);
   const save = async () => {
@@ -347,9 +456,25 @@ function AccountTab({ session, onSessionChange }) {
     try { await api("/api/account/password", jsonOptions("PUT", { current_password: passwords.current_password, new_password: passwords.new_password })); setPasswords({ current_password: "", new_password: "", confirm: "" }); setNotice("Account password changed."); }
     catch (error) { setNotice(error.message); }
   };
+  const uploadPlatformLogo = async () => {
+    if (!platformLogo || session.role !== "Admin") return;
+    const form = new FormData(); form.append("file", platformLogo);
+    try {
+      const branding = await api("/api/account/platform-logo", { method: "POST", body: form });
+      const next = { ...branding, logo_url: `${branding.logo_url}?v=${Date.now()}` };
+      setPlatformLogo(null); setNotice("Platform logo updated."); onSessionChange?.({ branding: next });
+    } catch (error) { setNotice(error.message); }
+  };
+  const resetPlatformLogo = async () => {
+    if (session.role !== "Admin") return;
+    try {
+      await api("/api/account/platform-logo", { method: "DELETE" });
+      setNotice("Platform logo reset."); onSessionChange?.({ branding: { logo_url: "" } });
+    } catch (error) { setNotice(error.message); }
+  };
   return <div className="settings-stack">
     <section className="settings-card"><div className="settings-card-title"><span><UserCircleIcon /></span><div><h3>Account profile</h3><p>Update the account name shown in the platform, email address, and avatar. The sign-in username remains unchanged.</p></div></div>
-      {notice && <Notice type={notice.includes("updated") || notice.includes("changed") ? "success" : "error"}>{notice}</Notice>}
+      {notice && <Notice type={notice.includes("updated") || notice.includes("changed") || notice.includes("reset") ? "success" : "error"}>{notice}</Notice>}
       <div className="account-profile-row">{session.avatar_url ? <img className="account-avatar" src={session.avatar_url} alt="" /> : <span className="avatar">{(profile.display_name || session.username || "U")[0].toUpperCase()}</span>}<div><strong>{session.username}</strong><small>Username cannot be changed · {session.role}</small></div></div>
       <div className="settings-form-grid"><label>Account name<input value={profile.display_name} onChange={(event) => setProfile({ ...profile, display_name: event.target.value })} /></label><label>Email address<input type="email" value={profile.email} onChange={(event) => setProfile({ ...profile, email: event.target.value })} /></label></div>
       <div className="settings-actions"><label className="secondary-button">Choose avatar<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(event) => setAvatar(event.target.files?.[0] || null)} /></label><button className="secondary-button" disabled={!avatar} onClick={upload}><CloudArrowUpIcon /> Upload avatar</button><button className="primary-button" disabled={!profile.display_name.trim()} onClick={save}><CheckCircleIcon /> Save profile</button></div>
@@ -357,6 +482,86 @@ function AccountTab({ session, onSessionChange }) {
     <section className="settings-card"><div className="settings-card-title"><span><KeyIcon /></span><div><h3>Change password</h3><p>Confirm the current password and choose a new password with at least 10 characters.</p></div></div>
       <div className="settings-form-grid"><label>Current password<input type="password" autoComplete="current-password" value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} /></label><label>New password<input type="password" autoComplete="new-password" value={passwords.new_password} onChange={(event) => setPasswords({ ...passwords, new_password: event.target.value })} /></label><label>Confirm new password<input type="password" autoComplete="new-password" value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label></div>
       <div className="settings-actions"><button className="primary-button" disabled={!passwords.current_password || passwords.new_password.length < 10 || !passwords.confirm} onClick={changePassword}><KeyIcon /> Change password</button></div>
+    </section>
+    {session.role === "Admin" && <section className="settings-card"><div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>Platform logo</h3><p>Choose the compact logo shown in the top status area for every signed-in user.</p></div></div>
+      <div className="account-profile-row">{session.branding?.logo_url ? <img className="platform-logo-preview" src={session.branding.logo_url} alt="Current platform logo" /> : <span className="platform-logo-fallback"><ShieldCheckIcon /></span>}<div><strong>{platformLogo?.name || "Current platform identity"}</strong><small>PNG, JPEG, or WebP · maximum 2 MB</small></div></div>
+      <div className="settings-actions"><label className="secondary-button">Choose logo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => setPlatformLogo(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={!platformLogo} onClick={uploadPlatformLogo}><CloudArrowUpIcon /> Upload logo</button>{session.branding?.logo_url && <button className="secondary-button" onClick={resetPlatformLogo}><TrashIcon /> Reset logo</button>}</div>
+    </section>}
+  </div>;
+}
+
+function AuditLogsTab() {
+  const [hours, setHours] = useState(24);
+  const [level, setLevel] = useState("all");
+  const [query, setQuery] = useState("");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState("");
+  const [expanded, setExpanded] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setNotice("");
+    try {
+      const params = new URLSearchParams({ hours: String(hours), limit: "1000", level, query });
+      const payload = await api(`/api/audit/logs?${params.toString()}`);
+      setRows(Array.isArray(payload) ? payload : payload.items || []);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [hours, level, query]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(load, 300);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(load, 30_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const localTime = (value) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "Unknown" : parsed.toLocaleString();
+  };
+
+  return <div className="settings-stack">
+    <section className="settings-card audit-log-card">
+      <div className="settings-card-title">
+        <span><QueueListIcon /></span>
+        <div><h3>Audit logs</h3><p>Timestamped request, hunt, detection, forensic, and tool events for troubleshooting and workflow reconstruction.</p></div>
+      </div>
+      <div className="audit-toolbar">
+        <label className="audit-search"><span><MagnifyingGlassIcon /></span><input aria-label="Search audit logs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search service, action, actor, resource, or message" /></label>
+        <label>Period<select value={hours} onChange={(event) => setHours(Number(event.target.value))}><option value={24}>24 hours</option><option value={168}>7 days</option><option value={720}>30 days</option><option value={2160}>90 days</option></select></label>
+        <label>Level<select value={level} onChange={(event) => setLevel(event.target.value)}><option value="all">All levels</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select></label>
+        <button className="secondary-button" onClick={load} disabled={loading}><ArrowPathIcon className={loading ? "spinning" : ""} /> Refresh</button>
+      </div>
+      {notice && <Notice type="error">{notice}</Notice>}
+      <div className="audit-summary"><strong>{rows.length.toLocaleString()}</strong> events in the selected period <span>Auto-refreshes every 30 seconds</span></div>
+      <div className="audit-table-wrap">
+        <div className="audit-table audit-table-head"><span>Timestamp</span><span>Level</span><span>Source</span><span>Action and resource</span><span>Actor</span><span>Status / duration</span></div>
+        {rows.map((item) => {
+          const levelName = String(item.level || "INFO").toLowerCase();
+          const open = expanded === item.id;
+          return <div className={`audit-row-wrap ${open ? "expanded" : ""}`} key={`${item.service}-${item.id}-${item.timestamp}`}>
+            <button className="audit-table audit-row" onClick={() => setExpanded(open ? "" : item.id)}>
+              <time>{localTime(item.timestamp)}</time>
+              <span><i className={`audit-level ${levelName}`} />{levelName}</span>
+              <span><strong>{item.service}</strong><small>{item.category}</small></span>
+              <span><strong>{item.message || item.action}</strong><small>{item.action}{item.resource ? ` · ${item.resource}` : ""}</small></span>
+              <span>{item.actor || "system"}</span>
+              <span>{item.status_code || "—"}<small>{item.duration_ms != null ? `${Number(item.duration_ms).toLocaleString()} ms` : "No timing"}</small></span>
+            </button>
+            {open && <div className="audit-detail"><div><strong>Event ID</strong><code>{item.id}</code></div><div><strong>Context</strong><pre>{JSON.stringify(item.context || {}, null, 2)}</pre></div></div>}
+          </div>;
+        })}
+        {!loading && !rows.length && <div className="audit-empty">No audit events match these filters.</div>}
+        {loading && !rows.length && <div className="audit-empty"><ArrowPathIcon className="spinning" /> Loading audit timeline…</div>}
+      </div>
     </section>
   </div>;
 }
@@ -384,7 +589,7 @@ function UsersTab() {
   </div>;
 }
 
-export default function Settings({ hypotheses, session, activeSources, onTelemetryChange, onSessionChange }) {
+export default function Settings({ initialTab = "account", hypotheses, session, activeSources, onTelemetryChange, onSessionChange }) {
   const isAdmin = session.role === "Admin";
   const canConfigure = ["Admin", "SME"].includes(session.role);
   const canKnowledge = canConfigure || session.permissions?.includes("knowledge");
@@ -393,14 +598,16 @@ export default function Settings({ hypotheses, session, activeSources, onTelemet
     ...(canConfigure ? [
       { id: "general", label: "General", icon: Cog6ToothIcon },
       { id: "rules", label: "Detection rules", icon: ShieldCheckIcon },
+      { id: "yara", label: "YARA rules", icon: ShieldCheckIcon },
       { id: "ioc", label: "IOC sources", icon: GlobeAltIcon },
       { id: "schedules", label: "Hunt schedules", icon: ClockIcon },
-      { id: "siem", label: "SIEM & fields", icon: BeakerIcon },
+      { id: "audit", label: "Audit logs", icon: QueueListIcon },
     ] : []),
     ...(canKnowledge ? [{ id: "knowledge", label: "Knowledge base", icon: BookOpenIcon }] : []),
     ...(isAdmin ? [{ id: "users", label: "Users & roles", icon: UserGroupIcon }] : []),
   ], [canConfigure, canKnowledge, isAdmin]);
   const [tab, setTab] = useState("account");
+  useEffect(() => { if (tabs.some((item) => item.id === initialTab)) setTab(initialTab); }, [initialTab, tabs]);
   useEffect(() => { if (!tabs.some((item) => item.id === tab)) setTab("account"); }, [tabs, tab]);
   return <div className="page-wrap settings-page">
     <section className="page-heading"><div><span className="status-pill status-indigo"><Cog6ToothIcon /> Governed administration</span><h1>Platform configuration</h1><p>Manage account details, intelligence sources, runtime behavior, schedules, telemetry, knowledge, and role-based access.</p></div></section>
@@ -408,10 +615,11 @@ export default function Settings({ hypotheses, session, activeSources, onTelemet
       {tab === "account" && <AccountTab session={session} onSessionChange={onSessionChange} />}
       {tab === "general" && <GeneralTab activeSources={activeSources} />}
       {tab === "rules" && <DetectionRulesTab activeSources={activeSources} />}
+      {tab === "yara" && <YaraRulesTab />}
       {tab === "ioc" && <IOCSourcesTab isAdmin={isAdmin} />}
       {tab === "knowledge" && <KnowledgeTab />}
-      {tab === "schedules" && <HypothesisScheduleTab hypotheses={hypotheses} activeSources={activeSources} />}
-      {tab === "siem" && <SiemTab activeSources={activeSources} onTelemetryChange={onTelemetryChange} />}
+      {tab === "schedules" && <HypothesisScheduleTab hypotheses={hypotheses} activeSources={activeSources} isAdmin={isAdmin} />}
+      {tab === "audit" && <AuditLogsTab />}
       {tab === "users" && <UsersTab />}
     </main></div>
   </div>;

@@ -35,6 +35,8 @@ volumes:
   redis_data:
   sigmahq_rules:
   sigma_queries:
+  yara_community_rules:
+  yara_catalog:
   chroma_embedding_cache:
 
 services:
@@ -311,6 +313,55 @@ services:
   # ------------------------------------------------------------
   # 7. MCP Server — SOC Tools
   # ------------------------------------------------------------
+  yararules-init:
+    build:
+      context: .
+      dockerfile: services/detection/Dockerfile.yara-init
+    container_name: thos-yararules-init
+    restart: "no"
+    environment:
+      # Pinned for reproducible and reviewable deployments.
+      YARARULES_REF: ${YARARULES_REF:-0f93570194a80d2f2032869055808b0ddcdfb360}
+      YARARULES_MIN_FILES: ${YARARULES_MIN_FILES:-500}
+      YARARULES_VENDOR_DIR: /vendor
+      YARARULES_RULES_DIR: /rules
+    volumes:
+      - ./services/detection/yara_rules_community:/vendor:ro
+      - yara_community_rules:/rules
+    networks:
+      - thos-net
+    deploy:
+      resources:
+        limits:
+          cpus: "${YARARULES_INIT_CPU_LIMIT:-1}"
+          memory: ${YARARULES_INIT_MEM_LIMIT:-512m}
+
+  # Compile every compatible upstream file once. Invalid legacy files are
+  # quarantined in catalog metadata instead of breaking the usable corpus.
+  yara-catalog-init:
+    build:
+      context: .
+      dockerfile: services/detection/Dockerfile.yara-catalog-init
+    container_name: thos-yara-catalog-init
+    restart: "no"
+    environment:
+      YARARULES_RULES_DIR: /rules
+      YARARULES_MIN_FILES: ${YARARULES_MIN_FILES:-500}
+      YARA_CATALOG_DIR: /catalog
+    volumes:
+      - yara_community_rules:/rules:ro
+      - yara_catalog:/catalog
+    depends_on:
+      yararules-init:
+        condition: service_completed_successfully
+    networks:
+      - thos-net
+    deploy:
+      resources:
+        limits:
+          cpus: "${YARA_CATALOG_INIT_CPU_LIMIT:-2}"
+          memory: ${YARA_CATALOG_INIT_MEM_LIMIT:-2g}
+
   mcp:
     build:
       context: .
@@ -369,6 +420,13 @@ services:
       WAZUH_REQUEST_TIMEOUT_SECONDS: ${WAZUH_REQUEST_TIMEOUT_SECONDS:-30}
       WAZUH_MAX_RESULTS: ${WAZUH_MAX_RESULTS:-1000}
       SIGMAHQ_RULES_DIR: /repo/services/detection/sigma_rules_hq
+      YARA_LOCAL_RULES_DIR: /data/yara-local
+      YARARULES_RULES_DIR: /data/yara-community
+      YARA_CATALOG_DIR: /data/yara-catalog
+      YARARULES_MIN_FILES: ${YARARULES_MIN_FILES:-500}
+      YARARULES_MIN_READY_RULES: ${YARARULES_MIN_READY_RULES:-500}
+      YARA_MAX_FILE_BYTES: ${YARA_MAX_FILE_BYTES:-268435456}
+      YARA_SCAN_TIMEOUT_SECONDS: ${YARA_SCAN_TIMEOUT_SECONDS:-30}
       SIGMAHQ_MIN_RULES: ${SIGMAHQ_MIN_RULES:-2000}
       SIGMAHQ_REF: ${SIGMAHQ_REF:-282369fa76c5cd6103b055478fbaebec8530cfa5}
       SIGMA_QUERY_CATALOG_DIR: /data/sigma_queries
@@ -388,6 +446,9 @@ services:
       # corpus before MCP starts; MCP only receives a read-only view.
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
       - sigma_queries:/data/sigma_queries:ro
+      - ./services/detection/yara_rules:/data/yara-local:ro
+      - yara_community_rules:/data/yara-community:ro
+      - yara_catalog:/data/yara-catalog:ro
     deploy:
       resources:
         limits:
@@ -406,8 +467,10 @@ services:
         condition: service_completed_successfully
       sigma-query-init:
         condition: service_completed_successfully
+      yara-catalog-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-m", "services.detection.verify_sigmahq_rules", "--quiet"]
+      test: ["CMD-SHELL", "python -m services.detection.verify_sigmahq_rules --quiet && python -m services.detection.verify_yara_catalog --quiet"]
       interval: 30s
       timeout: 15s
       retries: 3
@@ -435,12 +498,24 @@ services:
       THOS_FAST_NUM_CTX: ${THOS_FAST_NUM_CTX:-4096}
       THOS_FAST_NUM_PREDICT: ${THOS_FAST_NUM_PREDICT:-512}
       THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-qwen3:4b}}
+      # The evidence prompt and completion share Ollama's context window.
+      # 8K can leave only ~1K output tokens, truncating structured JSON at a
+      # repeatable character offset before the final braces are emitted.
+      THOS_REASONING_NUM_CTX: ${THOS_REASONING_NUM_CTX:-16384}
+      THOS_REASONING_NUM_PREDICT: ${THOS_REASONING_NUM_PREDICT:-2048}
       OLLAMA_GENERATION_TIMEOUT_SECONDS: ${OLLAMA_GENERATION_TIMEOUT_SECONDS:-180}
       # Large evidence-grounded JSON responses on CPU can legitimately exceed
       # the generic 180s transport window. Let one attempt finish instead of
       # cancelling valid inference and multiplying latency across three strikes.
       THOS_REASONING_GENERATION_TIMEOUT_SECONDS: ${THOS_REASONING_GENERATION_TIMEOUT_SECONDS:-360}
       THOS_REASONING_KEEP_ALIVE: ${THOS_REASONING_KEEP_ALIVE:-30m}
+      # Point this at a second Ollama host or GPU worker to isolate scheduled
+      # reasoning from interactive hunts. The default preserves one-worker
+      # deployments until an operator provides the separate endpoint.
+      THOS_SCHEDULED_OLLAMA_HOST: ${THOS_SCHEDULED_OLLAMA_HOST:-http://ollama:11434}
+      THOS_SCHEDULED_MODEL: ${THOS_SCHEDULED_MODEL:-}
+      THOS_SCHEDULED_NUM_CTX: ${THOS_SCHEDULED_NUM_CTX:-16384}
+      THOS_SCHEDULED_NUM_PREDICT: ${THOS_SCHEDULED_NUM_PREDICT:-2048}
       OLLAMA_GENERATION_RETRIES: ${OLLAMA_GENERATION_RETRIES:-3}
       MAX_REASONING_FOLLOWUPS: ${MAX_REASONING_FOLLOWUPS:-1}
       MCP_SERVER_URL: http://mcp:8100/mcp
@@ -469,6 +544,13 @@ services:
       SIGMA_HUNT_MAX_RULES: ${SIGMA_HUNT_MAX_RULES:-64}
       SIGMA_QUERY_CONCURRENCY: ${SIGMA_QUERY_CONCURRENCY:-6}
       SIGMA_DEDUP_WINDOW_SECONDS: ${SIGMA_DEDUP_WINDOW_SECONDS:-3600}
+      YARA_LOCAL_RULES_DIR: /data/yara-local
+      YARARULES_RULES_DIR: /data/yara-community
+      YARA_CATALOG_DIR: /data/yara-catalog
+      YARARULES_MIN_FILES: ${YARARULES_MIN_FILES:-500}
+      YARARULES_MIN_READY_RULES: ${YARARULES_MIN_READY_RULES:-500}
+      YARA_MAX_FILE_BYTES: ${YARA_MAX_FILE_BYTES:-268435456}
+      YARA_SCAN_TIMEOUT_SECONDS: ${YARA_SCAN_TIMEOUT_SECONDS:-30}
       SIEM_SCHEMA_REFRESH_SECONDS: ${SIEM_SCHEMA_REFRESH_SECONDS:-604800}
     volumes:
       - ./data/reports:/data/reports
@@ -478,6 +560,9 @@ services:
       - ./data/runtime:/data/runtime
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
       - sigma_queries:/data/sigma_queries:ro
+      - ./services/detection/yara_rules:/data/yara-local:ro
+      - yara_community_rules:/data/yara-community:ro
+      - yara_catalog:/data/yara-catalog:ro
     deploy:
       resources:
         limits:
@@ -491,6 +576,8 @@ services:
       ollama-model-init:
         condition: service_completed_successfully
       sigma-query-init:
+        condition: service_completed_successfully
+      yara-catalog-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -511,12 +598,25 @@ services:
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8200
       OLLAMA_HOST: http://ollama:11434
+      THOS_SCHEDULED_OLLAMA_HOST: ${THOS_SCHEDULED_OLLAMA_HOST:-http://ollama:11434}
+      THOS_OLLAMA_MEMORY_BUDGET_GB: ${THOS_OLLAMA_MEMORY_BUDGET_GB:-8}
+      THOS_OLLAMA_MEMORY_OVERHEAD_FACTOR: ${THOS_OLLAMA_MEMORY_OVERHEAD_FACTOR:-4}
+      THOS_OLLAMA_METRICS_URL: ${THOS_OLLAMA_METRICS_URL:-}
+      THOS_OLLAMA_MEMORY_HIGH_RATIO: ${THOS_OLLAMA_MEMORY_HIGH_RATIO:-0.80}
+      THOS_OLLAMA_MEMORY_CRITICAL_RATIO: ${THOS_OLLAMA_MEMORY_CRITICAL_RATIO:-0.95}
+      THOS_SIEM_LATENCY_HIGH_MS: ${THOS_SIEM_LATENCY_HIGH_MS:-5000}
+      THOS_HUNT_QUEUE_HIGH: ${THOS_HUNT_QUEUE_HIGH:-1}
       THOS_RUNTIME_CONFIG: /data/runtime/config.json
+      THOS_SCHEDULED_SIGMA_CONCURRENCY: ${THOS_SCHEDULED_SIGMA_CONCURRENCY:-2}
+      THOS_SCHEDULED_YARA_CONCURRENCY: ${THOS_SCHEDULED_YARA_CONCURRENCY:-1}
       SIEM_SCHEMA_REFRESH_INTERVAL_HOURS: ${SIEM_SCHEMA_REFRESH_INTERVAL_HOURS:-168}
       SIEM_SCHEMA_REFRESH_RETRY_HOURS: ${SIEM_SCHEMA_REFRESH_RETRY_HOURS:-6}
       TZ: ${TZ:-Asia/Kolkata}
       SIGMAHQ_UI_RULES_DIR: /data/sigmahq
       SIGMA_LOCAL_UI_RULES_DIR: /data/sigma-local
+      YARA_LOCAL_RULES_DIR: /data/yara-local
+      YARARULES_RULES_DIR: /data/yara-community
+      YARA_CATALOG_DIR: /data/yara-catalog
       # Must match orchestrator's ORCHESTRATOR_API_KEY above — this is how
       # the chat UI authenticates to the orchestrator API as a client.
       ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-thos_change_me_orchestrator_key}
@@ -553,6 +653,9 @@ services:
       - ./data/threat_intel:/data/threat_intel
       - ./data/ioc_sources:/data/ioc_sources
       - ./services/detection/sigma_rules:/data/sigma-local:ro
+      - ./services/detection/yara_rules:/data/yara-local:ro
+      - yara_community_rules:/data/yara-community:ro
+      - yara_catalog:/data/yara-catalog:ro
       - sigmahq_rules:/data/sigmahq:ro
     deploy:
       resources:

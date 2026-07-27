@@ -1,5 +1,7 @@
+import asyncio
 from datetime import datetime
 
+from services.api import control_plane
 from services.api.control_plane import _schedule_is_due, _schema_refresh_is_due
 
 
@@ -48,3 +50,61 @@ def test_weekly_schema_refresh_is_due_only_for_live_siem():
     assert _schema_refresh_is_due(base, now)
     base["siem"]["wazuh"]["connection_status"] = "failed"
     assert not _schema_refresh_is_due(base, now)
+
+
+def test_scheduled_hypotheses_serialize_to_match_orchestrator_capacity(monkeypatch):
+    active = 0
+    maximum = 0
+
+    async def fake_execute(_item):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0)
+        active -= 1
+
+    async def run_all():
+        await asyncio.gather(
+            *(control_plane._execute_schedule({"kind": "hypothesis"}) for _ in range(4))
+        )
+
+    monkeypatch.setattr(control_plane, "_execute_schedule_unlocked", fake_execute)
+    asyncio.run(run_all())
+
+    assert maximum == 1
+
+
+def test_adaptive_batch_prioritizes_overdue_high_and_respects_pressure():
+    targets = [
+        {"id": "low-new", "severity": "low"},
+        {"id": "high-recent", "severity": "high"},
+        {"id": "critical-never", "severity": "critical"},
+        {"id": "high-old", "severity": "high"},
+    ]
+    item = {
+        "severity": "all",
+        "run_batch_size": 4,
+        "run_batch_max": 4,
+        "maintenance_window_minutes": 80,
+        "target_run_history": {
+            "high-recent": {"last_completed_at": "2026-07-26T10:00:00+05:30"},
+            "high-old": {"last_completed_at": "2026-07-20T10:00:00+05:30"},
+        },
+    }
+    duration_rows = [
+        {"hypothesis_id": target["id"], "p95_duration_ms": 20 * 60_000}
+        for target in targets
+    ]
+    selected, plan = control_plane._adaptive_hypothesis_targets(
+        item,
+        targets,
+        duration_rows,
+        [],
+        {"queue_depth": 1, "ollama_memory_ratio": 0.85, "siem_p95_ms": 7000},
+    )
+
+    assert [target["id"] for target in selected] == [
+        "critical-never", "high-old",
+    ]
+    assert plan["adaptive_batch_size"] == 2
+    assert plan["pressure_reasons"]

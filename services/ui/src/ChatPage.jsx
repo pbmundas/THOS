@@ -2,12 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ArrowPathIcon, ArrowsPointingInIcon, ArrowsPointingOutIcon,
   BookOpenIcon, ChatBubbleLeftRightIcon, MinusIcon, PaperAirplaneIcon, PlusIcon,
-  TrashIcon, WrenchScrewdriverIcon,
+  SparklesIcon, TrashIcon, WrenchScrewdriverIcon,
 } from "@heroicons/react/24/outline";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-const INTRO = { role: "assistant", content: "I’m the on-prem THOS assistant. Each conversation keeps temporary, session-scoped context so you can continue an investigation or open a separate thread." };
+const INTRO = { role: "assistant", content: "I’m Ask THOS, your on-prem investigation assistant. I can read authorized hunt and forensic state, explain agent progress, and delegate detailed evidence questions to specialist agents." };
 
 async function chatApi(path, options = {}) {
   const response = await fetch(path, options);
@@ -85,7 +85,7 @@ export default function ChatPage() {
       if (!conversationId) conversationId = await newConversation();
       const payload = await chatApi("/api/chat", jsonOptions("POST", { message: value, conversation_id: conversationId }));
       setActiveId(payload.conversation_id);
-      setMessages(payload.messages?.length ? payload.messages : [...optimistic, { role: "assistant", content: payload.answer, tools: payload.tools_used || [] }]);
+      setMessages(payload.messages?.length ? payload.messages : [...optimistic, { role: "assistant", content: payload.answer, tools: payload.tools_used || [], agents: payload.delegated_agents || [] }]);
       setConversations((current) => {
         const updated = { id: payload.conversation_id, title: payload.title || value.slice(0, 72), updated_at: new Date().toISOString() };
         return [updated, ...current.filter((item) => item.id !== updated.id)];
@@ -97,12 +97,12 @@ export default function ChatPage() {
     }
   };
 
-  if (!open) return <button className="chat-launcher" onClick={() => setOpen(true)}><span><ChatBubbleLeftRightIcon /></span><span><strong>Ask THOS</strong><small>Context memory + MCP tools</small></span></button>;
+  if (!open) return <button className="chat-launcher" onClick={() => setOpen(true)}><span><ChatBubbleLeftRightIcon /></span><span><strong>Ask THOS</strong><small>Investigation help + specialist agents</small></span></button>;
   return <aside className={`chat-drawer ${maximized ? "maximized" : ""}`} aria-label="THOS model assistant">
     <header><span className="chat-brand-icon"><ChatBubbleLeftRightIcon /></span><div><strong>THOS assistant</strong><small><i /> Session memory · MCP enabled</small></div><button onClick={() => setMaximized(!maximized)} title={maximized ? "Restore size" : "Maximize"}>{maximized ? <ArrowsPointingInIcon /> : <ArrowsPointingOutIcon />}</button><button onClick={() => { setOpen(false); setMaximized(false); }} title="Minimize"><MinusIcon /></button></header>
     <div className="chat-conversation-bar"><select aria-label="Chat conversation" value={activeId} disabled={loading || working} onChange={(event) => openConversation(event.target.value)}>{conversations.map((item) => <option key={item.id} value={item.id}>{item.title || "New conversation"}</option>)}</select><button title="New conversation" onClick={newConversation} disabled={working}><PlusIcon /></button><button title="Delete conversation" onClick={removeConversation} disabled={!activeId || working}><TrashIcon /></button></div>
-    <div className="chat-safety-note"><WrenchScrewdriverIcon /> Temporary context expires automatically; read-only tools are shown in responses.</div>
-    <div className="chat-messages">{messages.map((message, index) => <article className={`chat-message ${message.role} ${message.error ? "error" : ""}`} key={`${message.created_at || message.role}-${index}`}><span>{message.role === "assistant" ? "TH" : "YOU"}</span><div>{message.tools?.length > 0 && <small className="tool-chip"><WrenchScrewdriverIcon /> MCP: {message.tools.join(", ")}</small>}{message.sources?.length > 0 && <small className="tool-chip"><BookOpenIcon /> Product sources: {message.sources.map((source) => source.id).join(", ")}</small>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></article>)}{(working || loading) && <article className="chat-message assistant"><span>TH</span><div className="chat-thinking"><ArrowPathIcon className="spinning" /> {loading ? "Loading conversation…" : "The local model is reasoning and may call MCP tools…"}</div></article>}</div>
+    <div className="chat-safety-note"><WrenchScrewdriverIcon /> Authorized read-only investigation state · specialist delegation is shown in responses.</div>
+    <div className="chat-messages">{messages.map((message, index) => <article className={`chat-message ${message.role} ${message.error ? "error" : ""}`} key={`${message.created_at || message.role}-${index}`}><span>{message.role === "assistant" ? "TH" : "YOU"}</span><div>{message.tools?.length > 0 && <small className="tool-chip"><WrenchScrewdriverIcon /> Tools: {message.tools.join(", ")}</small>}{message.agents?.map((agent) => <small className="tool-chip specialist-chip" key={`${agent.agent_id}-${agent.duration_ms}`}><SparklesIcon /> {agent.agent_name} · {agent.model_name || "deterministic"}{agent.model_tier ? ` (${agent.model_tier} tier)` : ""} · {Number(agent.duration_ms || 0).toLocaleString()} ms</small>)}{message.sources?.length > 0 && <small className="tool-chip"><BookOpenIcon /> Product sources: {message.sources.map((source) => source.id).join(", ")}</small>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></article>)}{(working || loading) && <article className="chat-message assistant"><span>TH</span><div className="chat-thinking"><ArrowPathIcon className="spinning" /> {loading ? "Loading conversation…" : "Ask THOS is reviewing context and may delegate to a specialist…"}</div></article>}</div>
     <div className="chat-composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Continue this conversation or start a new one…" /><button className="primary-button" onClick={send} disabled={!input.trim() || working || loading} aria-label="Send message"><PaperAirplaneIcon /><span>Send</span></button></div>
   </aside>;
 }

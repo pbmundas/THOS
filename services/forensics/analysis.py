@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,9 @@ import tarfile
 import zipfile
 
 from services.detection import sigma_engine, sigmahq_engine
+from services.detection import yara_engine
 from services.detection.anomaly_scoring import score_rare_events
+from services.enrichment import ioc_management
 from services.siem import file_log_parser
 
 FORENSIC_ROOT = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic"))
@@ -165,6 +168,7 @@ def analyze_artifacts(verified: dict) -> dict:
             "sha256": evidence["sha256"],
             "extension": path.suffix.lower() or "(none)",
             "magic_hex": magic,
+            "path": str(path),
         }
         inventory.append(item)
         archive_entries = _archive_inventory(path)
@@ -213,11 +217,17 @@ def correlate_evidence(triage: dict) -> dict:
         | set(local_sigma.get("matched_record_indices", []))
     )
     indicators: dict[str, set[str]] = {name: set() for name in _IOC_PATTERNS}
+    indicator_refs: dict[str, set[str]] = {}
     suspicious = []
     for index, record in enumerate(records):
         text = " ".join(str(value) for value in record.values() if value)
         for name, pattern in _IOC_PATTERNS.items():
-            indicators[name].update(match.group(0) for match in pattern.finditer(text))
+            for match in pattern.finditer(text):
+                value = match.group(0).rstrip(".,;)]}").lower()
+                indicators[name].add(value)
+                indicator_refs.setdefault(value, set()).add(
+                    str(record.get("_record_ref", index))
+                )
         if _SUSPICIOUS.search(text):
             suspicious.append({
                 "ref": record.get("_record_ref", str(index)),
@@ -226,6 +236,141 @@ def correlate_evidence(triage: dict) -> dict:
                 "excerpt": str(record.get("detail", ""))[:500],
                 "basis": "matched a review keyword; not a final maliciousness verdict",
             })
+    yara_scan = yara_engine.scan_paths([
+        item["path"] for item in triage.get("inventory", []) if item.get("path")
+    ])
+    blocklist = ioc_management.load_blocklist().get("indicators", {})
+    network_entries = []
+    for value, metadata in blocklist.items():
+        if not isinstance(metadata, dict) or metadata.get("type") != "network":
+            continue
+        try:
+            network_entries.append((ipaddress.ip_network(value, strict=False), value, metadata))
+        except ValueError:
+            continue
+        if len(network_entries) >= 10_000:
+            break
+    ioc_matches = []
+    for indicator_type, values in indicators.items():
+        for value in values:
+            metadata = blocklist.get(value)
+            matched_value = value
+            if not isinstance(metadata, dict) and indicator_type == "ipv4":
+                try:
+                    address = ipaddress.ip_address(value)
+                    network_match = next(
+                        ((network, network_value, item) for network, network_value, item in network_entries if address in network),
+                        None,
+                    )
+                except ValueError:
+                    network_match = None
+                if network_match:
+                    _, matched_value, metadata = network_match
+            if not isinstance(metadata, dict):
+                continue
+            ioc_matches.append({
+                "indicator": value,
+                "matched_indicator": matched_value,
+                "type": indicator_type,
+                "category": metadata.get("category", "uncategorized"),
+                "severity": metadata.get("severity", "medium"),
+                "confidence": metadata.get("confidence", "medium"),
+                "sources": metadata.get("sources", []),
+                "last_seen": metadata.get("last_seen_by_thos", ""),
+                "evidence_refs": sorted(indicator_refs.get(value, set()))[:50],
+            })
+    rule_by_ref: dict[str, list[str]] = {}
+    for rule in sigmahq.get("rule_matches", []) + local_sigma.get("rule_matches", []):
+        title = str(rule.get("title") or rule.get("rule_id") or "Sigma rule")
+        for index in rule.get("matched_indices", []):
+            if isinstance(index, int) and 0 <= index < len(records):
+                ref = str(records[index].get("_record_ref", index))
+                rule_by_ref.setdefault(ref, []).append(title)
+    suspicious_refs = {str(item["ref"]): item for item in suspicious}
+    activity = []
+    for index in matched_indices:
+        if not 0 <= index < len(records):
+            continue
+        record = records[index]
+        ref = str(record.get("_record_ref", index))
+        keyword_hit = suspicious_refs.get(ref)
+        rules = sorted(set(rule_by_ref.get(ref, [])))
+        classification = "malicious" if keyword_hit and len(rules) >= 2 else "suspicious"
+        activity.append({
+            "ref": ref,
+            "classification": classification,
+            "confidence": "high" if classification == "malicious" else "medium",
+            "timestamp": record.get("timestamp"),
+            "host": record.get("host"),
+            "user": record.get("user"),
+            "event": record.get("event"),
+            "source_file": record.get("source_file"),
+            "basis": (
+                f"corroborated by {len(rules)} Sigma rule(s) and review behavior"
+                if classification == "malicious"
+                else f"matched Sigma rule(s): {', '.join(rules[:5])}"
+            ),
+            "sigma_rules": rules[:20],
+            "excerpt": str(record.get("detail", ""))[:500],
+        })
+    known_refs = {item["ref"] for item in activity}
+    for item in suspicious:
+        if str(item["ref"]) not in known_refs:
+            activity.append({
+                **item,
+                "classification": "suspicious",
+                "confidence": "low",
+            })
+    for result in yara_scan.get("results", []):
+        if not result.get("matches"):
+            continue
+        evidence = next(
+            (item for item in triage.get("inventory", []) if item.get("path") == result.get("path")),
+            {},
+        )
+        for match in result["matches"]:
+            severity = str((match.get("meta") or {}).get("severity") or "medium").lower()
+            activity.append({
+                "ref": str(evidence.get("evidence_id") or result.get("sha256")),
+                "classification": "malicious" if severity in {"critical", "high"} else "suspicious",
+                "confidence": "high" if severity in {"critical", "high"} else "medium",
+                "timestamp": None,
+                "host": None,
+                "user": None,
+                "event": "yara_match",
+                "source_file": evidence.get("original_name") or result.get("path"),
+                "basis": f"YARA rule {match.get('rule_id')} matched file SHA-256 {result.get('sha256')}",
+                "yara_rule": match.get("rule_id"),
+                "excerpt": json.dumps(match.get("strings", [])[:10], default=str)[:500],
+            })
+    for match in ioc_matches:
+        for reference in match.get("evidence_refs", [])[:20] or ["unscoped"]:
+            activity.append({
+                "ref": reference,
+                "classification": "suspicious",
+                "confidence": match.get("confidence", "medium"),
+                "timestamp": None,
+                "host": None,
+                "user": None,
+                "event": "threat_intelligence_match",
+                "source_file": None,
+                "basis": (
+                    f"{match['indicator']} matched {match['matched_indicator']} in "
+                    f"{len(match.get('sources', []))} managed IOC source(s)"
+                ),
+                "ioc": match["indicator"],
+                "excerpt": (
+                    f"Category={match.get('category')}; severity={match.get('severity')}; "
+                    f"last_seen={match.get('last_seen')}"
+                ),
+            })
+    sigma_matches = sigmahq.get("rule_matches", []) + local_sigma.get("rule_matches", [])
+    attack_techniques = sorted({
+        str(tag).split(".", 1)[1].upper()
+        for rule in sigma_matches
+        for tag in rule.get("tags", [])
+        if re.fullmatch(r"attack\.t\d{4}(?:\.\d{3})?", str(tag), re.IGNORECASE)
+    })
     return {
         "records_analyzed": len(records),
         "event_histogram": dict(Counter(str(item.get("event") or "unknown") for item in records).most_common(100)),
@@ -240,15 +385,25 @@ def correlate_evidence(triage: dict) -> dict:
             for index in matched_indices if 0 <= index < len(records)
         ],
         "anomaly_scores": score_rare_events(records)[:500],
+        "yara_scan": yara_scan,
+        "ioc_matches": ioc_matches[:1_000],
+        "attack_techniques": attack_techniques,
+        "activity_assessments": activity[:1_000],
     }
 
 
-def build_timeline(triage: dict) -> list[dict]:
+def build_timeline(triage: dict, correlation: dict | None = None) -> list[dict]:
+    assessments = {
+        str(item.get("ref")): item
+        for item in (correlation or {}).get("activity_assessments", [])
+    }
     timeline = []
     for record in triage.get("records", []):
         timestamp = record.get("timestamp")
         if not timestamp:
             continue
+        reference = str(record.get("_record_ref") or "")
+        assessment = assessments.get(reference, {})
         timeline.append({
             "timestamp": str(timestamp),
             "evidence_ref": record.get("_record_ref"),
@@ -257,5 +412,8 @@ def build_timeline(triage: dict) -> list[dict]:
             "event": record.get("event"),
             "source_file": record.get("source_file"),
             "detail": str(record.get("detail", ""))[:500],
+            "classification": assessment.get("classification", "unclassified"),
+            "confidence": assessment.get("confidence", ""),
+            "activity_basis": assessment.get("basis", ""),
         })
     return sorted(timeline, key=lambda item: item["timestamp"])[:10_000]

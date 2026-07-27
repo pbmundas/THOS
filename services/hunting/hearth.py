@@ -11,6 +11,9 @@ FALLBACK_HYPOTHESES below is used only if the KB hasn't been ingested yet
 (e.g. first boot before `docker compose run --rm kb-ingest` / the kb-ingest
 service has completed), so the platform still has *something* to show.
 """
+import json
+from pathlib import Path
+
 from services.siem.clients import get_or_create_collection
 
 FALLBACK_HYPOTHESES = [
@@ -41,6 +44,19 @@ FALLBACK_HYPOTHESES = [
     },
 ]
 
+_REQUIRED_GAP_PATH = Path(__file__).with_name("data") / "required_gap_hypotheses.json"
+
+
+def _load_required_gap_hypotheses() -> list[dict]:
+    try:
+        payload = json.loads(_REQUIRED_GAP_PATH.read_text(encoding="utf-8"))
+        return [item for item in payload if isinstance(item, dict) and item.get("id")]
+    except (OSError, ValueError):
+        return []
+
+
+REQUIRED_GAP_HYPOTHESES = _load_required_gap_hypotheses()
+
 
 def _meta_to_hypothesis(meta: dict) -> dict:
     return {
@@ -49,7 +65,16 @@ def _meta_to_hypothesis(meta: dict) -> dict:
         "tactic": meta.get("tactic", ""),
         "technique": meta.get("technique", ""),
         "text": meta.get("text", ""),
+        "severity": meta.get("severity", ""),
+        "category": meta.get("category", ""),
     }
+
+
+def _merge_required(items: list[dict]) -> list[dict]:
+    merged = {str(item.get("id")): item for item in items if item.get("id")}
+    for item in REQUIRED_GAP_HYPOTHESES:
+        merged[str(item["id"])] = item
+    return sorted(merged.values(), key=lambda item: str(item.get("id", "")))
 
 
 def list_hypotheses(tactic: str | None = None) -> list[dict]:
@@ -64,13 +89,18 @@ def list_hypotheses(tactic: str | None = None) -> list[dict]:
         results = FALLBACK_HYPOTHESES
         if tactic:
             results = [h for h in results if h["tactic"].lower() == tactic.lower()]
-        return results
+        return _merge_required(results)
 
     where = {"tactic": tactic} if tactic else None
     res = collection.get(where=where, include=["metadatas"])
     hypotheses = [_meta_to_hypothesis(m) for m in res.get("metadatas", [])]
-    hypotheses.sort(key=lambda h: h["id"])
-    return hypotheses
+    if tactic:
+        required = [
+            item for item in REQUIRED_GAP_HYPOTHESES
+            if str(item.get("tactic", "")).casefold() == tactic.casefold()
+        ]
+        return _merge_required([*hypotheses, *required])
+    return _merge_required(hypotheses)
 
 
 def get_hypothesis(hypothesis_id: str) -> dict | None:
@@ -81,6 +111,9 @@ def get_hypothesis(hypothesis_id: str) -> dict | None:
         if metas:
             return _meta_to_hypothesis(metas[0])
     for h in FALLBACK_HYPOTHESES:
+        if h["id"] == hypothesis_id:
+            return h
+    for h in REQUIRED_GAP_HYPOTHESES:
         if h["id"] == hypothesis_id:
             return h
     return None

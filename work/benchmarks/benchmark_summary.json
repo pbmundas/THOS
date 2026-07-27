@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-07-27T14:27:56.589000+00:00",
+  "historical": {
+    "historical_hunts": 36,
+    "completed_hunts": 22,
+    "completed_avg_ms": 640322.809,
+    "completed_median_ms": 741758.53,
+    "completed_p95_ms": 1253885.481
+  },
+  "hypotheses": {
+    "hypothesis_count": 422,
+    "sequential_total_ms": 505236520.269,
+    "sequential_total_hours": 140.343
+  },
+  "sigma": {
+    "rules": 2859,
+    "records": 14,
+    "cold_rule_load_ms": 7117.854,
+    "full_corpus_evaluation_ms": 589.227,
+    "avg_rule_evaluation_ms": 0.204288,
+    "p95_rule_evaluation_ms": 0.407474
+  },
+  "yara": {
+    "source": "https://github.com/Yara-Rules/rules",
+    "source_version": "Yara-Rules/rules managed corpus\n================================\n\nSource: https://github.com/Yara-Rules/rules\nCommit: 0f93570194a80d2f2032869055808b0ddcdfb360 (requested ref: 0f93570194a80d2f2032869055808b0ddcdfb360)\nFetched: 2026-07-27T07:29:54.776830+00:00\nRule files: 566\nLicense: GNU GPL v2; see LICENSE in this directory.\n",
+    "rule_files": 566,
+    "ready_files": 499,
+    "invalid_files": 47,
+    "ready_rules": 12698,
+    "invalid_rules": 89,
+    "compiled_at": "2026-07-27T07:32:45.778700+00:00",
+    "catalog_available": true,
+    "catalog_entries": 12787,
+    "sample_path": "/data/log_sources/forensic/2026-07-27/20260727-0001-For-testing-new-capabilities/E0011_CredAccess_BackupMasterKey_LSARPC_43_RetrievePrivateData.pcapng",
+    "sample_bytes": 5424,
+    "shared_bundle_scan_ms": 162.0,
+    "match_count": 3,
+    "note": "YARA evaluates the enabled rules as one compiled bundle. Schedule one catalog scan per evidence root; per-rule schedules repeat the same bundle scan."
+  },
+  "resources": {
+    "ollama_cpu_limit": "4 (compose default)",
+    "ollama_memory_limit": "8g (compose default)",
+    "orchestrator_cpu_limit": "2 (compose default)",
+    "orchestrator_memory_limit": "2g (compose default)",
+    "hunt_concurrency": 1,
+    "sigma_query_concurrency": 6,
+    "scheduled_sigma_concurrency": 2,
+    "scheduled_yara_concurrency": 1
+  }
+}

@@ -277,6 +277,21 @@ tools cannot silently fall back to `0 SigmaHQ rules`. For air-gapped deployment,
 run `python services/detection/fetch_sigmahq_rules.py --ref <commit>` on a
 connected review machine and commit the resulting directory.
 
+YARA follows the same governed corpus lifecycle. The one-shot
+`yararules-init` service populates a persistent volume from the exact
+`YARARULES_REF` commit of
+[`Yara-Rules/rules`](https://github.com/Yara-Rules/rules), and
+`yara-catalog-init` validates each upstream file before building one reusable
+compiled database. Compatible files remain available even when a legacy rule
+uses an unsupported module field or has invalid syntax; incompatible files are
+quarantined with their compiler error in the Configuration catalog. MCP,
+Orchestrator, and the UI mount the same read-only corpus and compiled catalog.
+Rules can be searched, severity-filtered, enabled/disabled, manually scanned,
+or scheduled. `YARARULES_MIN_FILES` and `YARARULES_MIN_READY_RULES` are
+fail-fast startup invariants. For offline deployment, place a reviewed corpus
+and matching `VERSION.txt` under
+`services/detection/yara_rules_community/`.
+
 Hunts execute independently of the browser stream and therefore continue when
 an analyst reloads or navigates away. Every run is retained in PostgreSQL with
 its last stage, terminal status, report path, and failure reason. The Reports
@@ -295,7 +310,6 @@ Upcoming enhancements include:
 - Google Chronicle Connector
 - Cortex XSIAM Connector
 - Sigma Rule Generation
-- YARA Rule Generation
 - IOC Enrichment
 - Threat Intelligence Integration
 - SOAR Playbooks
@@ -326,10 +340,10 @@ docker compose exec -T postgres psql -U thos -d thos_audit < db/migrations/002_a
 
 THOS remains fully on-premises and now extends its original hunt pipeline with:
 
-- **Supervisor and Hunt Memory:** plans each hunt and recalls recent completed hunts with similar ATT&CK context.
-- **Guardrail, Verifier, and Human Review:** screens untrusted telemetry, verifies citations, and records approval/case workflows for escalations.
-- **Coverage, IOC, and Anomaly Agents:** report ingestion gaps, match IOCs only against a local blocklist (`data/threat_intel/blocklist.json`), and surface rare event types.
-- **Detection Engineering:** creates experimental Sigma proposals for verifier-passed coverage gaps; approval can stage them in `data/detection_rule_proposals/`, never directly in live rules.
+- **Supervisor and Hunt Memory:** uses a structured local-model plan, recalls comparable completed hunts, and can make one bounded query refinement from intermediate findings.
+- **Layered Guardrail, Verifier, and Human Review:** canonicalizes encoded telemetry, sends ambiguous content to a dedicated adversarial classifier, quarantines high-risk reasoning fields, verifies citations, and records approval/case workflows.
+- **ATT&CK Coverage, IOC, and Anomaly Agents:** map required ATT&CK data sources to observed device/event categories, match IOCs only against a local blocklist (`data/threat_intel/blocklist.json`), and surface rare event types.
+- **Detection Engineering:** creates experimental detection-rule proposals for verifier-passed coverage gaps; approval can stage them in `data/detection_rule_proposals/`, never directly in live rules.
 - **Communication and Learning:** prepares audience-aware report summaries and captures analyst feedback. Export labelled examples with `GET /learning/feedback-export` for offline on-prem evaluation or fine-tuning.
 - **Performance Metrics:** `GET /hunts/{hunt_id}/metrics` reports per-node timings from the audit trail.
 
@@ -356,7 +370,7 @@ for continuous Sigma coverage:
 
 The gateway runs schema discovery and compilation every seven days for
 connection-tested live SIEMs. SMEs can also trigger the same governed operation
-from **Settings > SIEM & fields > Discover & compile**. Manual one-column CSV
+from **Integrations > SIEM > Available SIEM log fields**. Manual one-column CSV
 inventories remain available for air-gapped or least-privilege deployments that
 do not allow sample queries.
 
@@ -390,6 +404,12 @@ source, and exposes the selected product sources in chat responses. Ask THOS is
 routed to the dedicated fast-tier local model so routine product and SOC
 questions do not consume the larger hunt-reasoning tier.
 
+Ask THOS is also an authorized investigation-assistance agent. It can read
+persisted hunt and forensic state, agent stages, model metadata, and reports
+according to the signed-in user's role. Detailed evidence questions are
+delegated to the Hunt Investigation Specialist or Digital Forensic Specialist;
+the UI records the delegated agent, model tier/name, and duration.
+
 ## Digital forensic examination
 
 The **Forensics** menu accepts one or more logs, archives, documents, packet
@@ -405,11 +425,28 @@ and model metadata. These integrity-sensitive stages are deterministic and do
 not use a language model. Known logs use the same normalized analysis path as
 active SIEM hunts; unknown files receive bounded artifact triage. The
 orchestrator image includes `ewf-tools` and Sleuth Kit for E01/Ex01 and raw-image
-metadata. Missing or proprietary decoders are recorded as limitations.
+metadata. Enabled local and pinned community YARA rules scan managed evidence
+from a precompiled catalog with file-size, file-count, match-count, and timeout
+limits. Reports include suspicious or corroborated malicious activity
+assessments and a classification-aware timeline. Missing or proprietary
+decoders are recorded as limitations.
 
-The **Reports** page separates Hunt and Forensic records. SME administrators can
+The **Reports** page separates Hunt and Forensic records. Administrators can
 remove either report from the active library; removal is recoverable from the
 server-side `.trash` archive.
+
+## Security integrations and mixed-source attribution
+
+The **Integrations** page is the single configuration surface for SIEM,
+EDR/XDR, identity, cloud, email/SaaS, network/NDR, and generic JSON security
+sources. Direct integrations use a bounded read-only connector with server-side
+Bearer, API-key, Basic, or OAuth2 client-credential handling. Only successfully
+tested sources become selectable for hunts and schedules.
+
+When a SIEM query returns heterogeneous records, THOS adds source vendor,
+product, device type, event category, confidence, and attribution basis to each
+normalized record. Coverage assessment uses those fields together with the
+selected technique's ATT&CK data-source requirements.
 
 ## Governed cybersecurity knowledge and model adaptation
 

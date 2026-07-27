@@ -51,7 +51,7 @@ def _repair_references(findings: str, logs: list[dict]) -> tuple[str, list[str]]
     Numeric mistakes are clamped into the actual evidence range; malformed
     citations are re-grounded to the record with the largest literal token
     overlap. Repaired hard-evidence claims are downgraded to circumstantial and
-    still require analyst approval, but they no longer abort report generation.
+    require analyst review, but they no longer abort report generation.
     """
     repaired: list[str] = []
     output = []
@@ -110,26 +110,18 @@ async def verify_findings_node(state: HuntState) -> dict:
               "invalid_references": invalid_refs,
               "repaired_references": repaired_refs,
               "reason": "finding output had no verifiable citations" if no_citation else ("invalid record references" if invalid_refs else (f"repaired {len(repaired_refs)} invalid record reference(s) deterministically" if repaired_refs else "all cited references are in range"))}
-    approval_id = None
     case_id = None
-    approval_required = failed or degraded or bool(repaired_refs)
-    approval_reason = (
+    review_required = failed or degraded or bool(repaired_refs)
+    review_reason = (
         result["reason"] if failed
         else result["reason"] if repaired_refs
         else "Model-independent deterministic reasoning fallback was used after three model strikes"
     )
     if failed:
         findings += "\n\n- [circumstantial] Verifier warning: one or more finding citations could not be validated; analyst review is required."
-    if approval_required:
+    if review_required:
         try:
             from services.observability import audit
-            approval = await audit.create_approval(
-                state.get("hunt_id"),
-                approval_reason,
-            )
-            if approval:
-                approval_id = str(approval.get("approval_id"))
-            
             case = await audit.create_case(
                 state.get("hunt_id"),
                 f"Analyst review required: {state.get('technique_name') or 'THOS hunt'}",
@@ -143,7 +135,10 @@ async def verify_findings_node(state: HuntState) -> dict:
         except Exception:
             pass
 
-    return {"findings": findings, "verifier_result": result, "human_approval_required": approval_required,
-            "human_approval_status": "pending" if approval_required else None,
-            "escalation_reason": approval_reason if approval_required else None,
-            "approval_id": approval_id, "case_id": case_id}
+    return {
+        "findings": findings,
+        "verifier_result": result,
+        "analyst_review_required": review_required,
+        "review_reason": review_reason if review_required else None,
+        "case_id": case_id,
+    }

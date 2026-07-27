@@ -1,0 +1,2464 @@
+[
+  {
+    "id": "THOS-GAP-T1003-002",
+    "title": "Security Account Manager activity (T1003.002)",
+    "tactic": "Credential Access",
+    "technique": "T1003.002",
+    "text": "An adversary may be exhibiting Security Account Manager (T1003.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 13 live-schema-compatible Sigma detections tagged T1003.002; prioritize evidence patterns represented by: Antivirus - Password Dumper Signature; Possible Impacket SecretDump Remote Activity - Zeek; Transferring Files with Credential Data via Network Shares - Zeek; Possible Impacket SecretDump Remote Activity. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1003.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1003.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 13
+  },
+  {
+    "id": "THOS-GAP-T1003-004",
+    "title": "LSA Secrets activity (T1003.004)",
+    "tactic": "Credential Access",
+    "technique": "T1003.004",
+    "text": "An adversary may be exhibiting LSA Secrets (T1003.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1003.004; prioritize evidence patterns represented by: Possible Impacket SecretDump Remote Activity - Zeek; DPAPI Domain Backup Key Extraction; DPAPI Domain Master Key Backup Attempt; Possible Impacket SecretDump Remote Activity. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1003.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1003.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1003-005",
+    "title": "Cached Domain Credentials activity (T1003.005)",
+    "tactic": "Credential Access",
+    "technique": "T1003.005",
+    "text": "An adversary may be exhibiting Cached Domain Credentials (T1003.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1003.005; prioritize evidence patterns represented by: Credential Dumping Tools Service Execution - Security; Credential Dumping Tools Service Execution - System; Cred Dump Tools Dropped Files; HackTool - Credential Dumping Tools Named Pipe Created. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1003.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1003.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1007",
+    "title": "System Service Discovery activity (T1007)",
+    "tactic": "Discovery",
+    "technique": "T1007",
+    "text": "An adversary may be exhibiting System Service Discovery (T1007) behavior in this environment. Hunt the connected Wazuh telemetry with the 7 live-schema-compatible Sigma detections tagged T1007; prioritize evidence patterns represented by: Crontab Enumeration; ESXi Network Configuration Discovery Via ESXCLI; ESXi Storage Information Discovery Via ESXCLI; ESXi System Information Discovery Via ESXCLI. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1007"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1007"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 7
+  },
+  {
+    "id": "THOS-GAP-T1012",
+    "title": "Query Registry activity (T1012)",
+    "tactic": "Discovery",
+    "technique": "T1012",
+    "text": "An adversary may be exhibiting Query Registry (T1012) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1012; prioritize evidence patterns represented by: Azure AD Health Monitoring Agent Registry Keys Access; Azure AD Health Service Agents Registry Keys Access; SAM Registry Hive Handle Request; SysKey Registry Keys Access. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1012"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1012"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1014",
+    "title": "Rootkit activity (T1014)",
+    "tactic": "Stealth",
+    "technique": "T1014",
+    "text": "An adversary may be exhibiting Rootkit (T1014) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1014; prioritize evidence patterns represented by: Triple Cross eBPF Rootkit Install Commands. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1014"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1014"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1016",
+    "title": "System Network Configuration Discovery activity (T1016)",
+    "tactic": "Discovery",
+    "technique": "T1016",
+    "text": "An adversary may be exhibiting System Network Configuration Discovery (T1016) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1016; prioritize evidence patterns represented by: OpenCanary - SNMP OID Request; System Network Discovery - Linux; Cisco Discovery; Suspicious Network Connection to IP Lookup Service APIs. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1016"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1016"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1021-005",
+    "title": "VNC activity (T1021.005)",
+    "tactic": "Lateral Movement",
+    "technique": "T1021.005",
+    "text": "An adversary may be exhibiting VNC (T1021.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1021.005; prioritize evidence patterns represented by: Suspicious UltraVNC Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Lateral Movement"
+    ],
+    "all_techniques": [
+      "T1021.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1021.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1021-006",
+    "title": "Windows Remote Management activity (T1021.006)",
+    "tactic": "Lateral Movement",
+    "technique": "T1021.006",
+    "text": "An adversary may be exhibiting Windows Remote Management (T1021.006) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1021.006; prioritize evidence patterns represented by: Remote PowerShell / WinRM Lateral Movement; Potential Remote PowerShell Session Initiated; Remote PowerShell Session (PS Classic); Remote PowerShell Session (PS Module). Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Lateral Movement"
+    ],
+    "all_techniques": [
+      "T1021.006"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1021.006"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1027-001",
+    "title": "Binary Padding activity (T1027.001)",
+    "tactic": "Stealth",
+    "technique": "T1027.001",
+    "text": "An adversary may be exhibiting Binary Padding (T1027.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1027.001; prioritize evidence patterns represented by: Binary Padding - Linux; Failed Code Integrity Checks. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1027.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1027.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1027-005",
+    "title": "Indicator Removal from Tools activity (T1027.005)",
+    "tactic": "Stealth",
+    "technique": "T1027.005",
+    "text": "An adversary may be exhibiting Indicator Removal from Tools (T1027.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1027.005; prioritize evidence patterns represented by: Potential Secure Deletion with SDelete; HackTool - CrackMapExec PowerShell Obfuscation; PUA - DefenderCheck Execution; PUA - Potential PE Metadata Tamper Using Rcedit. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1027.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1027.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1027-009",
+    "title": "Embedded Payloads activity (T1027.009)",
+    "tactic": "Stealth",
+    "technique": "T1027.009",
+    "text": "An adversary may be exhibiting Embedded Payloads (T1027.009) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1027.009; prioritize evidence patterns represented by: Powershell Token Obfuscation - Process Creation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1027.009"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1027.009"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1027-011",
+    "title": "Fileless Storage activity (T1027.011)",
+    "tactic": "Stealth",
+    "technique": "T1027.011",
+    "text": "An adversary may be exhibiting Fileless Storage (T1027.011) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1027.011; prioritize evidence patterns represented by: Process Execution From Shared Memory Directory. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1027.011"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1027.011"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1033",
+    "title": "System Owner/User Discovery activity (T1033)",
+    "tactic": "Discovery",
+    "technique": "T1033",
+    "text": "An adversary may be exhibiting System Owner/User Discovery (T1033) behavior in this environment. Hunt the connected Wazuh telemetry with the 18 live-schema-compatible Sigma detections tagged T1033; prioritize evidence patterns represented by: Possible DCSync Attack; SharpHound Recon Sessions; System Owner or User Discovery - Linux; ESXi Network Configuration Discovery Via ESXCLI. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1033"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1033"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 18
+  },
+  {
+    "id": "THOS-GAP-T1036-004",
+    "title": "Masquerade Task or Service activity (T1036.004)",
+    "tactic": "Stealth",
+    "technique": "T1036.004",
+    "text": "An adversary may be exhibiting Masquerade Task or Service (T1036.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1036.004; prioritize evidence patterns represented by: Scheduled Task Creation Masquerading as System Processes. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1036.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1036.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1037-001",
+    "title": "Logon Script (Windows) activity (T1037.001)",
+    "tactic": "Persistence",
+    "technique": "T1037.001",
+    "text": "An adversary may be exhibiting Logon Script (Windows) (T1037.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1037.001; prioritize evidence patterns represented by: Potential Persistence Via Logon Scripts - CommandLine; Uncommon Userinit Child Process; Potential Persistence Via Logon Scripts - Registry. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1037.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1037.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1040",
+    "title": "Network Sniffing activity (T1040)",
+    "tactic": "Credential Access",
+    "technique": "T1040",
+    "text": "An adversary may be exhibiting Network Sniffing (T1040) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1040; prioritize evidence patterns represented by: Network Sniffing - Linux; Cisco Sniffing; Windows Pcap Drivers; Potential Packet Capture Activity Via Start-NetEventSession - ScriptBlock. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access",
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1040"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1040"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1053-002",
+    "title": "At activity (T1053.002)",
+    "tactic": "Execution",
+    "technique": "T1053.002",
+    "text": "An adversary may be exhibiting At (T1053.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1053.002; prioritize evidence patterns represented by: Remote Schedule Task Lateral Movement via ATSvc; Remote Schedule Task Lateral Movement via ITaskSchedulerService; Remote Schedule Task Lateral Movement via SASec; Scheduled Task/Job At. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution",
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1053.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1053.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1055-001",
+    "title": "Dynamic-link Library Injection activity (T1055.001)",
+    "tactic": "Privilege Escalation",
+    "technique": "T1055.001",
+    "text": "An adversary may be exhibiting Dynamic-link Library Injection (T1055.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1055.001; prioritize evidence patterns represented by: HackTool - Potential CobaltStrike Process Injection; ManageEngine Endpoint Central Dctask64.EXE Potential Abuse; Mavinject Inject DLL Into Running Process; Potential DLL Injection Or Execution Using Tracker.exe. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Privilege Escalation",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1055.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1055.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1055-009",
+    "title": "Proc Memory activity (T1055.009)",
+    "tactic": "Privilege Escalation",
+    "technique": "T1055.009",
+    "text": "An adversary may be exhibiting Proc Memory (T1055.009) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1055.009; prioritize evidence patterns represented by: ASLR Disabled Via Sysctl or Direct Syscall - Linux; Potential Linux Process Code Injection Via DD Utility. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Privilege Escalation",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1055.009"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1055.009"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1057",
+    "title": "Process Discovery activity (T1057)",
+    "tactic": "Discovery",
+    "technique": "T1057",
+    "text": "An adversary may be exhibiting Process Discovery (T1057) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1057; prioritize evidence patterns represented by: System Info Discovery via Sysinfo Syscall; Cisco Discovery; Suspicious Process Discovery With Get-Process; Recon Command Output Piped To Findstr.EXE. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1057"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1057"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1059-012",
+    "title": "Hypervisor CLI activity (T1059.012)",
+    "tactic": "Execution",
+    "technique": "T1059.012",
+    "text": "An adversary may be exhibiting Hypervisor CLI (T1059.012) behavior in this environment. Hunt the connected Wazuh telemetry with the 9 live-schema-compatible Sigma detections tagged T1059.012; prioritize evidence patterns represented by: ESXi Network Configuration Discovery Via ESXCLI; ESXi Admin Permission Assigned To Account Via ESXCLI; ESXi Storage Information Discovery Via ESXCLI; ESXi Syslog Configuration Change Via ESXCLI. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution"
+    ],
+    "all_techniques": [
+      "T1059.012"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1059.012"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 9
+  },
+  {
+    "id": "THOS-GAP-T1069",
+    "title": "Permission Groups Discovery activity (T1069)",
+    "tactic": "Discovery",
+    "technique": "T1069",
+    "text": "An adversary may be exhibiting Permission Groups Discovery (T1069) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1069; prioritize evidence patterns represented by: Malicious PowerShell Commandlets - PoshModule; Malicious PowerShell Commandlets - ScriptBlock; Malicious PowerShell Commandlets - ProcessCreation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1069"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1069"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1070-003",
+    "title": "Clear Command History activity (T1070.003)",
+    "tactic": "Stealth",
+    "technique": "T1070.003",
+    "text": "An adversary may be exhibiting Clear Command History (T1070.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1070.003; prioritize evidence patterns represented by: Linux Command History Tampering; Cisco Clear Logs; Clear PowerShell History - PowerShell Module; Clear PowerShell History - PowerShell. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1070.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1070.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1070-005",
+    "title": "Network Share Connection Removal activity (T1070.005)",
+    "tactic": "Stealth",
+    "technique": "T1070.005",
+    "text": "An adversary may be exhibiting Network Share Connection Removal (T1070.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1070.005; prioritize evidence patterns represented by: PowerShell Deleted Mounted Share; Unmount Share Via Net.EXE; Disable Administrative Share Creation at Startup; MaxMpxCt Registry Value Changed. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1070.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1070.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1070-006",
+    "title": "Timestomp activity (T1070.006)",
+    "tactic": "Stealth",
+    "technique": "T1070.006",
+    "text": "An adversary may be exhibiting Timestomp (T1070.006) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1070.006; prioritize evidence patterns represented by: File Time Attribute Change - Linux; Touch Suspicious Service File; Unauthorized System Time Modification; Powershell Timestomp. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1070.006"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1070.006"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1074",
+    "title": "Data Staged activity (T1074)",
+    "tactic": "Collection",
+    "technique": "T1074",
+    "text": "An adversary may be exhibiting Data Staged (T1074) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1074; prioritize evidence patterns represented by: Cisco Stage Data. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Collection"
+    ],
+    "all_techniques": [
+      "T1074"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1074"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1078-002",
+    "title": "Domain Accounts activity (T1078.002)",
+    "tactic": "Initial Access",
+    "technique": "T1078.002",
+    "text": "An adversary may be exhibiting Domain Accounts (T1078.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1078.002; prioritize evidence patterns represented by: Admin User Remote Logon; DMSA Service Account Created in Specific OUs - PowerShell; DMSA Link Attributes Modified; New DMSA Service Account Created in Specific OUs. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Initial Access",
+      "Persistence",
+      "Privilege Escalation",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1078.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1078.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1110-001",
+    "title": "Password Guessing activity (T1110.001)",
+    "tactic": "Credential Access",
+    "technique": "T1110.001",
+    "text": "An adversary may be exhibiting Password Guessing (T1110.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1110.001; prioritize evidence patterns represented by: Suspicious Rejected SMB Guest Logon From IP; Suspicious Connection to Remote Account; HackTool - Hydra Password Bruteforce Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1110.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1110.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1110-002",
+    "title": "Password Cracking activity (T1110.002)",
+    "tactic": "Credential Access",
+    "technique": "T1110.002",
+    "text": "An adversary may be exhibiting Password Cracking (T1110.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1110.002; prioritize evidence patterns represented by: HackTool - Hashcat Password Cracker Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1110.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1110.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1123",
+    "title": "Audio Capture activity (T1123)",
+    "tactic": "Collection",
+    "technique": "T1123",
+    "text": "An adversary may be exhibiting Audio Capture (T1123) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1123; prioritize evidence patterns represented by: OpenCanary - SIP Request; Audio Capture; Processes Accessing the Microphone and Webcam; Audio Capture via PowerShell. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Collection"
+    ],
+    "all_techniques": [
+      "T1123"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1123"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1124",
+    "title": "System Time Discovery activity (T1124)",
+    "tactic": "Discovery",
+    "technique": "T1124",
+    "text": "An adversary may be exhibiting System Time Discovery (T1124) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1124; prioritize evidence patterns represented by: Cisco Discovery; Discovery of a System Time; Use of W32tm as Timer. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1124"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1124"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1136-003",
+    "title": "Cloud Account activity (T1136.003)",
+    "tactic": "Persistence",
+    "technique": "T1136.003",
+    "text": "An adversary may be exhibiting Cloud Account (T1136.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1136.003; prioritize evidence patterns represented by: New Github Organization Member Added. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1136.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1136.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1176-001",
+    "title": "Browser Extensions activity (T1176.001)",
+    "tactic": "Persistence",
+    "technique": "T1176.001",
+    "text": "An adversary may be exhibiting Browser Extensions (T1176.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1176.001; prioritize evidence patterns represented by: Chromium Browser Instance Executed With Custom Extension; Suspicious Chromium Browser Instance Executed With Custom Extension. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1176.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1176.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1201",
+    "title": "Password Policy Discovery activity (T1201)",
+    "tactic": "Discovery",
+    "technique": "T1201",
+    "text": "An adversary may be exhibiting Password Policy Discovery (T1201) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1201; prioritize evidence patterns represented by: Password Policy Discovery - Linux; Cisco Discovery; Password Policy Enumerated; Password Policy Discovery With Get-AdDefaultDomainPasswordPolicy. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1201"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1201"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1204-001",
+    "title": "Malicious Link activity (T1204.001)",
+    "tactic": "Execution",
+    "technique": "T1204.001",
+    "text": "An adversary may be exhibiting Malicious Link (T1204.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1204.001; prioritize evidence patterns represented by: Symlink Etc Passwd; Suspicious ClickFix/FileFix Execution Pattern; Potential ClickFix Execution Pattern - Registry. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution"
+    ],
+    "all_techniques": [
+      "T1204.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1204.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1212",
+    "title": "Exploitation for Credential Access activity (T1212)",
+    "tactic": "Credential Access",
+    "technique": "T1212",
+    "text": "An adversary may be exhibiting Exploitation for Credential Access (T1212) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1212; prioritize evidence patterns represented by: Guacamole Two Users Sharing Session Anomaly; Audit CVE Event; Kerberos Manipulation; Suspicious NTLM Authentication on the Printer Spooler Service. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1212"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1212"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1213-003",
+    "title": "Code Repositories activity (T1213.003)",
+    "tactic": "Collection",
+    "technique": "T1213.003",
+    "text": "An adversary may be exhibiting Code Repositories (T1213.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1213.003; prioritize evidence patterns represented by: Bitbucket Full Data Export Triggered; Bitbucket Unauthorized Full Data Export Triggered; Github Delete Action Invoked; Github Outside Collaborator Detected. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Collection"
+    ],
+    "all_techniques": [
+      "T1213.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1213.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1216",
+    "title": "System Script Proxy Execution activity (T1216)",
+    "tactic": "Stealth",
+    "technique": "T1216",
+    "text": "An adversary may be exhibiting System Script Proxy Execution (T1216) behavior in this environment. Hunt the connected Wazuh telemetry with the 7 live-schema-compatible Sigma detections tagged T1216; prioritize evidence patterns represented by: AWL Bypass with Winrm.vbs and Malicious WsmPty.xsl/WsmTxt.xsl - File; Suspicious CustomShellHost Execution; Potential Manage-bde.wsf Abuse To Proxy Execution; Execute Code with Pester.bat as Parent. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1216"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1216"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 7
+  },
+  {
+    "id": "THOS-GAP-T1216-001",
+    "title": "PubPrn activity (T1216.001)",
+    "tactic": "Stealth",
+    "technique": "T1216.001",
+    "text": "An adversary may be exhibiting PubPrn (T1216.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1216.001; prioritize evidence patterns represented by: Launch-VsDevShell.PS1 Proxy Execution; Pubprn.vbs Proxy Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1216.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1216.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1217",
+    "title": "Browser Information Discovery activity (T1217)",
+    "tactic": "Discovery",
+    "technique": "T1217",
+    "text": "An adversary may be exhibiting Browser Information Discovery (T1217) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1217; prioritize evidence patterns represented by: Suspicious File Access to Browser Credential Storage; Automated Collection Bookmarks Using Get-ChildItem PowerShell; File And SubFolder Enumeration Via Dir Command; Suspicious Where Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1217"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1217"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1218-001",
+    "title": "Compiled HTML File activity (T1218.001)",
+    "tactic": "Stealth",
+    "technique": "T1218.001",
+    "text": "An adversary may be exhibiting Compiled HTML File (T1218.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1218.001; prioritize evidence patterns represented by: HH.EXE Execution; Remote CHM File Download/Execution Via HH.EXE; HTML Help HH.EXE Suspicious Child Process; Suspicious HH.EXE Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1218-002",
+    "title": "Control Panel activity (T1218.002)",
+    "tactic": "Stealth",
+    "technique": "T1218.002",
+    "text": "An adversary may be exhibiting Control Panel (T1218.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1218.002; prioritize evidence patterns represented by: Control Panel Items. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1218-003",
+    "title": "CMSTP activity (T1218.003)",
+    "tactic": "Stealth",
+    "technique": "T1218.003",
+    "text": "An adversary may be exhibiting CMSTP (T1218.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1218.003; prioritize evidence patterns represented by: DLL Loaded From Suspicious Location Via Cmspt.EXE; Outbound Network Connection Initiated By Cmstp.EXE; CMSTP Execution Process Access; CMSTP Execution Process Creation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1218-008",
+    "title": "Odbcconf activity (T1218.008)",
+    "tactic": "Stealth",
+    "technique": "T1218.008",
+    "text": "An adversary may be exhibiting Odbcconf (T1218.008) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1218.008; prioritize evidence patterns represented by: Driver/DLL Installation Via Odbcconf.EXE; Suspicious Driver/DLL Installation Via Odbcconf.EXE; Odbcconf.EXE Suspicious DLL Location; New DLL Registered Via Odbcconf.EXE. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.008"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.008"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1218-009",
+    "title": "Regsvcs/Regasm activity (T1218.009)",
+    "tactic": "Stealth",
+    "technique": "T1218.009",
+    "text": "An adversary may be exhibiting Regsvcs/Regasm (T1218.009) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1218.009; prioritize evidence patterns represented by: RegAsm.EXE Initiating Network Connection To Public IP; RegAsm.EXE Execution Without CommandLine Flags or Files; Potentially Suspicious Execution Of Regasm/Regsvcs With Uncommon Extension; Potentially Suspicious Execution Of Regasm/Regsvcs From Uncommon Location. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.009"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.009"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1218-013",
+    "title": "Mavinject activity (T1218.013)",
+    "tactic": "Stealth",
+    "technique": "T1218.013",
+    "text": "An adversary may be exhibiting Mavinject (T1218.013) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1218.013; prioritize evidence patterns represented by: Mavinject Inject DLL Into Running Process; Renamed Mavinject.EXE Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.013"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.013"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1218-014",
+    "title": "MMC activity (T1218.014)",
+    "tactic": "Stealth",
+    "technique": "T1218.014",
+    "text": "An adversary may be exhibiting MMC (T1218.014) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1218.014; prioritize evidence patterns represented by: MMC Loading Script Engines DLLs; MMC Executing Files with Reversed Extensions Using RTLO Abuse. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1218.014"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1218.014"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1220",
+    "title": "XSL Script Processing activity (T1220)",
+    "tactic": "Stealth",
+    "technique": "T1220",
+    "text": "An adversary may be exhibiting XSL Script Processing (T1220) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1220; prioritize evidence patterns represented by: WMIC Loading Scripting Libraries; Msxsl.EXE Execution; Remote XSL Execution Via Msxsl.EXE; Potential Remote SquiblyTwo Technique Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1220"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1220"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1222-001",
+    "title": "Windows Permissions activity (T1222.001)",
+    "tactic": "Defense Impairment",
+    "technique": "T1222.001",
+    "text": "An adversary may be exhibiting Windows Permissions (T1222.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1222.001; prioritize evidence patterns represented by: AD Object WriteDAC Access; Potentially Suspicious NTFS Symlink Behavior Modification; Suspicious Recursive Takeown. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1222.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1222.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1495",
+    "title": "Firmware Corruption activity (T1495)",
+    "tactic": "Impact",
+    "technique": "T1495",
+    "text": "An adversary may be exhibiting Firmware Corruption (T1495) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1495; prioritize evidence patterns represented by: Cisco Denial of Service. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1495"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1495"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1496",
+    "title": "Resource Hijacking activity (T1496)",
+    "tactic": "Impact",
+    "technique": "T1496",
+    "text": "An adversary may be exhibiting Resource Hijacking (T1496) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1496; prioritize evidence patterns represented by: Linux Crypto Mining Pool Connections; Linux Crypto Mining Indicators; Monero Crypto Coin Mining Pool Lookup; DNS Events Related To Mining Pools. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1496"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1496"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1499",
+    "title": "Endpoint Denial of Service activity (T1499)",
+    "tactic": "Impact",
+    "technique": "T1499",
+    "text": "An adversary may be exhibiting Endpoint Denial of Service (T1499) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1499; prioritize evidence patterns represented by: Potential Abuse of Linux Magic System Request Key. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1499"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1499"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1499-004",
+    "title": "Application or System Exploitation activity (T1499.004)",
+    "tactic": "Impact",
+    "technique": "T1499.004",
+    "text": "An adversary may be exhibiting Application or System Exploitation (T1499.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1499.004; prioritize evidence patterns represented by: Apache Segmentation Fault; Nginx Core Dump; Audit CVE Event. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1499.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1499.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1505-001",
+    "title": "SQL Stored Procedures activity (T1505.001)",
+    "tactic": "Persistence",
+    "technique": "T1505.001",
+    "text": "An adversary may be exhibiting SQL Stored Procedures (T1505.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1505.001; prioritize evidence patterns represented by: Suspicious SQL Query. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1505.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1505.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1505-002",
+    "title": "Transport Agent activity (T1505.002)",
+    "tactic": "Persistence",
+    "technique": "T1505.002",
+    "text": "An adversary may be exhibiting Transport Agent (T1505.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1505.002; prioritize evidence patterns represented by: MSExchange Transport Agent Installation - Builtin; Failed MSExchange Transport Agent Installation; MSExchange Transport Agent Installation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1505.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1505.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1505-005",
+    "title": "Terminal Services DLL activity (T1505.005)",
+    "tactic": "Persistence",
+    "technique": "T1505.005",
+    "text": "An adversary may be exhibiting Terminal Services DLL (T1505.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1505.005; prioritize evidence patterns represented by: Potential Suspicious Activity Using SeCEdit. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1505.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1505.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1518",
+    "title": "Software Discovery activity (T1518)",
+    "tactic": "Discovery",
+    "technique": "T1518",
+    "text": "An adversary may be exhibiting Software Discovery (T1518) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1518; prioritize evidence patterns represented by: HackTool - WinPwn Execution - ScriptBlock; Detected Windows Software Discovery - PowerShell; HackTool - WinPwn Execution; Detected Windows Software Discovery. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1518"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1518"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1529",
+    "title": "System Shutdown/Reboot activity (T1529)",
+    "tactic": "Impact",
+    "technique": "T1529",
+    "text": "An adversary may be exhibiting System Shutdown/Reboot (T1529) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1529; prioritize evidence patterns represented by: System Shutdown/Reboot - Linux; Potential Abuse of Linux Magic System Request Key; ESXi VM Kill Via ESXCLI; Cisco Denial of Service. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1529"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1529"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1542-001",
+    "title": "System Firmware activity (T1542.001)",
+    "tactic": "Persistence",
+    "technique": "T1542.001",
+    "text": "An adversary may be exhibiting System Firmware (T1542.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1542.001; prioritize evidence patterns represented by: UEFI Persistence Via Wpbbin - FileCreation; UEFI Persistence Via Wpbbin - ProcessCreation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1542.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1542.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1542-003",
+    "title": "Bootkit activity (T1542.003)",
+    "tactic": "Persistence",
+    "technique": "T1542.003",
+    "text": "An adversary may be exhibiting Bootkit (T1542.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1542.003; prioritize evidence patterns represented by: Potential Ransomware or Unauthorized MBR Tampering Via Bcdedit.EXE. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1542.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1542.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1543-002",
+    "title": "Systemd Service activity (T1543.002)",
+    "tactic": "Persistence",
+    "technique": "T1543.002",
+    "text": "An adversary may be exhibiting Systemd Service (T1543.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1543.002; prioritize evidence patterns represented by: Service Reload or Start - Linux; Systemd Service Creation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1543.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1543.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1546-001",
+    "title": "Change Default File Association activity (T1546.001)",
+    "tactic": "Persistence",
+    "technique": "T1546.001",
+    "text": "An adversary may be exhibiting Change Default File Association (T1546.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1546.001; prioritize evidence patterns represented by: Change Default File Association Via Assoc; Change Default File Association To Executable Via Assoc; Registry Modification of MS-settings Protocol Handler; Shell Open Registry Keys Manipulation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1546.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1546.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1546-002",
+    "title": "Screensaver activity (T1546.002)",
+    "tactic": "Persistence",
+    "technique": "T1546.002",
+    "text": "An adversary may be exhibiting Screensaver (T1546.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1546.002; prioritize evidence patterns represented by: Suspicious Screensaver Binary File Creation; Writing Local Admin Share; Suspicious ScreenSave Change by Reg.exe; Path To Screensaver Binary Modified. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1546.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1546.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1546-007",
+    "title": "Netsh Helper DLL activity (T1546.007)",
+    "tactic": "Persistence",
+    "technique": "T1546.007",
+    "text": "An adversary may be exhibiting Netsh Helper DLL (T1546.007) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1546.007; prioritize evidence patterns represented by: Potential Persistence Via Netsh Helper DLL; Potential Suspicious Activity Using SeCEdit; New Netsh Helper DLL Registered From A Suspicious Location; Potential Persistence Via Netsh Helper DLL - Registry. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1546.007"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1546.007"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1546-008",
+    "title": "Accessibility Features activity (T1546.008)",
+    "tactic": "Persistence",
+    "technique": "T1546.008",
+    "text": "An adversary may be exhibiting Accessibility Features (T1546.008) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1546.008; prioritize evidence patterns represented by: Potential Privilege Escalation Using Symlink Between Osk and Cmd; Sticky Key Like Backdoor Execution; Persistence Via Sticky Key Backdoor; Suspicious Debugger Registration Cmdline. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1546.008"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1546.008"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1546-011",
+    "title": "Application Shimming activity (T1546.011)",
+    "tactic": "Persistence",
+    "technique": "T1546.011",
+    "text": "An adversary may be exhibiting Application Shimming (T1546.011) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1546.011; prioritize evidence patterns represented by: Potential Shim Database Persistence via Sdbinst.EXE; Uncommon Extension Shim Database Installation Via Sdbinst.EXE; Potential Persistence Via AppCompat RegisterAppRestart Layer; Potential Persistence Via Shim Database Modification. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1546.011"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1546.011"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1547-002",
+    "title": "Authentication Package activity (T1547.002)",
+    "tactic": "Persistence",
+    "technique": "T1547.002",
+    "text": "An adversary may be exhibiting Authentication Package (T1547.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1547.002; prioritize evidence patterns represented by: Potential Suspicious Activity Using SeCEdit. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1547.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1547.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1547-014",
+    "title": "Active Setup activity (T1547.014)",
+    "tactic": "Persistence",
+    "technique": "T1547.014",
+    "text": "An adversary may be exhibiting Active Setup (T1547.014) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1547.014; prioritize evidence patterns represented by: Potential Suspicious Activity Using SeCEdit. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence",
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1547.014"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1547.014"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1548",
+    "title": "Abuse Elevation Control Mechanism activity (T1548)",
+    "tactic": "Privilege Escalation",
+    "technique": "T1548",
+    "text": "An adversary may be exhibiting Abuse Elevation Control Mechanism (T1548) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1548; prioritize evidence patterns represented by: Token Duplication / UAC Bypass Indicators; Suspicious Netlogon RPC Password Reset (Possible Zerologon); Linux Capabilities Discovery; Linux Doas Conf File Creation. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1548"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1548"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1548-001",
+    "title": "Setuid and Setgid activity (T1548.001)",
+    "tactic": "Privilege Escalation",
+    "technique": "T1548.001",
+    "text": "An adversary may be exhibiting Setuid and Setgid (T1548.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1548.001; prioritize evidence patterns represented by: Setuid and Setgid. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Privilege Escalation"
+    ],
+    "all_techniques": [
+      "T1548.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1548.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1550-003",
+    "title": "Pass the Ticket activity (T1550.003)",
+    "tactic": "Lateral Movement",
+    "technique": "T1550.003",
+    "text": "An adversary may be exhibiting Pass the Ticket (T1550.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1550.003; prioritize evidence patterns represented by: Uncommon Outbound Kerberos Connection; HackTool - Rubeus Execution - ScriptBlock; HackTool - KrbRelayUp Execution; HackTool - Rubeus Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Lateral Movement"
+    ],
+    "all_techniques": [
+      "T1550.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1550.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1552-002",
+    "title": "Credentials in Registry activity (T1552.002)",
+    "tactic": "Credential Access",
+    "technique": "T1552.002",
+    "text": "An adversary may be exhibiting Credentials in Registry (T1552.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1552.002; prioritize evidence patterns represented by: SAM Registry Hive Handle Request; Enumeration for Credentials in Registry; Enumeration for 3rd Party Creds From CLI; Registry Export of Third-Party Credentials. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1552.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1552.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1552-003",
+    "title": "Shell History activity (T1552.003)",
+    "tactic": "Credential Access",
+    "technique": "T1552.003",
+    "text": "An adversary may be exhibiting Shell History (T1552.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1552.003; prioritize evidence patterns represented by: Suspicious History File Operations - Linux; Cisco Show Commands Input. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1552.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1552.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1552-006",
+    "title": "Group Policy Preferences activity (T1552.006)",
+    "tactic": "Credential Access",
+    "technique": "T1552.006",
+    "text": "An adversary may be exhibiting Group Policy Preferences (T1552.006) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1552.006; prioritize evidence patterns represented by: Access To Potentially Sensitive Sysvol Files By Uncommon Applications; Findstr GPP Passwords; LSASS Process Reconnaissance Via Findstr.EXE; Permission Misconfiguration Reconnaissance Via Findstr.EXE. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1552.006"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1552.006"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1553-004",
+    "title": "Install Root Certificate activity (T1553.004)",
+    "tactic": "Defense Impairment",
+    "technique": "T1553.004",
+    "text": "An adversary may be exhibiting Install Root Certificate (T1553.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 7 live-schema-compatible Sigma detections tagged T1553.004; prioritize evidence patterns represented by: Install Root Certificate; Suspicious Package Installed - Linux; Cisco Crypto Commands; Active Directory Certificate Services Denied Certificate Enrollment Request. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1553.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1553.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 7
+  },
+  {
+    "id": "THOS-GAP-T1555-004",
+    "title": "Windows Credential Manager activity (T1555.004)",
+    "tactic": "Credential Access",
+    "technique": "T1555.004",
+    "text": "An adversary may be exhibiting Windows Credential Manager (T1555.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1555.004; prioritize evidence patterns represented by: Access To Windows Credential History File By Uncommon Applications; Access To Windows DPAPI Master Keys By Uncommon Applications; Suspicious Key Manager Access; Windows Credential Manager Access via VaultCmd. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1555.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1555.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1556-004",
+    "title": "Network Device Authentication activity (T1556.004)",
+    "tactic": "Credential Access",
+    "technique": "T1556.004",
+    "text": "An adversary may be exhibiting Network Device Authentication (T1556.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1556.004; prioritize evidence patterns represented by: Cisco Dot1x Disabled. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access",
+      "Defense Impairment",
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1556.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1556.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1557-001",
+    "title": "Name Resolution Poisoning and SMB Relay activity (T1557.001)",
+    "tactic": "Collection",
+    "technique": "T1557.001",
+    "text": "An adversary may be exhibiting Name Resolution Poisoning and SMB Relay (T1557.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1557.001; prioritize evidence patterns represented by: Potential PetitPotam Attack Via EFS RPC Calls; Suspicious DNS Query Indicating Kerberos Coercion via DNS Object SPN Spoofing - Network; RottenPotato Like Attack Pattern; Local Privilege Escalation Indicator TabTip. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Collection",
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1557.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1557.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1558",
+    "title": "Steal or Forge Kerberos Tickets activity (T1558)",
+    "tactic": "Credential Access",
+    "technique": "T1558",
+    "text": "An adversary may be exhibiting Steal or Forge Kerberos Tickets (T1558) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1558; prioritize evidence patterns represented by: Antivirus - Password Dumper Signature; Replay Attack Detected; HackTool - Mimikatz Kirbi File Creation; Uncommon Outbound Kerberos Connection. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1558"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1558"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1558-003",
+    "title": "Kerberoasting activity (T1558.003)",
+    "tactic": "Credential Access",
+    "technique": "T1558.003",
+    "text": "An adversary may be exhibiting Kerberoasting (T1558.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1558.003; prioritize evidence patterns represented by: Kerberos Network Traffic RC4 Ticket Encryption; Kerberoasting Activity - Initial Query; Register new Logon Process by Rubeus; Uncommon Outbound Kerberos Connection - Security. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Credential Access"
+    ],
+    "all_techniques": [
+      "T1558.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1558.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1559-001",
+    "title": "Component Object Model activity (T1559.001)",
+    "tactic": "Execution",
+    "technique": "T1559.001",
+    "text": "An adversary may be exhibiting Component Object Model (T1559.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1559.001; prioritize evidence patterns represented by: DNS Query Request By Regsvr32.EXE; Network Connection Initiated By Regsvr32.EXE; CMSTP Execution Process Access. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution"
+    ],
+    "all_techniques": [
+      "T1559.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1559.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1563-002",
+    "title": "RDP Hijacking activity (T1563.002)",
+    "tactic": "Lateral Movement",
+    "technique": "T1563.002",
+    "text": "An adversary may be exhibiting RDP Hijacking (T1563.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1563.002; prioritize evidence patterns represented by: Potential MSTSC Shadowing Activity; Suspicious RDP Redirect Using TSCON. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Lateral Movement"
+    ],
+    "all_techniques": [
+      "T1563.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1563.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1564-001",
+    "title": "Hidden Files and Directories activity (T1564.001)",
+    "tactic": "Stealth",
+    "technique": "T1564.001",
+    "text": "An adversary may be exhibiting Hidden Files and Directories (T1564.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1564.001; prioritize evidence patterns represented by: Hidden Files and Directories; Hiding Files with Attrib.exe; Set Suspicious Files as System Files Using Attrib.EXE; Use Icacls to Hide File to Everyone. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1564.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1564.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1564-002",
+    "title": "Hidden Users activity (T1564.002)",
+    "tactic": "Stealth",
+    "technique": "T1564.002",
+    "text": "An adversary may be exhibiting Hidden Users (T1564.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1564.002; prioritize evidence patterns represented by: Hiding User Account Via SpecialAccounts Registry Key - CommandLine; Potential Suspicious Activity Using SeCEdit; Hiding User Account Via SpecialAccounts Registry Key. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1564.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1564.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1564-003",
+    "title": "Hidden Window activity (T1564.003)",
+    "tactic": "Stealth",
+    "technique": "T1564.003",
+    "text": "An adversary may be exhibiting Hidden Window (T1564.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 7 live-schema-compatible Sigma detections tagged T1564.003; prioritize evidence patterns represented by: Suspicious PowerShell WindowStyle Option; Potential Data Stealing Via Chromium Headless Debugging; Browser Execution In Headless Mode; File Download with Headless Browser. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1564.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1564.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 7
+  },
+  {
+    "id": "THOS-GAP-T1564-004",
+    "title": "NTFS File Attributes activity (T1564.004)",
+    "tactic": "Stealth",
+    "technique": "T1564.004",
+    "text": "An adversary may be exhibiting NTFS File Attributes (T1564.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 9 live-schema-compatible Sigma detections tagged T1564.004; prioritize evidence patterns represented by: Hidden Executable In NTFS Alternate Data Stream; Suspicious File Download From File Sharing Websites -  File Stream; Unusual File Download From File Sharing Websites - File Stream; HackTool Named File Stream Created. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1564.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1564.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 9
+  },
+  {
+    "id": "THOS-GAP-T1565-001",
+    "title": "Stored Data Manipulation activity (T1565.001)",
+    "tactic": "Impact",
+    "technique": "T1565.001",
+    "text": "An adversary may be exhibiting Stored Data Manipulation (T1565.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1565.001; prioritize evidence patterns represented by: Commands to Clear or Remove the Syslog - Builtin; History File Deletion; Potential Suspicious Change To Sensitive/Critical Files; Cisco Denial of Service. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1565.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1565.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1565-002",
+    "title": "Transmitted Data Manipulation activity (T1565.002)",
+    "tactic": "Impact",
+    "technique": "T1565.002",
+    "text": "An adversary may be exhibiting Transmitted Data Manipulation (T1565.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1565.002; prioritize evidence patterns represented by: Cisco Modify Configuration; ISATAP Router Address Was Set. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Impact"
+    ],
+    "all_techniques": [
+      "T1565.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1565.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1567-001",
+    "title": "Exfiltration to Code Repository activity (T1567.001)",
+    "tactic": "Exfiltration",
+    "technique": "T1567.001",
+    "text": "An adversary may be exhibiting Exfiltration to Code Repository (T1567.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1567.001; prioritize evidence patterns represented by: GitHub Repository Pages Site Changed to Public; Network Connection Initiated To DevTunnels Domain. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Exfiltration"
+    ],
+    "all_techniques": [
+      "T1567.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1567.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1574-005",
+    "title": "Executable Installer File Permissions Weakness activity (T1574.005)",
+    "tactic": "Execution",
+    "technique": "T1574.005",
+    "text": "An adversary may be exhibiting Executable Installer File Permissions Weakness (T1574.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1574.005; prioritize evidence patterns represented by: HackTool - SharpUp PrivEsc Tool Execution; Setup16.EXE Execution With Custom .Lst File. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1574.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1574.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1574-006",
+    "title": "Dynamic Linker Hijacking activity (T1574.006)",
+    "tactic": "Execution",
+    "technique": "T1574.006",
+    "text": "An adversary may be exhibiting Dynamic Linker Hijacking (T1574.006) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1574.006; prioritize evidence patterns represented by: Modification of ld.so.preload; Code Injection by ld.so Preload. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1574.006"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1574.006"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1574-007",
+    "title": "Path Interception by PATH Environment Variable activity (T1574.007)",
+    "tactic": "Execution",
+    "technique": "T1574.007",
+    "text": "An adversary may be exhibiting Path Interception by PATH Environment Variable (T1574.007) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1574.007; prioritize evidence patterns represented by: Trusted Path Bypass via Windows Directory Spoofing; Potential Suspicious Activity Using SeCEdit. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1574.007"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1574.007"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1574-011",
+    "title": "Services Registry Permissions Weakness activity (T1574.011)",
+    "tactic": "Execution",
+    "technique": "T1574.011",
+    "text": "An adversary may be exhibiting Services Registry Permissions Weakness (T1574.011) behavior in this environment. Hunt the connected Wazuh telemetry with the 5 live-schema-compatible Sigma detections tagged T1574.011; prioritize evidence patterns represented by: Service Registry Key Read Access Request; Service Registry Permissions Weakness Check; Suspicious Service DACL Modification Via Set-Service Cmdlet - PS; Abuse of Service Permissions to Hide Services Via Set-Service - PS. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Execution",
+      "Stealth"
+    ],
+    "all_techniques": [
+      "T1574.011"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1574.011"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 5
+  },
+  {
+    "id": "THOS-GAP-T1584",
+    "title": "Compromise Infrastructure activity (T1584)",
+    "tactic": "Resource Development",
+    "technique": "T1584",
+    "text": "An adversary may be exhibiting Compromise Infrastructure (T1584) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1584; prioritize evidence patterns represented by: Program Executions in Suspicious Folders; Suspicious External WebDAV Execution; Windows Update Error. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1584"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1584"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1587",
+    "title": "Develop Capabilities activity (T1587)",
+    "tactic": "Resource Development",
+    "technique": "T1587",
+    "text": "An adversary may be exhibiting Develop Capabilities (T1587) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1587; prioritize evidence patterns represented by: Program Executions in Suspicious Folders; Linux HackTool Execution; HackTool - PurpleSharp Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1587"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1587"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1587-001",
+    "title": "Malware activity (T1587.001)",
+    "tactic": "Resource Development",
+    "technique": "T1587.001",
+    "text": "An adversary may be exhibiting Malware (T1587.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 5 live-schema-compatible Sigma detections tagged T1587.001; prioritize evidence patterns represented by: ProxyLogon MSExchange OabVirtualDirectory; Uncommon File Created In Office Startup Folder; VHD Image Download Via Browser; PUA - CsExec Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1587.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1587.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 5
+  },
+  {
+    "id": "THOS-GAP-T1588-001",
+    "title": "Malware activity (T1588.001)",
+    "tactic": "Resource Development",
+    "technique": "T1588.001",
+    "text": "An adversary may be exhibiting Malware (T1588.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1588.001; prioritize evidence patterns represented by: Relevant ClamAV Message. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1588.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1588.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1588-002",
+    "title": "Tool activity (T1588.002)",
+    "tactic": "Resource Development",
+    "technique": "T1588.002",
+    "text": "An adversary may be exhibiting Tool (T1588.002) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1588.002; prioritize evidence patterns represented by: Hacktool Execution - Imphash; Hacktool Execution - PE Metadata; Renamed SysInternals DebugView Execution; Potential Execution of Sysinternals Tools. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1588.002"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1588.002"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1590",
+    "title": "Gather Victim Network Information activity (T1590)",
+    "tactic": "Reconnaissance",
+    "technique": "T1590",
+    "text": "An adversary may be exhibiting Gather Victim Network Information (T1590) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1590; prioritize evidence patterns represented by: PUA - Advanced IP/Port Scanner Update Check; Suspicious DNS Query for IP Lookup Service APIs. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Reconnaissance"
+    ],
+    "all_techniques": [
+      "T1590"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1590"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1590-001",
+    "title": "Domain Properties activity (T1590.001)",
+    "tactic": "Reconnaissance",
+    "technique": "T1590.001",
+    "text": "An adversary may be exhibiting Domain Properties (T1590.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1590.001; prioritize evidence patterns represented by: PUA - Crassus Execution. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Reconnaissance"
+    ],
+    "all_techniques": [
+      "T1590.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1590.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1592-004",
+    "title": "Client Configurations activity (T1592.004)",
+    "tactic": "Reconnaissance",
+    "technique": "T1592.004",
+    "text": "An adversary may be exhibiting Client Configurations (T1592.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1592.004; prioritize evidence patterns represented by: Print History File Contents; Access of Sudoers File Content; Linux Recon Indicators. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Reconnaissance"
+    ],
+    "all_techniques": [
+      "T1592.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1592.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1593-003",
+    "title": "Code Repositories activity (T1593.003)",
+    "tactic": "Reconnaissance",
+    "technique": "T1593.003",
+    "text": "An adversary may be exhibiting Code Repositories (T1593.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 2 live-schema-compatible Sigma detections tagged T1593.003; prioritize evidence patterns represented by: Suspicious Git Clone - Linux; Suspicious Git Clone. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Reconnaissance"
+    ],
+    "all_techniques": [
+      "T1593.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1593.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 2
+  },
+  {
+    "id": "THOS-GAP-T1608",
+    "title": "Stage Capabilities activity (T1608)",
+    "tactic": "Resource Development",
+    "technique": "T1608",
+    "text": "An adversary may be exhibiting Stage Capabilities (T1608) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1608; prioritize evidence patterns represented by: Suspicious Download from Office Domain; HybridConnectionManager Service Installation - Registry. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "low",
+    "all_tactics": [
+      "Resource Development"
+    ],
+    "all_techniques": [
+      "T1608"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1608"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1614-001",
+    "title": "System Language Discovery activity (T1614.001)",
+    "tactic": "Discovery",
+    "technique": "T1614.001",
+    "text": "An adversary may be exhibiting System Language Discovery (T1614.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1614.001; prioritize evidence patterns represented by: Console CodePage Lookup Via CHCP; System Language Discovery via Reg.Exe. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1614.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1614.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1615",
+    "title": "Group Policy Discovery activity (T1615)",
+    "tactic": "Discovery",
+    "technique": "T1615",
+    "text": "An adversary may be exhibiting Group Policy Discovery (T1615) behavior in this environment. Hunt the connected Wazuh telemetry with the 4 live-schema-compatible Sigma detections tagged T1615; prioritize evidence patterns represented by: Suspicious GPO Discovery With Get-GPO; Gpresult Display Group Policy Information; HackTool - SharpUp PrivEsc Tool Execution; Potential Reconnaissance Activity Via GatherNetworkInfo.VBS. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "medium",
+    "all_tactics": [
+      "Discovery"
+    ],
+    "all_techniques": [
+      "T1615"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1615"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 4
+  },
+  {
+    "id": "THOS-GAP-T1653",
+    "title": "Power Settings activity (T1653)",
+    "tactic": "Persistence",
+    "technique": "T1653",
+    "text": "An adversary may be exhibiting Power Settings (T1653) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1653; prioritize evidence patterns represented by: Mask System Power Settings Via Systemctl. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "high",
+    "all_tactics": [
+      "Persistence"
+    ],
+    "all_techniques": [
+      "T1653"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1653"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1685",
+    "title": "Disable or Modify Tools activity (T1685)",
+    "tactic": "Defense Impairment",
+    "technique": "T1685",
+    "text": "An adversary may be exhibiting Disable or Modify Tools (T1685) behavior in this environment. Hunt the connected Wazuh telemetry with the 63 live-schema-compatible Sigma detections tagged T1685; prioritize evidence patterns represented by: Bitbucket Global Secret Scanning Rule Deleted; Bitbucket Global SSH Settings Changed; Bitbucket Audit Log Configuration Updated; Bitbucket Project Secret Scanning Allowlist Added. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1685"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1685"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 63
+  },
+  {
+    "id": "THOS-GAP-T1685-001",
+    "title": "Disable or Modify Windows Event Log activity (T1685.001)",
+    "tactic": "Defense Impairment",
+    "technique": "T1685.001",
+    "text": "An adversary may be exhibiting Disable or Modify Windows Event Log (T1685.001) behavior in this environment. Hunt the connected Wazuh telemetry with the 8 live-schema-compatible Sigma detections tagged T1685.001; prioritize evidence patterns represented by: ETW Logging/Processing Option Disabled On IIS Server; HTTP Logging Disabled On IIS Server; New Module Module Added To IIS Server; Previously Installed IIS Module Was Removed. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1685.001"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1685.001"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 8
+  },
+  {
+    "id": "THOS-GAP-T1685-004",
+    "title": "Disable or Modify Linux Audit System Log activity (T1685.004)",
+    "tactic": "Defense Impairment",
+    "technique": "T1685.004",
+    "text": "An adversary may be exhibiting Disable or Modify Linux Audit System Log (T1685.004) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1685.004; prioritize evidence patterns represented by: Audit Rules Deleted Via Auditctl. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1685.004"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1685.004"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1685-005",
+    "title": "Clear Windows Event Logs activity (T1685.005)",
+    "tactic": "Defense Impairment",
+    "technique": "T1685.005",
+    "text": "An adversary may be exhibiting Clear Windows Event Logs (T1685.005) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1685.005; prioritize evidence patterns represented by: Security Eventlog Cleared; Eventlog Cleared; Important Windows Eventlog Cleared; Failed Event Log Clear Via WMI NTEventLogFile ClearEventLog. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1685.005"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1685.005"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1685-006",
+    "title": "Clear Linux or Mac System Logs activity (T1685.006)",
+    "tactic": "Defense Impairment",
+    "technique": "T1685.006",
+    "text": "An adversary may be exhibiting Clear Linux or Mac System Logs (T1685.006) behavior in this environment. Hunt the connected Wazuh telemetry with the 3 live-schema-compatible Sigma detections tagged T1685.006; prioritize evidence patterns represented by: Clear or Disable Kernel Ring Buffer Logs via Syslog Syscall; Linux Logs Clearing Attempts; Syslog Clearing or Removal Via System Utilities. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1685.006"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1685.006"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 3
+  },
+  {
+    "id": "THOS-GAP-T1686",
+    "title": "Disable or Modify System Firewall activity (T1686)",
+    "tactic": "Defense Impairment",
+    "technique": "T1686",
+    "text": "An adversary may be exhibiting Disable or Modify System Firewall (T1686) behavior in this environment. Hunt the connected Wazuh telemetry with the 6 live-schema-compatible Sigma detections tagged T1686; prioritize evidence patterns represented by: Bpfdoor TCP Ports Redirect; Modify System Firewall; Disable System Firewall; Disabling Security Tools - Builtin. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1686"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1686"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 6
+  },
+  {
+    "id": "THOS-GAP-T1686-003",
+    "title": "Windows Host Firewall activity (T1686.003)",
+    "tactic": "Defense Impairment",
+    "technique": "T1686.003",
+    "text": "An adversary may be exhibiting Windows Host Firewall (T1686.003) behavior in this environment. Hunt the connected Wazuh telemetry with the 5 live-schema-compatible Sigma detections tagged T1686.003; prioritize evidence patterns represented by: Uncommon New Firewall Rule Added In Windows Firewall Exception List; New Firewall Rule Added In Windows Firewall Exception List For Potential Suspicious Application; New Firewall Rule Added In Windows Firewall Exception List Via WmiPrvSE.EXE; All Rules Have Been Deleted From The Windows Firewall Configuration. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1686.003"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1686.003"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 5
+  },
+  {
+    "id": "THOS-GAP-T1689",
+    "title": "Downgrade Attack activity (T1689)",
+    "tactic": "Defense Impairment",
+    "technique": "T1689",
+    "text": "An adversary may be exhibiting Downgrade Attack (T1689) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1689; prioritize evidence patterns represented by: LSA PPL Protection Setting Modification via CommandLine. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1689"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1689"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  },
+  {
+    "id": "THOS-GAP-T1690",
+    "title": "Prevent Command History Logging activity (T1690)",
+    "tactic": "Defense Impairment",
+    "technique": "T1690",
+    "text": "An adversary may be exhibiting Prevent Command History Logging (T1690) behavior in this environment. Hunt the connected Wazuh telemetry with the 1 live-schema-compatible Sigma detection tagged T1690; prioritize evidence patterns represented by: ESXi Syslog Configuration Change Via ESXCLI. Correlate every match by host, user, process lineage, timestamp, and adjacent authentication, network, registry, file, or event-log activity before disposition.",
+    "category": "THOS Required Coverage Gap",
+    "severity": "critical",
+    "all_tactics": [
+      "Defense Impairment"
+    ],
+    "all_techniques": [
+      "T1690"
+    ],
+    "tags": [
+      "thos-required-gap",
+      "t1690"
+    ],
+    "source": "MITRE ATT&CK v19.1 + live Wazuh Sigma catalog",
+    "runnable_sigma_rules": 1
+  }
+]

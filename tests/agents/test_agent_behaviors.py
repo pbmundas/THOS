@@ -6,6 +6,7 @@ from services import chat_agent
 from services.communication.audience import communicate_node
 from services.coverage.gap_analysis import coverage_gap_node
 from services.enrichment.threat_intel import enrich_iocs_node
+from services.enrichment import ioc_management
 from services.hunting import hypothesis, kb_refresh
 from services.memory import hunt_memory
 from services.memory.chat_memory import _clean_message
@@ -50,6 +51,86 @@ def test_chat_memory_preserves_bounded_product_source_metadata():
         "title": "Supported telemetry and SIEM sources",
         "source": "README.md",
     }]
+
+
+def test_chat_memory_preserves_specialist_agent_metadata():
+    result = _clean_message({
+        "role": "assistant",
+        "content": "The forensic specialist reviewed the timeline.",
+        "agents": [{
+            "agent_id": "forensic_investigation_specialist",
+            "agent_name": "Digital Forensic Specialist Agent",
+            "model_tier": "reasoning",
+            "model_name": "qwen3:4b",
+            "duration_ms": 1234,
+            "ignored": "must not persist",
+        }],
+    })
+
+    assert result["agents"] == [{
+        "agent_id": "forensic_investigation_specialist",
+        "agent_name": "Digital Forensic Specialist Agent",
+        "model_tier": "reasoning",
+        "model_name": "qwen3:4b",
+        "duration_ms": 1234,
+    }]
+
+
+def test_ask_thos_delegates_authorized_investigation_question(monkeypatch):
+    plans = iter([
+        {
+            "answer": "",
+            "tool_calls": [{
+                "name": "delegate_hunt_specialist",
+                "arguments": {"hunt_id": "hunt-123", "focus": "Explain the strongest finding"},
+            }],
+        },
+        {"answer": "The specialist found a cited suspicious process.", "tool_calls": []},
+    ])
+
+    async def fake_plan(_prompt):
+        return next(plans)
+
+    async def fake_investigation_tool(name, arguments):
+        assert name == "delegate_hunt_specialist"
+        assert arguments["hunt_id"] == "hunt-123"
+        return {
+            "delegated_agent": {
+                "agent_id": "hunt_investigation_specialist",
+                "agent_name": "Hunt Investigation Specialist Agent",
+                "model_tier": "reasoning",
+                "model_name": "qwen3:4b",
+                "duration_ms": 42,
+            },
+            "assessment": {"findings": ["record-7"]},
+        }
+
+    monkeypatch.setattr(chat_agent, "_generate_plan", fake_plan)
+    monkeypatch.setattr(chat_agent, "_call_investigation_tool", fake_investigation_tool)
+    result = asyncio.run(chat_agent.chat(
+        "Investigate hunt ID hunt-123", [], "analyst-a",
+        role="Expert", permissions=["chat", "hunts"],
+    ))
+
+    assert result["tools_used"] == ["delegate_hunt_specialist"]
+    assert result["delegated_agents"][0]["agent_name"] == "Hunt Investigation Specialist Agent"
+
+
+def test_ask_thos_filters_investigation_tools_without_feature_grant(monkeypatch):
+    async def fake_plan(_prompt):
+        return {
+            "answer": "I cannot read forensic state with the current authorization.",
+            "tool_calls": [{"name": "read_forensic_investigation", "arguments": {}}],
+        }
+
+    monkeypatch.setattr(chat_agent, "_generate_plan", fake_plan)
+    result = asyncio.run(chat_agent.chat(
+        "Read the latest forensic investigation", [], "analyst-a",
+        role="Expert", permissions=["chat"],
+    ))
+
+    assert result["tools_used"] == []
+    assert result["delegated_agents"] == []
 
 
 def test_ask_thos_forces_cyber_retrieval_and_withholds_uncited_answer(monkeypatch):
@@ -165,7 +246,11 @@ def test_log_processing_deduplicates_stable_event_identity():
 
     result = asyncio.run(process_logs_node({"logs": [duplicate, dict(duplicate)]}))
 
-    assert result["processed_logs"] == [duplicate]
+    assert len(result["processed_logs"]) == 1
+    assert all(result["processed_logs"][0][key] == value for key, value in duplicate.items())
+    assert result["processed_logs"][0]["source_product"] == "Windows Security"
+    assert result["processed_logs"][0]["device_type"] == "endpoint"
+    assert result["processed_logs"][0]["event_category"] == "process"
 
 
 def test_coverage_agent_marks_low_volume_and_unfiltered_fallback():
@@ -197,6 +282,25 @@ def test_threat_intel_agent_uses_only_local_blocklist(tmp_path, monkeypatch):
         "source": "local_blocklist",
         "metadata": {"confidence": "high"},
     }]
+
+
+def test_threat_intel_suppresses_private_range_false_positive(monkeypatch):
+    monkeypatch.delenv("THOS_IOC_MATCH_PRIVATE", raising=False)
+    monkeypatch.setattr(ioc_management, "load_blocklist", lambda: {
+        "indicators": {
+            "172.16.0.0/12": {
+                "type": "network",
+                "confidence": "low",
+                "source": "public-feed",
+            },
+        },
+    })
+
+    result = asyncio.run(enrich_iocs_node({
+        "processed_logs": [{"src_ip": "172.20.0.4", "detail": "internal traffic"}],
+    }))
+
+    assert result["enrichment_hits"] == []
 
 
 def test_communication_agent_changes_audience_not_evidence():

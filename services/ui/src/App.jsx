@@ -4,18 +4,22 @@ import {
   ArrowLeftOnRectangleIcon,
   ArrowPathIcon,
   Bars3Icon,
+  ChartBarSquareIcon,
   CheckCircleIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
   ChevronRightIcon,
+  CircleStackIcon,
   ClockIcon,
   Cog6ToothIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
   FingerPrintIcon,
+  GlobeAltIcon,
   LightBulbIcon,
   MagnifyingGlassIcon,
+  QuestionMarkCircleIcon,
   PlayIcon,
   QueueListIcon,
   RadioIcon,
@@ -34,6 +38,10 @@ import HypothesisCreate from "./HypothesisCreate";
 import Settings from "./Settings";
 import Detections from "./Detections";
 import Forensics from "./Forensics";
+import Integrations from "./Integrations";
+import ThreatIntelligence from "./ThreatIntelligence";
+import Help from "./Help";
+import Overview from "./Overview";
 
 const NODE_LABELS = {
   refresh_hearth_kb: "Refreshing hypothesis knowledge",
@@ -46,6 +54,7 @@ const NODE_LABELS = {
   guardrail: "Screening untrusted telemetry",
   soc_tools: "Running detection and enrichment tools",
   coverage_gap: "Checking telemetry coverage gaps",
+  adaptive_replan: "Reviewing intermediate findings and next steps",
   threat_intel: "Enriching indicators with threat intelligence",
   reasoning: "Reasoning over evidence",
   verifier: "Verifying citations and confidence",
@@ -64,6 +73,7 @@ const NODE_REASONS = {
   guardrail: "screens untrusted log text before model use",
   soc_tools: "runs community rules, local rules, and enrichment concurrently",
   coverage_gap: "checks whether available telemetry supports a conclusion",
+  adaptive_replan: "decides whether one evidence-based query refinement is justified",
   threat_intel: "compares observed indicators with local intelligence",
   reasoning: "turns evidence into cited findings",
   verifier: "validates citations before findings are trusted",
@@ -98,7 +108,7 @@ function eventReason(node, data = {}) {
   if (node === "coverage_gap") return `identified ${(data.coverage_gaps || []).length} coverage gaps`;
   if (node === "threat_intel") return `found ${(data.enrichment_hits || []).length} local IOC matches`;
   if (node === "reasoning" && data.reasoning_failed) return `failed after ${data.reasoning_attempts || 3} attempts; report generation was stopped`;
-  if (node === "reasoning" && data.reasoning_degraded) return `model attempts exhausted; completed with deterministic evidence fallback and human approval`;
+  if (node === "reasoning" && data.reasoning_degraded) return `model attempts exhausted; completed with deterministic evidence fallback and analyst review`;
   if (node === "reasoning" && data.reasoning_cache_hit) return "reused a previously validated reasoning result";
   if (node === "reasoning" && data.reasoning_attempts) return `returned a complete validated result on attempt ${data.reasoning_attempts}`;
   return NODE_REASONS[node] || "completed this hunt stage";
@@ -204,12 +214,11 @@ function LoginPage({ onAuthenticated, checking = false }) {
       <section className="login-story" aria-label="THOS platform overview">
         <div className="login-brand"><span className="brand-mark"><img src={logo} alt="" /></span><div><strong>THOS</strong><small>Threat Hunting OS</small></div></div>
         <div className="login-story-copy">
-          <StatusPill tone="cyan"><ShieldCheckIcon /> On-prem intelligence</StatusPill>
           <h1>Turn hypotheses into<br />defensible evidence.</h1>
           <p>Run governed threat hunts, inspect each analysis stage, and publish verified investigation reports without moving telemetry outside your environment.</p>
           <div className="login-assurances">
             <span><CheckCircleIcon /> Local model inference</span>
-            <span><CheckCircleIcon /> Approval-gated detections</span>
+            <span><CheckCircleIcon /> Evidence-verified detections</span>
             <span><CheckCircleIcon /> Auditable hunt reports</span>
           </div>
         </div>
@@ -241,7 +250,8 @@ function App() {
   const [authStatus, setAuthStatus] = useState("checking");
   const [analyst, setAnalyst] = useState("");
   const [session, setSession] = useState({ display_name: "", role: "Expert", permissions: [] });
-  const [page, setPage] = useState("hunts");
+  const [page, setPage] = useState("overview");
+  const [settingsTab, setSettingsTab] = useState("account");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hypotheses, setHypotheses] = useState([]);
@@ -385,8 +395,8 @@ function App() {
     if (authStatus !== "authenticated") return;
     const permissions = new Set(session.permissions || []);
     if (["Admin", "SME"].includes(session.role)) return;
-    const allowed = { hunts: permissions.has("hunts"), forensics: permissions.has("forensics"), reports: permissions.has("reports"), detections: permissions.has("reports"), settings: true, home: permissions.has("chat") };
-    if (!allowed[page]) setPage(allowed.hunts ? "hunts" : allowed.forensics ? "forensics" : allowed.reports ? "reports" : allowed.settings ? "settings" : "home");
+    const allowed = { overview: true, hunts: permissions.has("hunts"), forensics: permissions.has("forensics"), reports: permissions.has("reports"), detections: permissions.has("reports"), "threat-intel": permissions.has("threat_intel"), help: true, settings: true, home: permissions.has("chat") };
+    if (!allowed[page]) setPage("overview");
   }, [authStatus, page, session]);
 
   const authenticated = (payload) => { setAnalyst(payload.analyst || payload.username || "analyst"); setSession(payload); setAuthStatus("authenticated"); };
@@ -521,17 +531,6 @@ function App() {
     }
   }, [coverStyle, folderPath, running, platformHuntActive, siemType, loadHuntStatus, loadHypotheses]);
 
-  const runSelected = () => {
-    const selected = hypotheses.find((item) => item.id === selectedId);
-    if (selected) runHunt({
-      hypothesisId: selected.id,
-      hypothesisText: selected.custom ? selected.text : null,
-      hypothesisTactic: selected.custom ? selected.tactic : "",
-      hypothesisTechnique: selected.custom ? selected.technique : "",
-      title: `${selected.id} · ${selected.title}`,
-    });
-  };
-
   const openReport = useCallback(async (filename) => {
     setPage("reports");
     setReportLoading(true);
@@ -579,10 +578,15 @@ function App() {
 
   const initials = analyst.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AN";
   const can = (feature) => ["Admin", "SME"].includes(session.role) || session.permissions?.includes(feature);
-  const pageLabel = page === "hunts" ? "Hunt Operations" : page === "forensics" ? "Digital Forensics" : page === "reports" ? "Investigation Reports" : page === "detections" ? "Detection Operations" : page === "settings" ? "Configuration" : page === "create-hypothesis" ? "Hypothesis Authoring" : "Workspace";
+  const pageLabel = page === "overview" ? "Overview" : page === "hunts" ? "Hunt Operations" : page === "forensics" ? "Forensic" : page === "reports" ? "Investigation Reports" : page === "detections" ? "Detection Operations" : page === "threat-intel" ? "Threat Intelligence" : page === "integrations" ? "Security Integrations" : page === "help" ? "Help & Documentation" : page === "settings" ? "Configuration" : page === "create-hypothesis" ? "Hypothesis Authoring" : "Workspace";
   const huntLocked = running || platformHuntActive;
   const completedModules = new Set(progress.map((item) => item.node)).size;
-  const progressPercent = finalState && !huntError ? 100 : Math.min(96, Math.round((completedModules / Object.keys(NODE_LABELS).length) * 100));
+  const workflowTimestamp = progress.at(-1)?.completedAt || formatLocalTimestamp(finalState?.hunt_started_at);
+  const navigate = (target, tab = "") => {
+    if (target === "settings" && tab) setSettingsTab(tab);
+    setPage(target);
+    setSidebarOpen(false);
+  };
 
   return (
     <div className="soc-shell">
@@ -595,31 +599,31 @@ function App() {
           <button className="desktop-sidebar-toggle" onClick={() => setSidebarCollapsed(true)} title="Hide navigation" aria-label="Hide navigation"><ChevronDoubleLeftIcon /></button>
         </div>
         <nav className="nav-stack" aria-label="Primary navigation">
-          {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => { setPage("detections"); setSidebarOpen(false); }}>
+          <button className={page === "overview" ? "active" : ""} onClick={() => navigate("overview")}>
+            <ChartBarSquareIcon /><span>Overview</span><ChevronRightIcon className="nav-chevron" />
+          </button>
+          {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => navigate("detections")}>
             <ShieldExclamationIcon /><span>Detections</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => { setPage("hunts"); setSidebarOpen(false); }}>
+          {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => navigate("hunts")}>
             <Squares2X2Icon /><span>Hunt Board</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {can("forensics") && <button className={page === "forensics" ? "active" : ""} onClick={() => { setPage("forensics"); setSidebarOpen(false); }}>
-            <FingerPrintIcon /><span>Forensics</span><ChevronRightIcon className="nav-chevron" />
+          {can("forensics") && <button className={page === "forensics" ? "active" : ""} onClick={() => navigate("forensics")}>
+            <FingerPrintIcon /><span>Forensic</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => { setPage("reports"); setSidebarOpen(false); }}>
+          {can("threat_intel") && <button className={page === "threat-intel" ? "active" : ""} onClick={() => navigate("threat-intel")}>
+            <GlobeAltIcon /><span>Threat Intelligence</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
+          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => navigate("reports")}>
             <DocumentTextIcon /><span>Reports</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          <button className={page === "settings" ? "active" : ""} onClick={() => { setPage("settings"); setSidebarOpen(false); }}>
+          {["Admin", "SME"].includes(session.role) && <button className={page === "integrations" ? "active" : ""} onClick={() => navigate("integrations")}>
+            <CircleStackIcon /><span>Integrations</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
+          <button className={page === "settings" ? "active" : ""} onClick={() => navigate("settings")}>
             <Cog6ToothIcon /><span>Configuration</span><ChevronRightIcon className="nav-chevron" />
           </button>
         </nav>
-        <div className="sidebar-note">
-          <span><ShieldCheckIcon /></span>
-          <div><strong>On-prem intelligence</strong><p>Evidence and model inference remain inside your environment.</p></div>
-        </div>
-        <div className="analyst-card">
-          {session.avatar_url ? <img className="avatar" src={session.avatar_url} alt="" /> : <span className="avatar">{initials}</span>}
-          <div><strong>{session.display_name || analyst}</strong><small>{session.role} · authenticated</small></div>
-          <button className="logout-button" onClick={logout} title="Sign out" aria-label="Sign out"><ArrowLeftOnRectangleIcon /></button>
-        </div>
       </aside>
 
       {sidebarCollapsed && <button className="sidebar-reveal" onClick={() => setSidebarCollapsed(false)} title="Show navigation" aria-label="Show navigation"><ChevronDoubleRightIcon /></button>}
@@ -627,10 +631,18 @@ function App() {
         <header className="topbar">
           <button className="menu-button" onClick={() => setSidebarOpen(true)}><Bars3Icon /></button>
           <div className="breadcrumb"><span>Operations</span><ChevronRightIcon />{pageLabel}</div>
-          <div className="system-state"><RadioIcon /><span>Platform online</span></div>
+          <div className="topbar-actions">
+            <div className="system-state platform-identity" title="Platform identity"><img className="platform-status-logo" src={session.branding?.logo_url || logo} alt="Platform logo" /></div>
+            <button className={`topbar-help ${page === "help" ? "active" : ""}`} onClick={() => navigate("help")}><QuestionMarkCircleIcon /><span>Help</span></button>
+            <button className="topbar-account" onClick={() => navigate("settings", "account")} title="Open account settings">
+              {session.avatar_url ? <img className="avatar small" src={session.avatar_url} alt="" /> : <span className="avatar small">{initials}</span>}
+              <span><strong>{session.display_name || analyst}</strong><small>{session.role}</small></span>
+            </button>
+            <button className="topbar-logout" onClick={logout} title="Sign out" aria-label="Sign out"><ArrowLeftOnRectangleIcon /></button>
+          </div>
         </header>
 
-        {page === "hunts" ? (
+        {page === "overview" ? <Overview onNavigate={navigate} /> : page === "hunts" ? (
           <div className="page-wrap">
             <section className="page-heading">
               <div>
@@ -684,7 +696,6 @@ function App() {
 
             <section className="catalogue-bar">
               <div><h2>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</h2><p>{filteredHypotheses.length} hypotheses in the selected severity view</p></div>
-              <button className="primary-button" disabled={!selectedId || huntLocked} onClick={runSelected}><PlayIcon /> Run selected hypothesis</button>
             </section>
 
             {hypothesisError && <div className="alert error-alert"><ExclamationTriangleIcon />{hypothesisError}</div>}
@@ -734,8 +745,8 @@ function App() {
                 </div>
                 {huntError && <div className="alert error-alert"><ExclamationTriangleIcon />{huntError}</div>}
                 <button className="pipeline-overview" onClick={() => activeNode && setExpandedNode(expandedNode === activeNode ? "" : activeNode)} disabled={!activeNode}>
-                  <span className="pipeline-overview-copy"><strong>{activeNode ? `Running: ${activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}` : finalState ? "Agent workflow complete" : "Preparing agent workflow"}</strong><small>{completedModules} agent stage(s) completed · {progressPercent}%</small></span>
-                  <span className="pipeline-track"><i style={{ width: `${progressPercent}%` }} /></span><b>{progressPercent}%</b>
+                  <span className="pipeline-overview-copy"><strong>{activeNode ? `Running: ${activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}` : finalState ? "Agent workflow complete" : "Preparing agent workflow"}</strong><small>{completedModules} agent stage(s) completed</small></span>
+                  <span className="pipeline-timestamp"><ClockIcon /> Latest local update</span><time>{workflowTimestamp}</time>
                 </button>
                 {expandedNode && expandedNode === activeNode && <div className="module-detail active-detail"><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{activeAgent?.activity || NODE_REASONS[activeNode] || "This agent is processing the current hunt state."}</p><code>{activeAgent?.model_name ? `Model: ${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "Model: none (deterministic/tool stage)"}</code></div>}
                 <div className="progress-list">
@@ -752,7 +763,7 @@ function App() {
               </section>
             )}
           </div>
-        ) : page === "forensics" ? <Forensics onOpenReport={openReport} /> : page === "reports" ? (
+        ) : page === "threat-intel" ? <ThreatIntelligence /> : page === "forensics" ? <Forensics onOpenReport={openReport} /> : page === "reports" ? (
           <div className="page-wrap reports-page">
             <section className="page-heading">
               <div><StatusPill tone="cyan"><DocumentTextIcon /> Evidence library</StatusPill><h1>Hunt and forensic reports</h1><p>Keep threat-hunting and technical digital-forensic reports clearly classified, searchable, and exportable.</p></div>
@@ -770,7 +781,7 @@ function App() {
                   return <article key={hunt.hunt_id} className={`hunt-history-row ${hunt.status}`}>
                     <span className={`run-status run-${hunt.status}`}>{hunt.status}</span>
                     <div><strong>{hunt.hypothesis_id || "Dynamic hypothesis"}</strong><code>{hunt.hunt_id}</code><small>{new Date(hunt.created_at).toLocaleString()} · Last stage: {hunt.last_stage || "started"}</small></div>
-                    <div className="run-outcome">{failed ? <p><ExclamationTriangleIcon />{failureReason}</p> : degraded ? <p className="degraded"><ShieldCheckIcon />Completed with deterministic evidence fallback; human approval required.</p> : <p className="successful"><CheckCircleIcon />Completed successfully</p>}{hunt.outcome?.reasoning_error && <details><summary>Reasoning strikes</summary><pre>{hunt.outcome.reasoning_error}</pre></details>}</div>
+                    <div className="run-outcome">{failed ? <p><ExclamationTriangleIcon />{failureReason}</p> : degraded ? <p className="degraded"><ShieldCheckIcon />Completed with deterministic evidence fallback; analyst review recommended.</p> : <p className="successful"><CheckCircleIcon />Completed successfully</p>}{hunt.outcome?.reasoning_error && <details><summary>Reasoning strikes</summary><pre>{hunt.outcome.reasoning_error}</pre></details>}</div>
                     {report ? <button className="secondary-button" onClick={() => openReport(report.filename)}>View report</button> : <span className="no-report">No report</span>}
                   </article>;
                 })}
@@ -814,7 +825,7 @@ function App() {
               </section>
             </div>
           </div>
-        ) : page === "detections" ? <Detections /> : page === "create-hypothesis" && ["Admin", "SME"].includes(session.role) ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} onSessionChange={(profile) => { setSession((current) => ({ ...current, ...profile })); setAnalyst(profile.display_name || analyst); }} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and approved MCP tools." /></div>}
+        ) : page === "detections" ? <Detections /> : page === "integrations" && ["Admin", "SME"].includes(session.role) ? <Integrations session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : page === "help" ? <Help /> : page === "create-hypothesis" && ["Admin", "SME"].includes(session.role) ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings initialTab={settingsTab} hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} onSessionChange={(profile) => { setSession((current) => ({ ...current, ...profile })); setAnalyst(profile.display_name || analyst); }} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and governed SOC tools." /></div>}
       </main>
       {readingHypothesis && <div className="hypothesis-reader-backdrop" role="presentation" onClick={() => setReadingHypothesis(null)}><section className="hypothesis-reader" role="dialog" aria-modal="true" aria-label={`Read hypothesis ${readingHypothesis.id}`} onClick={(event) => event.stopPropagation()}>
         <header><div><span className="status-pill status-indigo">{readingHypothesis.id}</span><span className="status-pill status-cyan">{readingHypothesis.technique || "Unmapped"}</span></div><button aria-label="Close hypothesis" onClick={() => setReadingHypothesis(null)}><XMarkIcon /></button></header>

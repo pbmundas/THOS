@@ -104,6 +104,7 @@ def test_normalize_wazuh_alert_to_thos_schema():
     assert record["dst_ip"] == "10.0.0.10"
     assert record["source_type"] == "wazuh"
     assert "100100" in record["detail"]
+    assert "Nmap User-Agent" in record["evidence_summary"]
     assert record["_raw"] is hit["_source"]
 
 
@@ -190,6 +191,59 @@ def test_fetch_logs_posts_only_to_configured_search_endpoint(monkeypatch):
     assert result["record_count"] == 1
     assert result["total_hits"] == 1
     assert result["logs"][0]["host"] == "linux-victim"
+
+
+def test_fetch_multi_logs_uses_one_ndjson_request(monkeypatch):
+    monkeypatch.setenv("WAZUH_INDEXER_URL", "https://wazuh.indexer:9200")
+    monkeypatch.setenv("WAZUH_INDEXER_USERNAME", "thos_reader")
+    monkeypatch.setenv("WAZUH_INDEXER_PASSWORD", "secret")
+    monkeypatch.setenv("WAZUH_INDEX_SOURCE", "alerts")
+    monkeypatch.setenv("WAZUH_VERIFY_SSL", "0")
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"responses": [
+                {"_shards": {"failures": []}, "hits": {
+                    "total": {"value": 1},
+                    "hits": [_hit(doc_id="one", rule={"description": "one"})],
+                }},
+                {"_shards": {"failures": []}, "hits": {
+                    "total": {"value": 0}, "hits": [],
+                }},
+            ]}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["request"] = kwargs
+            return FakeResponse()
+
+    monkeypatch.setattr(wazuh.httpx, "Client", FakeClient)
+    results = wazuh.fetch_multi_logs([
+        {"rule_id": "r1", "query": '{"query":{"match_all":{}}}'},
+        {"rule_id": "r2", "query": '{"query":{"term":{"rule.id":"2"}}}'},
+    ])
+
+    assert captured["url"] == "https://wazuh.indexer:9200/_msearch"
+    ndjson = captured["request"]["content"]
+    assert ndjson.endswith("\n")
+    assert len(ndjson.strip().splitlines()) == 4
+    assert results[0]["record_count"] == 1
+    assert results[1]["record_count"] == 0
 
 
 def test_discover_fields_uses_read_only_field_capabilities(monkeypatch):

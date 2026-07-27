@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /repo
+RUN pip install --prefer-binary --no-cache-dir yara-python==4.5.4
+COPY services /repo/services
+
+ENV PYTHONPATH=/repo
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "-m", "services.detection.yara_catalog", "build"]

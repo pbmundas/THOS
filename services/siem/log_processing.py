@@ -1,4 +1,5 @@
 from services.orchestration.state import HuntState
+from services.siem.attribution import attribute_record, telemetry_profile
 
 
 async def process_logs_node(state: HuntState) -> dict:
@@ -17,4 +18,11 @@ async def process_logs_node(state: HuntState) -> dict:
             seen.add(key)
             deduped.append(log)
 
-    return {"processed_logs": deduped}
+    attributed = [
+        attribute_record(log, str(state.get("siem_type") or ""))
+        for log in deduped
+    ]
+    return {
+        "processed_logs": attributed,
+        "telemetry_profile": telemetry_profile(attributed),
+    }

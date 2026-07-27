@@ -79,7 +79,7 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
         "local_sigma_rules_evaluated": 0, "local_sigma_rule_matches": [],
         "sigma_matched_record_refs": [], "anomaly_scores": [],
     })
-    monkeypatch.setattr(workflow, "build_timeline", lambda triage: [{
+    monkeypatch.setattr(workflow, "build_timeline", lambda triage, correlation=None: [{
         "timestamp": "2026-07-25T12:00:00Z", "evidence_ref": "E0001:0",
         "host": "host-a", "user": None, "event": "log",
         "source_file": "events.log", "detail": "powershell encodedcommand",
@@ -110,3 +110,7 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
     assert "Chain of custody and integrity" in text
     assert "Legal and evidentiary considerations" in text
     assert "automated results are" in text.lower()
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert headings[0] == "## Executive summary"
+    assert headings[-1] == "## Final conclusion"
+    assert text.rfind("## Final conclusion") > text.rfind("## Reviewer sign-off")

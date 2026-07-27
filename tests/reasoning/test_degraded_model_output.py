@@ -65,9 +65,11 @@ def test_ollama_schema_avoids_unsupported_regex_grammar():
 @pytest.mark.asyncio
 async def test_reasoning_retries_until_third_attempt_succeeds(monkeypatch):
     responses = ["", '{"summary": "unfinished"', _valid_response()]
+    prompts = []
 
-    async def fake_generate(*args, **kwargs):
+    async def fake_generate(prompt, **kwargs):
         assert kwargs["transport_retries"] == 0
+        prompts.append(prompt)
         return responses.pop(0)
 
     async def no_sleep(_seconds):
@@ -82,6 +84,9 @@ async def test_reasoning_retries_until_third_attempt_succeeds(monkeypatch):
     assert parsed["summary"].startswith("The available evidence")
     assert attempts == 3
     assert error is None
+    assert "RETRY CORRECTION" not in prompts[0]
+    assert "RETRY CORRECTION" in prompts[1]
+    assert "incomplete or invalid JSON" in prompts[2]
 
 
 @pytest.mark.asyncio
@@ -107,7 +112,7 @@ async def test_reasoning_stops_after_exactly_three_failed_attempts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_three_failed_strikes_suppress_report(monkeypatch):
+async def test_three_failed_strikes_generate_citation_safe_degraded_report(monkeypatch):
     async def failed(_prompt):
         return None, None, 3, "attempt 1: timeout; attempt 2: timeout; attempt 3: timeout"
 
@@ -122,10 +127,49 @@ async def test_three_failed_strikes_suppress_report(monkeypatch):
         "max_iterations": 1, "iteration": 0,
     })
 
-    assert result["reasoning_failed"] is True
+    assert result["reasoning_failed"] is False
+    assert result["reasoning_degraded"] is True
+    assert result["reasoning_mode"] == "deterministic_fallback"
     assert result["reasoning_attempts"] == 3
-    assert result["report_status"] == "not_generated"
-    assert "Report not generated" in result["reasoning_error"]
+    assert result["report_status"] == "pending"
+    assert "ref: 0" in result["findings"]
+    assert "attempt 3: timeout" in result["reasoning_error"]
+
+
+@pytest.mark.asyncio
+async def test_zero_evidence_skips_model_reasoning_and_remains_inconclusive(monkeypatch):
+    async def model_must_not_run(*_args, **_kwargs):
+        raise AssertionError("negative-screened hunt called the reasoning model")
+
+    async def kb_must_not_run(*_args, **_kwargs):
+        raise AssertionError("negative-screened hunt queried the knowledge base")
+
+    monkeypatch.setattr(reasoning, "_reason_with_three_strikes", model_must_not_run)
+    monkeypatch.setattr(reasoning, "_build_kb_context", kb_must_not_run)
+    result = await reason_node({
+        "hypothesis_text": "test",
+        "processed_logs": [],
+        "sigma_matched_refs": [],
+        "enrichment": {
+            "sigma_matched_records": 0,
+            "llm_indicator_matched_records": 0,
+        },
+        "evidence_highlights": [],
+        "enrichment_hits": [],
+        "anomaly_scores": [],
+        "coverage_assessment": {"status": "not_testable"},
+        "coverage_gaps": ["No normalized event types were available."],
+        "max_iterations": 1,
+        "iteration": 0,
+    })
+
+    assert result["reasoning_mode"] == "deterministic_negative_screening"
+    assert result["reasoning_attempts"] == 0
+    assert result["reasoning_skipped"] is True
+    assert "inconclusive rather than clean" in result["reasoning_summary"]
+    assert result["negative_screening_counts"] == {
+        "sigma": 0, "artifact": 0, "ioc": 0, "behavioral": 0,
+    }
 
 
 def test_folder_query_fallback_is_nonempty():

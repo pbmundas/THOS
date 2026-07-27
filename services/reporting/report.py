@@ -282,6 +282,18 @@ def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_
 REPORT_TEMPLATE = """\
 {cover}# Threat Hunt Report: {title}
 
+## Hunt Summary
+
+{opening_summary}
+
+### Key Evidence Highlights
+{evidence_highlights_section}
+
+### Validation Status
+{summary_validation_status}
+
+---
+
 ## Hunt Timing & Audit Trail
 
 | Event | Local timestamp |
@@ -384,9 +396,6 @@ This phase tracks the operational lifecycle of the hunt and feeds findings back 
 ### 🎟️ Case & Investigation Tracking
 {case_section}
 
-### ⚖️ Verification & Escalation Approvals
-{approval_section}
-
 ### 📈 Continuous Learning & Feedback
 {feedback_section}
 
@@ -415,9 +424,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   verifier_result: dict | None = None,
                   case_id: str | None = None,
                   coverage_gaps: list[str] | None = None,
+                  coverage_assessment: dict | None = None,
                   hunt_memory: list[dict] | None = None,
-                  approval_id: str | None = None,
-                  human_approval_required: bool = False,
+                  evidence_highlights: list[dict] | None = None,
                   reasoning_mode: str = "model",
                   reasoning_degraded: bool = False,
                   reasoning_attempts: int = 0,
@@ -464,7 +473,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
             "⚠️ **Deterministic evidence fallback used.** The reasoning model did not produce a "
             f"valid response after {reasoning_attempts or 3} attempts. THOS still generated this "
             "report from Sigma matches, normalized telemetry, coverage analysis, and verified "
-            "record citations. Human approval is required.\n\n"
+            "record citations. Analyst review is recommended before action.\n\n"
             f"- **Recorded strike reasons:** `{reasoning_error or 'No valid model response'}`"
         )
     else:
@@ -541,11 +550,35 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         for hit in enrichment_hits:
             threat_intel_section += f"| `{hit.get('indicator')}` | {hit.get('record_index')} | `{hit.get('source')}` | {hit.get('metadata')} |\n"
 
-    # Format Coverage Gaps section
-    if not coverage_gaps:
+    # Format ATT&CK-aware coverage and health section.
+    ca = coverage_assessment or {}
+    coverage_gaps_section = ""
+    if ca.get("data_sources"):
+        coverage_gaps_section += (
+            f"**ATT&CK technique testability:** `{ca.get('status', 'unknown')}` — "
+            f"{ca.get('covered_source_count', 0)} covered, "
+            f"{ca.get('partial_source_count', 0)} partial, "
+            f"{ca.get('unavailable_source_count', 0)} unavailable of "
+            f"{ca.get('required_source_count', 0)} required data source(s).\n\n"
+            "| Required ATT&CK data source | Status | Confidence | Evidence / gap |\n"
+            "|---|---|---|---|\n"
+        )
+        for item in ca.get("data_sources", []):
+            coverage_gaps_section += (
+                f"| {item.get('data_source')} | `{item.get('status')}` | "
+                f"{item.get('confidence')} | {item.get('reason')} |\n"
+            )
+        coverage_gaps_section += (
+            "\n**Observed device types:** `"
+            + json.dumps(ca.get("observed_device_types", {}), sort_keys=True)
+            + "`\n\n**Observed event categories:** `"
+            + json.dumps(ca.get("observed_event_categories", {}), sort_keys=True)
+            + "`\n"
+        )
+    elif not coverage_gaps:
         coverage_gaps_section = "✅ **Telemetry Health Passed:** No critical coverage gaps or ingestion errors detected during execution."
-    else:
-        coverage_gaps_section = "⚠️ **Telemetry Coverage Gaps & Health Alerts Identified:**\n\n"
+    if coverage_gaps:
+        coverage_gaps_section += "\n\n⚠️ **Coverage gaps and health alerts:**\n\n"
         for gap in coverage_gaps:
             coverage_gaps_section += f"- {gap}\n"
 
@@ -561,8 +594,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         verifier_section = f"❌ **Failed:** Evidence verification failed due to: *{vr_reason}*.\n\n"
         if vr_invalid:
             verifier_section += f"- **Invalid References:** {', '.join(str(r) for r in vr_invalid)}\n"
-        if human_approval_required:
-            verifier_section += "- ⚠️ **Escalation Triggered:** Analyst review and human approval are required to resolve citation discrepancies."
+        verifier_section += "- ⚠️ **Review Required:** Resolve citation discrepancies in the linked case before acting on the affected finding."
 
     # Format Case section
     if case_id:
@@ -577,16 +609,26 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     else:
         case_section = "No case was generated for this hunt. (Telemetry and findings were clean, or audit write failed)"
 
-    # Format Approval section
-    if human_approval_required or approval_id:
-        approval_section = (
-            f"⚖️ **Pending Approval Action:**\n"
-            f"- **Approval ID:** `{approval_id or 'n/a'}`\n"
-            f"- **Status:** `Pending` / `Requires Analyst Sign-off`\n\n"
-            f"_Analyst approval is required before promotion of detection rules or case closure. Actions can be decided using the `/approvals` API endpoint._"
+    highlights = evidence_highlights or []
+    if highlights:
+        evidence_highlights_section = "\n".join(
+            f"- **Record {item.get('record_index', 'n/a')} — "
+            f"{', '.join(item.get('matched_artifacts') or ['artifact match'])}:** "
+            f"{item.get('evidence') or item.get('event') or 'Normalized evidence matched.'}"
+            for item in highlights[:10]
         )
     else:
-        approval_section = "✅ No escalations or pending approvals required."
+        evidence_highlights_section = (
+            "No technique-specific literal artifact was identified. Review the Sigma results, "
+            "findings, and coverage assessment below; absence of a highlight is not proof of absence."
+        )
+    summary_validation_status = (
+        f"- **Verifier:** `{vr_status}`\n"
+        f"- **Reasoning mode:** `{reasoning_mode or 'model'}`\n"
+        f"- **Records analyzed:** `{records_analyzed}`\n"
+        f"- **Technique-specific highlights:** `{len(highlights)}`\n"
+        f"- **Case:** `{case_id or 'none'}`"
+    )
 
     # Format Feedback section
     feedback_section = (
@@ -602,6 +644,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     content = REPORT_TEMPLATE.format(
         cover=cover,
         title=resolved_title,
+        opening_summary=summary or "(no summary provided)",
+        evidence_highlights_section=evidence_highlights_section,
+        summary_validation_status=summary_validation_status,
         hunt_id=hunt_id,
         timestamp=timestamp.isoformat(),
         hunt_started_at=_format_local_timestamp(normalized_hunt_started_at),
@@ -621,7 +666,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         ingestion_diagnostics=ingestion_diagnostics or "(not available for this SIEM type)",
         mitre_section=mitre_section,
         sigma_section=sigma_section,
-        proposed_detection_rule=(f"```yaml\n{proposed_detection_rule}```\n\n_Proposal only; human approval is required before promotion._" if proposed_detection_rule else "_No rule proposal generated for this hunt._"),
+        proposed_detection_rule=(f"```yaml\n{proposed_detection_rule}```\n\n_Proposal only; validate and promote it through your normal detection change-control process._" if proposed_detection_rule else "_No rule proposal generated for this hunt._"),
         hunt_memory_section=hunt_memory_section,
         hunt_plan_section=hunt_plan_section,
         guardrail_section=guardrail_section,
@@ -630,7 +675,6 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         verifier_section=verifier_section,
         reasoning_reliability_section=reasoning_reliability_section,
         case_section=case_section,
-        approval_section=approval_section,
         feedback_section=feedback_section,
     )
 
@@ -680,7 +724,7 @@ async def write_report_node(state: dict) -> dict:
         technique_name=state.get("technique_name", ""),
         tactic=state.get("tactic", ""),
         summary=state.get("communication_summary") or state.get("reasoning_summary", ""),
-        queries=state.get("query", ""),
+        queries="\n\n".join(state.get("executed_queries") or [state.get("query", "")]),
         findings=state.get("findings", ""),
         recommendations=state.get("recommendations", ""),
         log_sample=_representative_log_sample(
@@ -701,9 +745,9 @@ async def write_report_node(state: dict) -> dict:
         verifier_result=state.get("verifier_result"),
         case_id=state.get("case_id"),
         coverage_gaps=state.get("coverage_gaps"),
+        coverage_assessment=state.get("coverage_assessment"),
         hunt_memory=state.get("hunt_memory"),
-        approval_id=state.get("approval_id"),
-        human_approval_required=state.get("human_approval_required", False),
+        evidence_highlights=state.get("evidence_highlights"),
         reasoning_mode=state.get("reasoning_mode") or "model",
         reasoning_degraded=state.get("reasoning_degraded", False),
         reasoning_attempts=state.get("reasoning_attempts", 0),

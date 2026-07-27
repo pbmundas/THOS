@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import secrets
 import sys
+import time
 from typing import AsyncIterator
 import uuid
 
@@ -99,6 +100,7 @@ def _parse_accounts() -> list[tuple[str, str]]:
 
 UI_ACCOUNTS = _parse_accounts()
 control_plane.seed_users(UI_ACCOUNTS)
+control_plane.seed_ioc_sources()
 SESSION_COOKIE = "thos_session"
 SESSION_TTL_SECONDS = max(900, int(os.environ.get("CHATUI_SESSION_TTL_SECONDS", "43200")))
 SESSION_SECURE_COOKIE = os.environ.get("CHATUI_SECURE_COOKIE", "0").strip().lower() in {"1", "true", "yes"}
@@ -109,6 +111,18 @@ if not SESSION_SECRET:
     ).digest()
     logger.warning("CHATUI_SESSION_SECRET is unset; deriving a local session key from configured secrets")
 app = FastAPI(title="THOS SOCmate UI", version="1.0.0", docs_url=None, redoc_url=None)
+
+
+async def _record_audit_event(payload: dict) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5, connect=2)) as client:
+            await client.post(
+                f"{ORCHESTRATOR_URL}/audit/events",
+                headers=_UPSTREAM_HEADERS,
+                json=payload,
+            )
+    except Exception:  # noqa: BLE001 - audit transport cannot break the UI
+        logger.warning("could not persist UI audit event", exc_info=True)
 
 
 def _valid_account(supplied_user: str, supplied_password: str) -> str:
@@ -162,7 +176,36 @@ async def require_ui_auth(request: Request, call_next):
     request.state.display_name = user.get("display_name") or valid_user
     request.state.role = user.get("role", "Expert")
     request.state.permissions = set(user.get("permissions", []))
-    return await call_next(request)
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    should_record = (
+        request.url.path.startswith("/api/")
+        and request.url.path not in {
+            "/api/session", "/api/hunts/status", "/api/audit/logs",
+            "/api/dashboard/operations",
+        }
+        and (request.method not in {"GET", "HEAD"} or response.status_code >= 400)
+    )
+    if should_record:
+        asyncio.create_task(_record_audit_event({
+            "level": "ERROR" if response.status_code >= 500 else (
+                "WARNING" if response.status_code >= 400 else "INFO"
+            ),
+            "service": "thos-ui",
+            "category": "api_request",
+            "actor": valid_user,
+            "action": request.method,
+            "resource": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+            "message": (
+                f"{request.method} {request.url.path} completed with "
+                f"HTTP {response.status_code}"
+            ),
+            "context": {"query": str(request.url.query)[:1000]},
+        }))
+    return response
 
 
 class HuntRequest(BaseModel):
@@ -213,9 +256,24 @@ async def health():
 async def login(credentials: LoginRequest):
     username = _valid_account(credentials.username, credentials.password)
     if not username:
+        asyncio.create_task(_record_audit_event({
+            "level": "WARNING",
+            "service": "thos-ui",
+            "category": "authentication",
+            "actor": credentials.username[:160],
+            "action": "login_failed",
+            "resource": "/api/auth/login",
+            "status_code": 401,
+            "message": "Interactive sign-in was rejected",
+            "context": {},
+        }))
         raise HTTPException(status_code=401, detail="Invalid username or password")
     user = control_plane.get_user(username) or {}
-    response = JSONResponse({"analyst": username, **control_plane.public_user(user)})
+    response = JSONResponse({
+        "analyst": username,
+        **control_plane.public_user(user),
+        "branding": control_plane.public_branding(),
+    })
     response.set_cookie(
         SESSION_COOKIE,
         _session_token(username),
@@ -225,13 +283,37 @@ async def login(credentials: LoginRequest):
         samesite="strict",
         path="/",
     )
+    asyncio.create_task(_record_audit_event({
+        "level": "INFO",
+        "service": "thos-ui",
+        "category": "authentication",
+        "actor": username,
+        "action": "login",
+        "resource": "/api/auth/login",
+        "status_code": 200,
+        "message": "Interactive sign-in succeeded",
+        "context": {"role": user.get("role", "Expert")},
+    }))
     return response
 
 
 @app.post("/api/auth/logout")
-async def logout():
+async def logout(request: Request):
+    username = _session_user(request.cookies.get(SESSION_COOKIE, ""))
     response = JSONResponse({"status": "signed_out"})
     response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+    if username:
+        asyncio.create_task(_record_audit_event({
+            "level": "INFO",
+            "service": "thos-ui",
+            "category": "authentication",
+            "actor": username,
+            "action": "logout",
+            "resource": "/api/auth/logout",
+            "status_code": 200,
+            "message": "Interactive session signed out",
+            "context": {},
+        }))
     return response
 
 
@@ -242,7 +324,63 @@ async def session(request: Request):
         "analyst": request.state.analyst,
         **control_plane.public_user(user),
         "permissions": sorted(request.state.permissions),
+        "branding": control_plane.public_branding(),
     }
+
+
+@app.get("/api/dashboard/operations")
+async def dashboard_operations(request: Request, hours: int = 24):
+    bounded_hours = max(1, min(hours, 24 * 365))
+    payload = await _upstream_json(
+        "GET", "/dashboard/operations", params={"hours": bounded_hours}
+    )
+    config = read_config()
+    schedules = [
+        *config.get("hypothesis_schedules", []),
+        *(config.get("sigma", {}).get("schedules", []) or []),
+        *(config.get("yara", {}).get("schedules", []) or []),
+    ]
+    sources = control_plane.telemetry_sources(config)
+    integrations = config.get("integrations", {}) or {}
+    cutoff = datetime.now(timezone.utc).timestamp() - bounded_hours * 3600
+    report_count = sum(
+        path.is_file() and path.stat().st_mtime >= cutoff
+        for path in REPORTS_DIR.glob("*.md")
+    ) if REPORTS_DIR.exists() else 0
+    payload["platform"] = {
+        "telemetry_sources": len(sources.get("items") or []),
+        "enabled_schedules": sum(bool(item.get("enabled", True)) for item in schedules),
+        "schedule_failures": sum(
+            str(item.get("last_status") or "") == "failed" for item in schedules
+        ),
+        "connected_integrations": sum(
+            isinstance(value, dict) and value.get("connection_status") == "connected"
+            for value in integrations.values()
+        ),
+        "report_library_created": report_count,
+    }
+    return payload
+
+
+@app.get("/api/audit/logs")
+async def audit_logs(
+    request: Request,
+    hours: int = 24,
+    limit: int = 500,
+    level: str = "all",
+    query: str = "",
+):
+    control_plane.require_feature(request, "settings", sme_only=True)
+    return await _upstream_json(
+        "GET",
+        "/audit/logs",
+        params={
+            "hours": max(1, min(hours, 24 * 365)),
+            "limit": max(1, min(limit, 2000)),
+            "level": level,
+            "query": query[:500],
+        },
+    )
 
 
 @app.get("/api/hypotheses")

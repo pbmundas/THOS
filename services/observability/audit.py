@@ -14,6 +14,7 @@ logs orchestrator`) instead of raised.
 import os
 import json
 import asyncio
+import datetime
 import logging
 import threading
 
@@ -198,42 +199,6 @@ async def update_case(case_id: str, status: str | None, priority: str | None, as
     return rows[0] if rows else None
 
 
-async def create_approval(hunt_id: str, reason: str, approval_type: str = "hunt_review",
-                          artifact_hash: str | None = None) -> dict | None:
-    rows = await asyncio.to_thread(_fetch, """
-        INSERT INTO hunt_approvals (hunt_id, reason, approval_type, artifact_hash)
-        VALUES (%s, %s, %s, %s)
-        RETURNING approval_id, hunt_id, status, reason, approval_type, artifact_hash, created_at
-    """, (hunt_id, reason, approval_type, artifact_hash))
-    return rows[0] if rows else None
-
-
-async def decide_approval(approval_id: str, status: str, decided_by: str) -> dict | None:
-    rows = await asyncio.to_thread(_fetch, """
-        UPDATE hunt_approvals SET status = %s, decided_by = %s, decided_at = now()
-        WHERE approval_id = %s AND status = 'pending'
-        RETURNING approval_id, hunt_id, status, reason, decided_by, decided_at
-    """, (status, decided_by, approval_id))
-    return rows[0] if rows else None
-
-
-async def list_approvals(status: str | None = "pending", limit: int = 100) -> list[dict]:
-    if status:
-        query, params = "SELECT * FROM hunt_approvals WHERE status = %s ORDER BY created_at DESC LIMIT %s", (status, limit)
-    else:
-        query, params = "SELECT * FROM hunt_approvals ORDER BY created_at DESC LIMIT %s", (limit,)
-    return await asyncio.to_thread(_fetch, query, params)
-
-
-async def get_approval(approval_id: str) -> dict | None:
-    rows = await asyncio.to_thread(
-        _fetch,
-        "SELECT * FROM hunt_approvals WHERE approval_id = %s",
-        (approval_id,),
-    )
-    return rows[0] if rows else None
-
-
 async def record_feedback(hunt_id: str, finding_ref: str | None, rating: str,
                           correction: str | None, analyst_name: str) -> dict | None:
     rows = await asyncio.to_thread(_fetch, """
@@ -264,6 +229,8 @@ async def ensure_agentic_schema() -> None:
         """CREATE TABLE IF NOT EXISTS forensic_cases (case_id UUID PRIMARY KEY, case_title TEXT NOT NULL, examiner TEXT NOT NULL, evidence_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, report_path TEXT, summary TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS forensic_steps (step_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES forensic_cases(case_id) ON DELETE CASCADE, stage TEXT NOT NULL, agent_name TEXT NOT NULL, activity TEXT, status TEXT NOT NULL DEFAULT 'ok', duration_ms INTEGER, model_tier TEXT, model_name TEXT, output JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id TEXT NOT NULL, rule_id TEXT NOT NULL, rule_title TEXT, rule_source TEXT, level TEXT, siem_type TEXT NOT NULL, status TEXT NOT NULL, events_matched INTEGER NOT NULL DEFAULT 0, matched_events JSONB NOT NULL DEFAULT '[]'::jsonb, analysis JSONB NOT NULL DEFAULT '{}'::jsonb, compiled_query TEXT, query_backend TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS platform_audit_logs (log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), level TEXT NOT NULL DEFAULT 'INFO', service TEXT NOT NULL, category TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, resource TEXT, status_code INTEGER, duration_ms INTEGER, message TEXT NOT NULL, context JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE INDEX IF NOT EXISTS idx_platform_audit_logs_created_at ON platform_audit_logs (created_at DESC)""",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS query_backend TEXT",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS case_id UUID REFERENCES cases(case_id) ON DELETE SET NULL",
@@ -500,6 +467,286 @@ async def hypothesis_last_runs() -> list[dict]:
         WHERE hypothesis_id IS NOT NULL AND hypothesis_id <> ''
         ORDER BY hypothesis_id, created_at DESC
     """, ())
+
+
+async def hypothesis_duration_statistics(limit_per_hypothesis: int = 30) -> list[dict]:
+    """Return rolling p50/p95 wall-clock duration for each hypothesis."""
+    return await asyncio.to_thread(_fetch, """
+        WITH ranked AS (
+            SELECT hypothesis_id, status,
+                   GREATEST(
+                       0,
+                       EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000
+                   )::BIGINT AS duration_ms,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY hypothesis_id ORDER BY created_at DESC
+                   ) AS recency
+            FROM hunts
+            WHERE hypothesis_id IS NOT NULL
+              AND hypothesis_id <> ''
+              AND status IN ('completed', 'failed')
+        )
+        SELECT hypothesis_id,
+               COUNT(*)::INTEGER AS sample_count,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (
+                   ORDER BY duration_ms
+               )::BIGINT AS p50_duration_ms,
+               PERCENTILE_CONT(0.95) WITHIN GROUP (
+                   ORDER BY duration_ms
+               )::BIGINT AS p95_duration_ms,
+               MAX(duration_ms)::BIGINT AS max_duration_ms
+        FROM ranked
+        WHERE recency <= %s
+        GROUP BY hypothesis_id
+        ORDER BY hypothesis_id
+    """, (max(1, min(int(limit_per_hypothesis), 100)),))
+
+
+async def log_platform_event(event: dict) -> None:
+    await asyncio.to_thread(
+        _execute,
+        """
+        INSERT INTO platform_audit_logs (
+            level, service, category, actor, action, resource, status_code,
+            duration_ms, message, context
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            str(event.get("level") or "INFO").upper()[:16],
+            str(event.get("service") or "thos")[:120],
+            str(event.get("category") or "operation")[:120],
+            str(event.get("actor") or "")[:160] or None,
+            str(event.get("action") or "event")[:200],
+            str(event.get("resource") or "")[:1000] or None,
+            int(event["status_code"]) if event.get("status_code") is not None else None,
+            int(event["duration_ms"]) if event.get("duration_ms") is not None else None,
+            str(event.get("message") or event.get("action") or "event")[:4000],
+            json.dumps(event.get("context") or {}, default=str),
+        ),
+    )
+
+
+async def list_platform_audit_logs(
+    hours: int = 24,
+    limit: int = 500,
+    level: str = "all",
+    query: str = "",
+) -> list[dict]:
+    """Combine request, workflow, detection, forensic, and error events."""
+    normalized_level = str(level or "all").lower()
+    search = str(query or "").strip()[:500]
+    return await asyncio.to_thread(_fetch, """
+        WITH timeline AS (
+            SELECT log_id::TEXT AS id, created_at AS timestamp, level, service,
+                   category, COALESCE(actor, '') AS actor, action,
+                   COALESCE(resource, '') AS resource, status_code, duration_ms,
+                   message, context
+            FROM platform_audit_logs
+            UNION ALL
+            SELECT hs.step_id::TEXT, hs.created_at,
+                   CASE WHEN hs.status = 'error' THEN 'ERROR' ELSE 'INFO' END,
+                   'thos-orchestrator', 'hunt_workflow',
+                   COALESCE(h.hunter_name, ''), hs.node_name,
+                   h.hunt_id::TEXT, NULL, hs.duration_ms,
+                   CONCAT(
+                       COALESCE(h.hypothesis_id, 'dynamic hunt'), ' · ',
+                       COALESCE(hs.agent_name, hs.node_name), ' completed'
+                   ),
+                   jsonb_build_object(
+                       'hunt_id', h.hunt_id,
+                       'hypothesis_id', h.hypothesis_id,
+                       'model_tier', hs.model_tier,
+                       'model_name', hs.model_name,
+                       'status', hs.status
+                   )
+            FROM hunt_steps hs JOIN hunts h ON h.hunt_id = hs.hunt_id
+            UNION ALL
+            SELECT error_id::TEXT, created_at, 'ERROR', 'thos-orchestrator',
+                   'tool_error', '', tool_name, COALESCE(hunt_id::TEXT, ''),
+                   NULL, NULL, COALESCE(error_msg, 'Tool execution failed'),
+                   COALESCE(payload, '{}'::jsonb)
+            FROM tool_errors
+            UNION ALL
+            SELECT step_id::TEXT, created_at,
+                   CASE WHEN status = 'ok' THEN 'INFO' ELSE 'ERROR' END,
+                   'thos-forensics', 'forensic_workflow', '', stage,
+                   case_id::TEXT, NULL, duration_ms,
+                   CONCAT(COALESCE(agent_name, 'Forensic agent'), ' · ',
+                          COALESCE(activity, stage)),
+                   jsonb_build_object('case_id', case_id, 'status', status)
+            FROM forensic_steps
+            UNION ALL
+            SELECT run_id::TEXT, created_at,
+                   CASE WHEN status = 'failed' THEN 'ERROR'
+                        WHEN events_matched > 0 THEN 'WARNING' ELSE 'INFO' END,
+                   'thos-detection', 'sigma_detection', '', status,
+                   rule_id, NULL,
+                   CASE WHEN analysis ? 'duration_ms'
+                        THEN (analysis->>'duration_ms')::INTEGER ELSE NULL END,
+                   CONCAT(COALESCE(rule_title, rule_id), ' · ',
+                          events_matched, ' matched event(s)'),
+                   jsonb_build_object(
+                       'rule_id', rule_id, 'siem_type', siem_type,
+                       'events_matched', events_matched
+                   )
+            FROM scheduled_sigma_detections
+        )
+        SELECT * FROM timeline
+        WHERE timestamp >= now() - (%s * INTERVAL '1 hour')
+          AND (%s = 'all' OR LOWER(level) = %s)
+          AND (
+              %s = '' OR CONCAT_WS(
+                  ' ', service, category, actor, action, resource, message
+              ) ILIKE %s
+          )
+        ORDER BY timestamp DESC
+        LIMIT %s
+    """, (
+        max(1, min(int(hours), 24 * 365)),
+        normalized_level,
+        normalized_level,
+        search,
+        f"%{search}%",
+        max(1, min(int(limit), 2000)),
+    ))
+
+
+async def operations_dashboard(hours: int = 24) -> dict:
+    """Aggregate the daily SOC operating picture for the Overview page."""
+    bounded_hours = max(1, min(int(hours), 24 * 365))
+    summary_rows = await asyncio.to_thread(_fetch, """
+        SELECT COUNT(*)::INTEGER AS hunts_total,
+               COUNT(*) FILTER (WHERE status = 'completed')::INTEGER AS hunts_completed,
+               COUNT(*) FILTER (WHERE status = 'failed')::INTEGER AS hunts_failed,
+               COUNT(*) FILTER (WHERE status = 'running')::INTEGER AS hunts_running,
+               COUNT(DISTINCT hypothesis_id)::INTEGER AS hypotheses_hunted,
+               COALESCE(AVG(
+                   EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000
+               ) FILTER (WHERE status IN ('completed', 'failed')), 0)::BIGINT
+                   AS avg_hunt_duration_ms,
+               COALESCE(SUM(
+                   CASE WHEN (outcome->>'records_analyzed') ~ '^[0-9]+$'
+                        THEN (outcome->>'records_analyzed')::INTEGER ELSE 0 END
+               ), 0)::BIGINT AS records_analyzed,
+               COUNT(*) FILTER (
+                   WHERE outcome->>'reasoning_mode' =
+                         'deterministic_negative_screening'
+               )::INTEGER AS model_reasoning_skipped,
+               COUNT(*) FILTER (
+                   WHERE COALESCE((outcome->>'reasoning_degraded')::BOOLEAN, false)
+               )::INTEGER AS degraded_hunts
+        FROM hunts
+        WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+    """, (bounded_hours,))
+    detection_rows = await asyncio.to_thread(_fetch, """
+        SELECT COUNT(*)::INTEGER AS detection_runs,
+               COUNT(*) FILTER (WHERE events_matched > 0)::INTEGER AS detections_triggered,
+               COALESCE(SUM(events_matched), 0)::BIGINT AS matched_events,
+               COUNT(DISTINCT rule_id)::INTEGER AS distinct_rules
+        FROM scheduled_sigma_detections
+        WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+    """, (bounded_hours,))
+    supporting_rows = await asyncio.to_thread(_fetch, """
+        SELECT
+          (SELECT COUNT(*) FROM reports
+           WHERE created_at >= now() - (%s * INTERVAL '1 hour'))::INTEGER AS reports_created,
+          (SELECT COUNT(*) FROM forensic_cases
+           WHERE created_at >= now() - (%s * INTERVAL '1 hour'))::INTEGER AS forensic_cases,
+          (SELECT COUNT(*) FROM forensic_cases
+           WHERE status = 'running')::INTEGER AS forensics_running,
+          (SELECT COUNT(*) FROM tool_errors
+           WHERE created_at >= now() - (%s * INTERVAL '1 hour'))::INTEGER AS tool_errors
+    """, (bounded_hours, bounded_hours, bounded_hours))
+    trend = await asyncio.to_thread(_fetch, """
+        WITH bounds AS (
+          SELECT CASE WHEN %s <= 48 THEN 'hour' ELSE 'day' END AS grain,
+                 CASE WHEN %s <= 48 THEN INTERVAL '1 hour' ELSE INTERVAL '1 day' END AS step
+        ),
+        buckets AS (
+          SELECT generate_series(
+              date_trunc((SELECT grain FROM bounds),
+                         now() - (%s * INTERVAL '1 hour')),
+              date_trunc((SELECT grain FROM bounds), now()),
+              (SELECT step FROM bounds)
+          ) AS bucket
+        ),
+        hunt_counts AS (
+          SELECT date_trunc((SELECT grain FROM bounds), created_at) AS bucket,
+                 COUNT(*)::INTEGER AS hunts,
+                 COUNT(*) FILTER (WHERE status = 'failed')::INTEGER AS failures
+          FROM hunts
+          WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+          GROUP BY 1
+        ),
+        detection_counts AS (
+          SELECT date_trunc((SELECT grain FROM bounds), created_at) AS bucket,
+                 COUNT(*) FILTER (WHERE events_matched > 0)::INTEGER AS detections,
+                 COALESCE(SUM(events_matched), 0)::BIGINT AS events
+          FROM scheduled_sigma_detections
+          WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+          GROUP BY 1
+        )
+        SELECT b.bucket, COALESCE(h.hunts, 0) AS hunts,
+               COALESCE(h.failures, 0) AS failures,
+               COALESCE(d.detections, 0) AS detections,
+               COALESCE(d.events, 0) AS events
+        FROM buckets b
+        LEFT JOIN hunt_counts h USING (bucket)
+        LEFT JOIN detection_counts d USING (bucket)
+        ORDER BY b.bucket
+    """, (bounded_hours, bounded_hours, bounded_hours, bounded_hours, bounded_hours))
+    severities = await asyncio.to_thread(_fetch, """
+        SELECT LOWER(COALESCE(level, 'unknown')) AS severity,
+               COUNT(*)::INTEGER AS runs,
+               COALESCE(SUM(events_matched), 0)::BIGINT AS events
+        FROM scheduled_sigma_detections
+        WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+        GROUP BY 1 ORDER BY events DESC, runs DESC
+    """, (bounded_hours,))
+    top_hypotheses = await asyncio.to_thread(_fetch, """
+        SELECT COALESCE(hypothesis_id, 'dynamic') AS hypothesis_id,
+               LEFT(MAX(COALESCE(hypothesis_text, 'Dynamic hypothesis')), 220) AS title,
+               COUNT(*)::INTEGER AS runs,
+               COUNT(*) FILTER (WHERE status = 'completed')::INTEGER AS completed,
+               COUNT(*) FILTER (WHERE status = 'failed')::INTEGER AS failed,
+               MAX(created_at) AS last_run_at
+        FROM hunts
+        WHERE created_at >= now() - (%s * INTERVAL '1 hour')
+        GROUP BY hypothesis_id
+        ORDER BY runs DESC, last_run_at DESC LIMIT 8
+    """, (bounded_hours,))
+    agents = await asyncio.to_thread(_fetch, """
+        SELECT hs.node_name,
+               COALESCE(MAX(hs.agent_name), hs.node_name) AS agent_name,
+               COUNT(*)::INTEGER AS executions,
+               COALESCE(AVG(hs.duration_ms), 0)::BIGINT AS avg_duration_ms,
+               COALESCE(SUM(hs.duration_ms), 0)::BIGINT AS total_duration_ms,
+               COUNT(*) FILTER (WHERE hs.status = 'error')::INTEGER AS errors
+        FROM hunt_steps hs JOIN hunts h ON h.hunt_id = hs.hunt_id
+        WHERE h.created_at >= now() - (%s * INTERVAL '1 hour')
+        GROUP BY hs.node_name ORDER BY total_duration_ms DESC LIMIT 10
+    """, (bounded_hours,))
+    recent = await list_platform_audit_logs(
+        hours=bounded_hours, limit=16, level="all", query=""
+    )
+    summary = {
+        **(summary_rows[0] if summary_rows else {}),
+        **(detection_rows[0] if detection_rows else {}),
+        **(supporting_rows[0] if supporting_rows else {}),
+    }
+    total = int(summary.get("hunts_total") or 0)
+    completed = int(summary.get("hunts_completed") or 0)
+    summary["completion_rate"] = round(completed * 100 / total, 1) if total else 0
+    return {
+        "hours": bounded_hours,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "summary": summary,
+        "trend": trend,
+        "detection_severity": severities,
+        "top_hypotheses": top_hypotheses,
+        "agent_performance": agents,
+        "recent_activity": recent,
+    }
 
 
 async def export_learning_feedback(limit: int = 5000) -> list[dict]:

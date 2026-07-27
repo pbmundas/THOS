@@ -51,6 +51,23 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS platform_audit_logs (
+    log_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    level        TEXT NOT NULL DEFAULT 'INFO',
+    service      TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    actor        TEXT,
+    action       TEXT NOT NULL,
+    resource     TEXT,
+    status_code  INTEGER,
+    duration_ms  INTEGER,
+    message      TEXT NOT NULL,
+    context      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_platform_audit_logs_created_at
+    ON platform_audit_logs (created_at DESC);
+
 CREATE TABLE IF NOT EXISTS forensic_cases (
     case_id         UUID PRIMARY KEY,
     case_title      TEXT NOT NULL,

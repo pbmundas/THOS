@@ -27,9 +27,17 @@ import json
 import os
 
 DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mitre_full.json")
+GAP_DATA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "mitre_gap_techniques.json"
+)
 
 with open(DATA_PATH, "r", encoding="utf-8") as _f:
     TECHNIQUE_TABLE: dict[str, dict] = json.load(_f)
+try:
+    with open(GAP_DATA_PATH, "r", encoding="utf-8") as _f:
+        TECHNIQUE_TABLE.update(json.load(_f))
+except (OSError, ValueError):
+    pass
 
 
 def map_technique(technique_id: str) -> dict | None:

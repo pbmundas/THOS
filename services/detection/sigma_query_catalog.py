@@ -543,6 +543,41 @@ def find_rule(rule_id: str, backend: str) -> dict:
     return entry
 
 
+def ready_rule_ids(backend: str) -> list[str]:
+    """Return every unique rule that is executable against the current schema."""
+    catalog = load_catalog()
+    entries = [item for item in catalog.get("entries", []) if item.get("backend") == backend]
+    ready: list[str] = []
+    seen: set[str] = set()
+    schema_version = ""
+    if backend in SUPPORTED_BACKENDS:
+        _snapshot, schema_version, _stale = _schema_context(backend)
+    for item in entries:
+        rule_id = str(item.get("rule_id") or "")
+        if not rule_id or rule_id in seen:
+            continue
+        compiled = (
+            cache.cache_get(
+                COMPILED_CACHE_NAMESPACE,
+                _compiled_cache_payload(rule_id, backend, schema_version),
+            )
+            if schema_version else None
+        )
+        executable = (
+            isinstance(compiled, dict)
+            and compiled.get("status") == "ready"
+            and bool(compiled.get("query"))
+        ) or (
+            not isinstance(compiled, dict)
+            and item.get("status") == "ready"
+            and bool(item.get("query"))
+        )
+        if executable:
+            seen.add(rule_id)
+            ready.append(rule_id)
+    return ready
+
+
 def applicable_rules(backend: str, technique_id: str = "", tactic: str = "",
                      limit: int | None = None) -> tuple[list[dict], dict]:
     catalog = load_catalog()

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -13,6 +14,7 @@ from services.detection.alert_triage import triage_detection
 from services.detection.sigma_query_catalog import applicable_rules, find_rule
 from services.mcp.mcp_client import call_tool
 from services.observability import cache
+from services.siem import wazuh as wazuh_connector
 from services.siem.log_processing import process_logs_node
 
 
@@ -146,14 +148,40 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
                                per_rule_limit: int | None = None) -> dict:
     """Execute only ATT&CK-relevant precompiled rules in the live SIEM."""
     entries, coverage = applicable_rules(siem_type, technique_id, tactic)
-    concurrency = max(1, int(os.environ.get("SIGMA_QUERY_CONCURRENCY", "6")))
-    semaphore = asyncio.Semaphore(concurrency)
+    execution_mode = "individual_search"
+    if siem_type.lower() == "wazuh" and entries:
+        try:
+            batch_results = await asyncio.to_thread(
+                wazuh_connector.fetch_multi_logs,
+                [
+                    {
+                        "rule_id": entry["rule_id"],
+                        "query": entry["query"],
+                    }
+                    for entry in entries
+                ],
+                per_rule_limit or 100,
+            )
+            completed = list(zip(entries, batch_results))
+            execution_mode = "wazuh_msearch"
+        except Exception:
+            # Older/proxied Wazuh deployments may disable _msearch. Preserve
+            # detection coverage by falling back to bounded individual calls.
+            completed = []
+    else:
+        completed = []
 
-    async def bounded(entry: dict):
-        async with semaphore:
-            return await _execute(entry, siem_type, per_rule_limit or 100)
+    if not completed and entries:
+        concurrency = max(1, int(os.environ.get("SIGMA_QUERY_CONCURRENCY", "6")))
+        semaphore = asyncio.Semaphore(concurrency)
 
-    completed = await asyncio.gather(*(bounded(entry) for entry in entries), return_exceptions=True)
+        async def bounded(entry: dict):
+            async with semaphore:
+                return await _execute(entry, siem_type, per_rule_limit or 100)
+
+        completed = await asyncio.gather(
+            *(bounded(entry) for entry in entries), return_exceptions=True
+        )
     records: dict[str, dict] = {}
     rule_matches: list[dict] = []
     errors: list[str] = []
@@ -162,6 +190,9 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
             errors.append(str(item))
             continue
         entry, result = item
+        if result.get("error"):
+            errors.append(f"{entry['rule_id']}: {result['error']}")
+            continue
         indices: list[int] = []
         for raw in result.get("logs", []):
             key = json.dumps({field: raw.get(field) for field in EVENT_FIELDS}, sort_keys=True, default=str)
@@ -187,12 +218,18 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
             label = f"[{match['source']}] {match['rule_id']}:{match['title']}"
             if label in record.get("_sigma_rules", []):
                 match["matched_indices"].append(index)
-    return {"processed_logs": processed, "rule_matches": rule_matches,
-            "rules_evaluated": len(entries), "coverage": coverage, "errors": errors}
+    return {
+        "processed_logs": processed,
+        "rule_matches": rule_matches,
+        "rules_evaluated": len(entries),
+        "coverage": {**coverage, "execution_mode": execution_mode},
+        "errors": errors,
+    }
 
 
 async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_type: str,
                                         log_source_path: str | None = None) -> dict:
+    started_at = time.perf_counter()
     if siem_type.lower() in LOCAL_SOURCES:
         source, rule = _selected_local_rule(rule_id)
         metadata = _metadata(source, rule)
@@ -240,4 +277,83 @@ async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_
         "analysis": {**_analysis(events, 1, method), "deduplication": deduplication},
     }
     result["analysis"]["triage"] = triage_detection(result)
+    result["analysis"]["duration_ms"] = int(
+        (time.perf_counter() - started_at) * 1000
+    )
     return result
+
+
+async def run_scheduled_sigma_batch(
+    *, schedule_id: str, rule_ids: list[str], siem_type: str
+) -> list[dict]:
+    """Run one scheduled Wazuh rule batch through a single ``_msearch``."""
+    if siem_type.lower() != "wazuh":
+        raise ValueError("scheduled Sigma multi-search is currently supported for Wazuh")
+    entries = [find_rule(rule_id, "wazuh") for rule_id in rule_ids]
+    started_at = time.perf_counter()
+    responses = await asyncio.to_thread(
+        wazuh_connector.fetch_multi_logs,
+        [{"rule_id": entry["rule_id"], "query": entry["query"]} for entry in entries],
+        200,
+    )
+    shared_duration_ms = int((time.perf_counter() - started_at) * 1000)
+    results: list[dict] = []
+    for entry, response in zip(entries, responses):
+        source = entry["rule_source"]
+        metadata = {
+            "rule_id": entry["rule_id"],
+            "rule_title": entry["title"],
+            "level": entry["level"],
+            "tags": entry.get("tags", []),
+        }
+        if response.get("error"):
+            results.append({
+                "schedule_id": schedule_id,
+                **metadata,
+                "rule_source": source,
+                "siem_type": "wazuh",
+                "status": "failed",
+                "events_matched": 0,
+                "matched_events": [],
+                "compiled_query": entry["query"],
+                "query_backend": "wazuh",
+                "analysis": {
+                    "method": "single Wazuh scheduled _msearch batch",
+                    "duration_ms": shared_duration_ms,
+                },
+                "error": str(response["error"]),
+            })
+            continue
+        processed = (
+            await process_logs_node({"logs": response.get("logs", [])})
+        ).get("processed_logs", [])
+        raw_events = [
+            _event_view(record, index) for index, record in enumerate(processed)
+        ]
+        events, deduplication = deduplicate_recurring_hits(
+            entry["rule_id"],
+            "wazuh",
+            raw_events,
+            schedule_id=schedule_id,
+        )
+        result = {
+            "schedule_id": schedule_id,
+            **metadata,
+            "rule_source": source,
+            "siem_type": "wazuh",
+            "status": "detected" if events else "no_match",
+            "events_matched": len(events),
+            "matched_events": events[:200],
+            "compiled_query": entry["query"],
+            "query_backend": "wazuh",
+            "analysis": {
+                **_analysis(
+                    events, 1, "single Wazuh scheduled _msearch batch"
+                ),
+                "deduplication": deduplication,
+                "duration_ms": shared_duration_ms,
+            },
+        }
+        result["analysis"]["triage"] = triage_detection(result)
+        results.append(result)
+    return results

@@ -1,0 +1,36 @@
+node_name,agent_name,model_tier,model_name,executions,avg_duration_ms,median_duration_ms,p95_duration_ms,max_duration_ms
+reasoning,Reasoning Agent,reasoning,qwen3:4b,11,456482.0,578987.0,1085322.0,1085322.0
+reasoning,,,,16,318968.625,285262.5,723472.0,723768.0
+soc_tools,,,,19,169331.421,243175.0,244494.0,244552.0
+query_gen,,,,21,105680.952,6571.0,243848.0,245106.0
+refresh_hearth_kb,,,,10,37736.2,24223.5,84157.0,84157.0
+supervisor,Supervisor Agent,reasoning,qwen3:4b,5,53885.2,51295.0,79777.0,79777.0
+adaptive_replan,Adaptive Replanning Agent,reasoning,qwen3:4b,9,26537.333,32318.0,65412.0,65412.0
+refresh_hearth_kb,Hypothesis Knowledge Refresh Agent,,,14,21196.071,26.5,49693.0,58227.0
+query_gen,Query Generation Agent,query,qwen3:4b,14,7249.643,9102.0,12540.0,21152.0
+siem_fetch,,,,19,1247.632,154.0,2773.0,2839.0
+soc_tools,SOC Tools Agent,fast,qwen2.5-coder:1.5b-instruct,18,711.722,582.0,1177.0,1743.0
+threat_intel,Threat Intelligence Agent,,,14,107.0,22.0,372.0,569.0
+siem_fetch,SIEM Fetch Agent,,,18,115.389,111.0,279.0,324.0
+verifier,Verifier Agent,,,9,15.222,11.0,49.0,49.0
+guardrail,Guardrail Agent,guard,qwen3:4b,9,21.778,17.0,47.0,47.0
+hypothesis,Hypothesis Agent,,,14,31.214,27.5,45.0,69.0
+hypothesis,,,,22,28.409,26.5,39.0,62.0
+threat_intel,,,,19,25.789,12.0,32.0,212.0
+guardrail,,,,19,9.684,7.0,24.0,43.0
+log_processing,Log Processing Agent,,,18,13.111,12.0,22.0,24.0
+report,Reporting Agent,,,9,14.111,14.0,21.0,21.0
+coverage_gap,Coverage Gap Agent,,,18,14.833,13.5,20.0,25.0
+log_processing,,,,20,8.3,7.0,18.0,18.0
+guardrail,Guardrail Agent,,,9,13.222,13.0,18.0,18.0
+hunt_memory,,,,22,7.318,7.0,11.0,11.0
+verifier,,,,13,7.231,7.0,11.0,13.0
+hunt_memory,Hunt Memory Agent,,,14,7.0,6.5,11.0,11.0
+communication,Communication Agent,fast,qwen2.5-coder:1.5b-instruct,9,7.889,8.0,11.0,11.0
+coverage_gap,,,,19,9.316,6.0,10.0,62.0
+report,,,,13,8.846,8.0,10.0,14.0
+supervisor,Supervisor Agent,,,9,5.333,5.0,9.0,9.0
+detection_engineering,Detection Engineering Agent,,,9,5.889,5.0,9.0,9.0
+detection_engineering,,,,13,3.538,2.0,7.0,8.0
+communication,,,,13,2.308,2.0,5.0,6.0
+supervisor,,,,22,2.455,2.0,4.0,6.0

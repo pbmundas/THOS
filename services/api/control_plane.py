@@ -4,15 +4,17 @@ from __future__ import annotations
 import asyncio
 import csv
 import hashlib
+import heapq
 import hmac
 import logging
 import io
+import json
 import os
 from pathlib import Path
 import re
 import secrets
 import time as time_module
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import uuid
 
@@ -22,6 +24,12 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from services.integrations.api_connector import IntegrationConfigError, test_connection
+from services.integrations.catalog import (
+    INTEGRATION_CATALOG,
+    SECRET_SETTING_NAMES,
+    public_catalog,
+)
 from services.runtime_config import read_config, write_config
 
 
@@ -32,16 +40,33 @@ ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "thos_change_me_or
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
 SIGMAHQ_DIR = Path(os.environ.get("SIGMAHQ_UI_RULES_DIR", "/data/sigmahq"))
 SIGMA_LOCAL_DIR = Path(os.environ.get("SIGMA_LOCAL_UI_RULES_DIR", "/data/sigma-local"))
+YARA_RULES_DIR = Path(os.environ.get("YARA_RULES_DIR", "/data/yara-rules"))
 _UPSTREAM_HEADERS = {"Authorization": f"Bearer {ORCHESTRATOR_API_KEY}"}
-ALL_FEATURES = ("hunts", "forensics", "reports", "chat", "knowledge", "settings")
+ALL_FEATURES = (
+    "hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings",
+)
 FULL_UI_ROLES = {"Admin", "SME"}
-EXPERT_FEATURES = ("hunts", "forensics", "reports", "chat", "knowledge")
+EXPERT_FEATURES = ("hunts", "forensics", "reports", "chat", "knowledge", "threat_intel")
 AVATAR_DIR = Path(os.environ.get(
     "THOS_AVATAR_DIR",
     str(Path(os.environ.get("THOS_RUNTIME_CONFIG", "/data/runtime/config.json")).parent / "avatars"),
 ))
+BRANDING_DIR = Path(os.environ.get(
+    "THOS_BRANDING_DIR",
+    str(Path(os.environ.get("THOS_RUNTIME_CONFIG", "/data/runtime/config.json")).parent / "branding"),
+))
 _scheduler_task: asyncio.Task | None = None
+_scheduled_hypothesis_slot = asyncio.Semaphore(1)
+_scheduled_sigma_slots = asyncio.Semaphore(max(
+    1, int(os.environ.get("THOS_SCHEDULED_SIGMA_CONCURRENCY", "2"))
+))
+_scheduled_yara_slot = asyncio.Semaphore(max(
+    1, int(os.environ.get("THOS_SCHEDULED_YARA_CONCURRENCY", "1"))
+))
+_schedule_state_lock = asyncio.Lock()
+_schedule_run_tasks: set[asyncio.Task] = set()
 _schema_refresh_task: asyncio.Task | None = None
+_ioc_refresh_lock = asyncio.Lock()
 if hasattr(time_module, "tzset"):
     time_module.tzset()
 
@@ -63,6 +88,13 @@ def seed_users(accounts: list[tuple[str, str]]) -> None:
                 changed = True
             if "email" not in user:
                 user["email"] = ""
+                changed = True
+            role = str(user.get("role", "Expert"))
+            if role in FULL_UI_ROLES and set(user.get("permissions", [])) != set(ALL_FEATURES):
+                user["permissions"] = list(ALL_FEATURES)
+                changed = True
+            elif role == "Expert" and "threat_intel" not in user.get("permissions", []):
+                user["permissions"] = sorted(set(user.get("permissions", [])) | {"threat_intel"})
                 changed = True
         if not any(user.get("role") == "Admin" for user in config["users"]):
             owner = next((user for user in config["users"] if user.get("role") == "SME"), config["users"][0])
@@ -91,6 +123,35 @@ def seed_users(accounts: list[tuple[str, str]]) -> None:
     write_config(config)
 
 
+def seed_ioc_sources() -> None:
+    """Install the reviewed workbook-derived defaults exactly once."""
+    from services.enrichment.ioc_management import DEFAULT_IOC_SOURCES
+
+    config = read_config()
+    if int(config.get("ioc_seed_version", 0) or 0) >= 2:
+        return
+    existing = {
+        str(item.get("id")): item for item in config.get("ioc_sources", [])
+    }
+    created_at = datetime.now().astimezone().isoformat()
+    for source in DEFAULT_IOC_SOURCES:
+        if source["id"] not in existing:
+            config.setdefault("ioc_sources", []).append({
+                **source,
+                "created_by": "system",
+                "created_at": created_at,
+                "last_run_key": "",
+                "last_status": "never",
+                "last_error": "",
+            })
+        elif existing[source["id"]].get("created_by") == "system":
+            for key in ("indicator_types", "parser", "attribution", "origin"):
+                if key in source:
+                    existing[source["id"]][key] = source[key]
+    config["ioc_seed_version"] = 2
+    write_config(config)
+
+
 def get_user(username: str) -> dict[str, Any] | None:
     for user in read_config().get("users", []):
         if hmac.compare_digest(str(user.get("username", "")), username):
@@ -116,6 +177,14 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "avatar_url": f"/api/account/avatar/{user.get('username')}" if user.get("avatar_file") else "",
         "enabled": bool(user.get("enabled", True)),
         "created_at": user.get("created_at", ""),
+    }
+
+
+def public_branding() -> dict[str, Any]:
+    branding = read_config().get("branding", {})
+    return {
+        "logo_url": "/api/branding/logo" if branding.get("logo_file") else "",
+        "updated_at": branding.get("updated_at", ""),
     }
 
 
@@ -155,7 +224,7 @@ async def _upstream(method: str, path: str, **kwargs):
 class GeneralSettings(BaseModel):
     default_model: str = ""
     default_iterations: int = Field(default=1, ge=1, le=5)
-    default_siem: str = Field(default="folder", pattern="^(folder|wazuh|logrhythm|splunk|qradar)$")
+    default_siem: str = Field(default="folder", min_length=1, max_length=128)
 
 
 class UserCreate(BaseModel):
@@ -181,22 +250,32 @@ class SiemSettings(BaseModel):
     field_mapping: dict[str, str] = Field(default_factory=dict)
 
 
+class IntegrationSettings(BaseModel):
+    settings: dict[str, str | int | bool] = Field(default_factory=dict)
+
+
 class RuleToggle(BaseModel):
     enabled: bool
+
+
+class YaraScanRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    recursive: bool = True
+    rule_id: str | None = Field(default=None, max_length=256)
 
 
 class ScheduleRequest(BaseModel):
     target_id: str = Field(min_length=1, max_length=256)
     target_ids: list[str] = Field(default_factory=list, max_length=500)
     title: str = Field(default="", max_length=500)
-    schedule_scope: str = Field(default="individual", pattern="^(individual|severity)$")
+    schedule_scope: str = Field(default="individual", pattern="^(individual|severity|catalog)$")
     severity: str | None = Field(default=None, pattern="^(all|low|medium|high|critical)$")
     time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     frequency: str = Field(default="daily", pattern="^(minutes|hourly|daily)$")
     interval: int = Field(default=1, ge=1, le=59)
     days: list[int] = Field(default_factory=lambda: list(range(7)))
     enabled: bool = True
-    siem_type: str = Field(default="mock", pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar)$")
+    siem_type: str = Field(default="mock", min_length=1, max_length=128)
     log_source_path: str | None = None
 
 
@@ -231,6 +310,10 @@ class IOCSourceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     kind: str = Field(default="remote", pattern="^(remote|local)$")
     location: str = Field(min_length=1, max_length=4096)
+    category: str = Field(default="uncategorized", min_length=1, max_length=120)
+    severity: str = Field(
+        default="medium", pattern="^(informational|low|medium|high|critical)$",
+    )
     confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
     enabled: bool = True
     time: str = Field(default="00:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -293,6 +376,16 @@ def telemetry_sources(config: dict[str, Any] | None = None) -> dict[str, Any]:
                 "id": siem_type,
                 "label": TELEMETRY_LABELS[siem_type],
                 "tested_at": entry.get("connection_tested_at", ""),
+            })
+    for connector_id, catalog in INTEGRATION_CATALOG.items():
+        entry = config.get("integrations", {}).get(connector_id, {})
+        if entry.get("connection_status") == "connected":
+            live_items.append({
+                "id": connector_id,
+                "label": catalog["name"],
+                "tested_at": entry.get("connection_tested_at", ""),
+                "category": catalog["category"],
+                "device_types": catalog.get("device_types", []),
             })
     # Live, connection-tested SIEMs are primary. The built-in evidence folder
     # remains available as a secondary fallback and is primary only when no
@@ -453,6 +546,71 @@ async def account_avatar(username: str, request: Request):
         raise HTTPException(status_code=404, detail="Avatar not found")
     media = {
         ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.post("/account/platform-logo")
+async def upload_platform_logo(request: Request, file: UploadFile = File(...)):
+    require_feature(request, "settings", admin_only=True)
+    content = await file.read(2_000_001)
+    await file.close()
+    if not content or len(content) > 2_000_000:
+        raise HTTPException(status_code=413, detail="Logo must be a non-empty image no larger than 2 MB")
+    signatures = (
+        (b"\x89PNG\r\n\x1a\n", ".png"),
+        (b"\xff\xd8\xff", ".jpg"),
+    )
+    extension = next((suffix for signature, suffix in signatures if content.startswith(signature)), "")
+    if not extension and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        extension = ".webp"
+    if not extension:
+        raise HTTPException(status_code=422, detail="Platform logo must be PNG, JPEG, or WebP")
+    BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+    target = (BRANDING_DIR / f"platform-logo{extension}").resolve()
+    if target.parent != BRANDING_DIR.resolve():
+        raise HTTPException(status_code=422, detail="Invalid platform logo path")
+    temp = BRANDING_DIR / f".platform-logo.{uuid.uuid4().hex}.tmp"
+    temp.write_bytes(content)
+    temp.replace(target)
+    config = read_config()
+    prior = config.get("branding", {}).get("logo_file")
+    config["branding"] = {
+        "logo_file": target.name,
+        "updated_at": datetime.now().astimezone().isoformat(),
+        "updated_by": request.state.analyst,
+    }
+    write_config(config)
+    if prior and prior != target.name:
+        old = (BRANDING_DIR / Path(str(prior)).name).resolve()
+        if old.parent == BRANDING_DIR.resolve() and old.is_file():
+            old.unlink()
+    return public_branding()
+
+
+@router.delete("/account/platform-logo")
+async def reset_platform_logo(request: Request):
+    require_feature(request, "settings", admin_only=True)
+    config = read_config()
+    prior = config.get("branding", {}).get("logo_file")
+    config["branding"] = {}
+    write_config(config)
+    if prior:
+        old = (BRANDING_DIR / Path(str(prior)).name).resolve()
+        if old.parent == BRANDING_DIR.resolve() and old.is_file():
+            old.unlink()
+    return public_branding()
+
+
+@router.get("/branding/logo")
+async def platform_logo(request: Request):
+    branding = read_config().get("branding", {})
+    root = BRANDING_DIR.resolve()
+    path = (root / Path(str(branding.get("logo_file", ""))).name).resolve()
+    if not branding.get("logo_file") or path.parent != root or not path.is_file():
+        raise HTTPException(status_code=404, detail="Platform logo not configured")
+    media = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp",
     }.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=300"})
 
@@ -776,6 +934,109 @@ async def discover_siem_fields_now(siem_type: str, request: Request):
     return await _discover_and_compile_siem(siem_type)
 
 
+@router.get("/integrations/catalog")
+async def integrations_catalog(request: Request):
+    require_feature(request, "settings", sme_only=True)
+    return public_catalog()
+
+
+@router.get("/integrations")
+async def integrations_status(request: Request):
+    require_feature(request, "settings", sme_only=True)
+    config = read_config()
+    stored = config.get("integrations", {})
+    return [{
+        **item,
+        "connection_status": stored.get(item["id"], {}).get("connection_status", "not configured"),
+        "connection_tested_at": stored.get(item["id"], {}).get("connection_tested_at", ""),
+        "updated_at": stored.get(item["id"], {}).get("updated_at", ""),
+    } for item in public_catalog()]
+
+
+@router.get("/integrations/{connector_id}")
+async def get_integration(connector_id: str, request: Request):
+    require_feature(request, "settings", sme_only=True)
+    if connector_id not in INTEGRATION_CATALOG:
+        raise HTTPException(status_code=404, detail="Unsupported integration")
+    entry = read_config().get("integrations", {}).get(connector_id, {})
+    settings = entry.get("settings", {})
+    return {
+        "id": connector_id,
+        "settings": {
+            key: ("" if key in SECRET_SETTING_NAMES else value)
+            for key, value in settings.items()
+        },
+        "configured_secrets": [
+            key for key in SECRET_SETTING_NAMES if settings.get(key)
+        ],
+        "connection_status": entry.get("connection_status", "not configured"),
+        "connection_tested_at": entry.get("connection_tested_at", ""),
+    }
+
+
+@router.put("/integrations/{connector_id}")
+async def save_integration(
+    connector_id: str, payload: IntegrationSettings, request: Request,
+):
+    require_feature(request, "settings", sme_only=True)
+    catalog = INTEGRATION_CATALOG.get(connector_id)
+    if not catalog:
+        raise HTTPException(status_code=404, detail="Unsupported integration")
+    allowed = {field["name"] for field in catalog["fields"]}
+    config = read_config()
+    prior = config.get("integrations", {}).get(connector_id, {})
+    current = {**catalog.get("defaults", {}), **prior.get("settings", {})}
+    for key, value in payload.settings.items():
+        if key in allowed and (key not in SECRET_SETTING_NAMES or str(value)):
+            current[key] = str(value)
+    missing = [
+        field["label"]
+        for field in catalog["fields"]
+        if field.get("required") and not str(current.get(field["name"]) or "").strip()
+    ]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Required settings missing: {', '.join(missing)}")
+    config.setdefault("integrations", {})[connector_id] = {
+        "settings": current,
+        "connection_status": "not tested",
+        "connection_tested_at": "",
+        "updated_at": datetime.now().astimezone().isoformat(),
+    }
+    write_config(config)
+    return await get_integration(connector_id, request)
+
+
+@router.post("/integrations/{connector_id}/test")
+async def test_integration(connector_id: str, request: Request):
+    require_feature(request, "settings", sme_only=True)
+    if connector_id not in INTEGRATION_CATALOG:
+        raise HTTPException(status_code=404, detail="Unsupported integration")
+    config = read_config()
+    entry = config.setdefault("integrations", {}).setdefault(connector_id, {})
+    try:
+        result = await asyncio.to_thread(test_connection, connector_id)
+    except (IntegrationConfigError, httpx.HTTPError, ValueError) as exc:
+        entry["connection_status"] = "failed"
+        entry["connection_tested_at"] = datetime.now().astimezone().isoformat()
+        entry["last_error"] = str(exc)[:1_000]
+        write_config(config)
+        raise HTTPException(status_code=422, detail=f"Connection test failed: {exc}") from exc
+    entry["connection_status"] = "connected"
+    entry["connection_tested_at"] = result["tested_at"]
+    entry["last_error"] = ""
+    write_config(config)
+    return {**result, "integration_id": connector_id, "active": True}
+
+
+@router.delete("/integrations/{connector_id}")
+async def remove_integration(connector_id: str, request: Request):
+    require_feature(request, "settings", admin_only=True)
+    config = read_config()
+    removed = config.setdefault("integrations", {}).pop(connector_id, None)
+    write_config(config)
+    return {"deleted": bool(removed), "integration_id": connector_id}
+
+
 def _sigma_catalog() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for source, root in (("Community", SIGMAHQ_DIR), ("Local", SIGMA_LOCAL_DIR)):
@@ -797,10 +1058,22 @@ def _sigma_catalog() -> list[dict[str, Any]]:
     return results
 
 
+def _yara_catalog() -> list[dict[str, Any]]:
+    from services.detection import yara_engine
+
+    return yara_engine.catalog()
+
+
+def _yara_catalog_summary() -> dict[str, Any]:
+    from services.detection import yara_engine
+
+    return yara_engine.catalog_summary()
+
+
 @router.get("/settings/sigma")
 async def sigma_rules(
     request: Request, query: str = "", page: int = 1, page_size: int = 50,
-    sort_by: str = "severity",
+    severity: str = "all",
 ):
     require_feature(request, "settings", sme_only=True)
     disabled = set(read_config()["sigma"].get("disabled_rule_ids", []))
@@ -808,11 +1081,13 @@ async def sigma_rules(
     rules = _sigma_catalog()
     if needle:
         rules = [rule for rule in rules if needle in f"{rule['id']} {rule['title']} {' '.join(rule['tags'])}".lower()]
+    severity = severity.strip().lower()
+    if severity not in {"all", "critical", "high", "medium", "low", "informational"}:
+        raise HTTPException(status_code=422, detail="Unsupported severity type")
+    if severity != "all":
+        rules = [rule for rule in rules if rule["severity"] == severity]
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
-    if sort_by == "title":
-        rules.sort(key=lambda item: (item["title"].casefold(), item["source"]))
-    else:
-        rules.sort(key=lambda item: (severity_rank.get(item["severity"], 5), item["title"].casefold()))
+    rules.sort(key=lambda item: (severity_rank.get(item["severity"], 5), item["title"].casefold()))
     page_size = max(10, min(page_size, 200))
     page = max(1, page)
     start = (page - 1) * page_size
@@ -834,19 +1109,88 @@ async def toggle_sigma(rule_id: str, payload: RuleToggle, request: Request):
     return {"rule_id": rule_id, "enabled": payload.enabled}
 
 
+@router.get("/settings/yara")
+async def yara_rules(
+    request: Request, query: str = "", page: int = 1, page_size: int = 50,
+    severity: str = "all",
+):
+    require_feature(request, "settings", sme_only=True)
+    needle = query.strip().lower()
+    rules = _yara_catalog()
+    if needle:
+        rules = [
+            rule for rule in rules
+            if needle in (
+                f"{rule['id']} {rule['title']} {rule.get('attack', '')} "
+                f"{rule.get('source', '')} {rule.get('category', '')} "
+                f"{rule.get('relative_path', '')}"
+            ).lower()
+        ]
+    severity = severity.strip().lower()
+    if severity not in {"all", "critical", "high", "medium", "low", "informational"}:
+        raise HTTPException(status_code=422, detail="Unsupported severity type")
+    if severity != "all":
+        rules = [rule for rule in rules if rule["severity"] == severity]
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
+    rules.sort(key=lambda item: (severity_rank.get(item["severity"], 5), item["title"].casefold()))
+    page_size = max(10, min(page_size, 200))
+    start = (max(1, page) - 1) * page_size
+    return {
+        "items": rules[start:start + page_size],
+        "total": len(rules),
+        "page": max(1, page),
+        "page_size": page_size,
+        "schedules": read_config()["yara"].get("schedules", []),
+        "catalog": _yara_catalog_summary(),
+    }
+
+
+@router.put("/settings/yara/{rule_id}")
+async def toggle_yara(rule_id: str, payload: RuleToggle, request: Request):
+    require_feature(request, "settings", sme_only=True)
+    rule = next((item for item in _yara_catalog() if item["id"] == rule_id), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail="YARA rule not found")
+    if payload.enabled and rule.get("compilation_status", "ready") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail="This upstream rule is cataloged but cannot compile with the managed YARA runtime",
+        )
+    config = read_config()
+    disabled = set(config["yara"].get("disabled_rule_ids", []))
+    disabled.discard(rule_id) if payload.enabled else disabled.add(rule_id)
+    config["yara"]["disabled_rule_ids"] = sorted(disabled)
+    write_config(config)
+    return {"rule_id": rule_id, "enabled": payload.enabled}
+
+
+@router.post("/yara/scan")
+async def run_yara_scan(payload: YaraScanRequest, request: Request):
+    require_feature(request, "forensics")
+    return await _upstream(
+        "POST", "/yara/scan", json=payload.model_dump(),
+        timeout=httpx.Timeout(1200, connect=10),
+    )
+
+
 def _schedule_collection(config: dict, kind: str) -> list[dict]:
-    return config["hypothesis_schedules"] if kind == "hypothesis" else config["sigma"].setdefault("schedules", [])
+    if kind == "hypothesis":
+        return config["hypothesis_schedules"]
+    return config[kind].setdefault("schedules", [])
 
 
 _HYPOTHESIS_SEVERITY_BY_TACTIC = {
     "reconnaissance": "low",
     "resource development": "low",
+    "initial access": "high",
     "discovery": "medium",
     "collection": "medium",
     "execution": "high",
     "persistence": "high",
     "privilege escalation": "high",
     "defense evasion": "high",
+    "stealth": "high",
+    "defense impairment": "critical",
     "credential access": "critical",
     "lateral movement": "high",
     "command and control": "high",
@@ -900,7 +1244,7 @@ async def _hypothesis_schedule_targets(target_ids: list[str], severity: str | No
 @router.get("/settings/schedules/{kind}")
 async def list_schedules(kind: str, request: Request):
     require_feature(request, "settings", sme_only=True)
-    if kind not in {"hypothesis", "sigma"}:
+    if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
     return _schedule_collection(read_config(), kind)
 
@@ -908,7 +1252,7 @@ async def list_schedules(kind: str, request: Request):
 @router.post("/settings/schedules/{kind}", status_code=201)
 async def create_schedule(kind: str, payload: ScheduleRequest, request: Request):
     require_feature(request, "settings", sme_only=True)
-    if kind not in {"hypothesis", "sigma"}:
+    if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
     if not is_active_telemetry_source(payload.siem_type):
         raise HTTPException(status_code=422, detail="Schedules require an active, successfully tested telemetry source")
@@ -918,7 +1262,14 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
         unit = "hours" if payload.frequency == "hourly" else "runs per day"
         raise HTTPException(status_code=422, detail=f"{unit} must be between 1 and 24")
     config = read_config()
-    item = {"id": uuid.uuid4().hex[:12], "kind": kind, **payload.model_dump(), "last_run_key": "", "last_status": "never"}
+    item = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": kind,
+        **payload.model_dump(),
+        "last_run_key": "",
+        "last_status": "never",
+        "next_target_index": 0,
+    }
     if kind == "hypothesis":
         target_ids = payload.target_ids or [payload.target_id]
         targets = await _hypothesis_schedule_targets(target_ids, payload.severity)
@@ -945,9 +1296,41 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
                 else (payload.title or targets[0]["title"])
             ),
         })
+    elif kind == "sigma":
+        if payload.target_id == "__all_compatible__":
+            if payload.siem_type not in {"wazuh", "splunk"}:
+                raise HTTPException(
+                    status_code=422,
+                    detail="All-compatible Sigma schedules require Wazuh or Splunk",
+                )
+            item.update({
+                "schedule_scope": "catalog",
+                "title": payload.title or "All schema-compatible Sigma rules",
+                "severity": "all",
+            })
+        else:
+            rule = next((candidate for candidate in _sigma_catalog() if candidate.get("id") == payload.target_id), None)
+            if not rule:
+                raise HTTPException(status_code=404, detail="Sigma rule not found")
+            item["severity"] = rule.get("severity", "medium")
     else:
-        rule = next((candidate for candidate in _sigma_catalog() if candidate.get("id") == payload.target_id), None)
-        item["severity"] = (rule or {}).get("severity", "medium")
+        if not payload.log_source_path:
+            raise HTTPException(status_code=422, detail="YARA schedules require a managed evidence path")
+        if payload.target_id == "__all_enabled__":
+            item.update({
+                "schedule_scope": "catalog",
+                "title": payload.title or "All enabled YARA rules (compiled bundle)",
+                "severity": "all",
+            })
+        else:
+            rule = next((candidate for candidate in _yara_catalog() if candidate.get("id") == payload.target_id), None)
+            if not rule:
+                raise HTTPException(status_code=404, detail="YARA rule not found")
+            if rule.get("compilation_status", "ready") != "ready":
+                raise HTTPException(status_code=409, detail="YARA rule is not compilable and cannot be scheduled")
+            if not rule.get("enabled", False):
+                raise HTTPException(status_code=409, detail="YARA rule must be enabled before scheduling")
+            item["severity"] = rule.get("severity", "medium")
     _schedule_collection(config, kind).append(item)
     write_config(config)
     return item
@@ -956,7 +1339,7 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
 @router.delete("/settings/schedules/{kind}/{schedule_id}")
 async def delete_schedule(kind: str, schedule_id: str, request: Request):
     require_feature(request, "settings", sme_only=True)
-    if kind not in {"hypothesis", "sigma"}:
+    if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
     config = read_config()
     collection = _schedule_collection(config, kind)
@@ -966,7 +1349,143 @@ async def delete_schedule(kind: str, schedule_id: str, request: Request):
     return {"deleted": len(collection) < before}
 
 
-async def _refresh_ioc_source(source_id: str) -> dict:
+@router.post("/settings/schedules/recommended")
+async def apply_recommended_schedules(request: Request):
+    """Install one capacity-aware, idempotent schedule set for all engines."""
+    require_feature(request, "settings", admin_only=True)
+    config = read_config()
+    sources = telemetry_sources(config)
+    siem_type = sources["default"]
+    live_sigma_siem = next(
+        (item["id"] for item in sources["items"] if item["id"] in {"wazuh", "splunk"}),
+        None,
+    )
+    upstream = await _upstream("GET", "/hypotheses")
+    catalog = [
+        *(upstream if isinstance(upstream, list) else []),
+        *config.get("custom_hypotheses", []),
+    ]
+    by_severity: dict[str, list[str]] = {
+        "critical": [], "high": [], "medium": [], "low": [],
+    }
+    for hypothesis in catalog:
+        hypothesis_id = str(hypothesis.get("id") or "")
+        if hypothesis_id:
+            by_severity[hypothesis_severity(hypothesis)].append(hypothesis_id)
+
+    # Reapplying updates the managed recommendation without touching schedules
+    # the operator created manually.
+    for kind in ("hypothesis", "sigma", "yara"):
+        collection = _schedule_collection(config, kind)
+        collection[:] = [
+            item for item in collection if not item.get("managed_recommendation")
+        ]
+
+    created: list[dict[str, Any]] = []
+    severity_plan = {
+        # 16 hunts/day ~= 5h20 at the measured 20-minute true-positive rate.
+        # Each tuple is anchor, initial batch, maintenance window, hard cap.
+        "critical": ("00:30", 3, 60, 6),
+        "high": ("01:40", 8, 160, 16),
+        "medium": ("04:30", 4, 80, 8),
+        "low": ("06:00", 1, 20, 2),
+    }
+    for severity, (anchor, batch_size, window_minutes, batch_max) in severity_plan.items():
+        ids = by_severity[severity]
+        if not ids:
+            continue
+        targets = await _hypothesis_schedule_targets(ids, severity)
+        item = {
+            "id": uuid.uuid4().hex[:12],
+            "kind": "hypothesis",
+            "target_id": ids[0],
+            "target_ids": ids,
+            "hypothesis_targets": targets,
+            "target_count": len(ids),
+            "schedule_scope": "severity",
+            "severity": severity,
+            "title": f"{severity.title()} severity rotation ({len(ids)} hypotheses)",
+            "time": anchor,
+            "frequency": "daily",
+            "interval": 1,
+            "days": list(range(7)),
+            "enabled": True,
+            "siem_type": siem_type,
+            "log_source_path": (
+                os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+                if siem_type == "folder" else None
+            ),
+            "run_batch_size": batch_size,
+            "run_batch_max": batch_max,
+            "maintenance_window_minutes": window_minutes,
+            "next_target_index": 0,
+            "last_run_key": "",
+            "last_status": "never",
+            "managed_recommendation": True,
+        }
+        _schedule_collection(config, "hypothesis").append(item)
+        created.append(item)
+
+    if live_sigma_siem:
+        item = {
+            "id": uuid.uuid4().hex[:12],
+            "kind": "sigma",
+            "target_id": "__all_compatible__",
+            "target_ids": [],
+            "title": "All schema-compatible Sigma rules (rotating batch)",
+            "schedule_scope": "catalog",
+            "severity": "all",
+            "time": "23:00",
+            "frequency": "daily",
+            "interval": 1,
+            "days": list(range(7)),
+            "enabled": True,
+            "siem_type": live_sigma_siem,
+            "log_source_path": None,
+            "next_target_index": 0,
+            "last_run_key": "",
+            "last_status": "never",
+            "managed_recommendation": True,
+        }
+        _schedule_collection(config, "sigma").append(item)
+        created.append(item)
+
+    item = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "yara",
+        "target_id": "__all_enabled__",
+        "target_ids": [],
+        "title": "All enabled YARA rules (incremental compiled bundle)",
+        "schedule_scope": "catalog",
+        "severity": "all",
+        "time": "22:00",
+        "frequency": "daily",
+        "interval": 1,
+        "days": list(range(7)),
+        "enabled": True,
+        "siem_type": siem_type,
+        "log_source_path": os.environ.get(
+            "FORENSIC_ROOT", "/data/log_sources/forensic",
+        ),
+        "next_target_index": 0,
+        "last_run_key": "",
+        "last_status": "never",
+        "managed_recommendation": True,
+    }
+    _schedule_collection(config, "yara").append(item)
+    created.append(item)
+    write_config(config)
+    return {
+        "created": created,
+        "count": len(created),
+        "hypothesis_count": sum(len(value) for value in by_severity.values()),
+        "sigma_scheduled": bool(live_sigma_siem),
+        "yara_scheduled": True,
+        "timezone": str(datetime.now().astimezone().tzinfo),
+    }
+
+
+async def _refresh_ioc_source_unlocked(source_id: str) -> dict:
     from services.enrichment.ioc_management import refresh_source
 
     config = read_config()
@@ -991,6 +1510,13 @@ async def _refresh_ioc_source(source_id: str) -> dict:
     if error:
         raise HTTPException(status_code=422, detail=error)
     return result
+
+
+async def _refresh_ioc_source(source_id: str) -> dict:
+    # Scheduled, bulk-manual, and source-specific refreshes share one bounded
+    # lane so simultaneous requests cannot multiply download and parse load.
+    async with _ioc_refresh_lock:
+        return await _refresh_ioc_source_unlocked(source_id)
 
 
 async def _run_scheduled_ioc_refresh(source_id: str) -> None:
@@ -1033,6 +1559,8 @@ async def upload_ioc_source(
     request: Request,
     file: UploadFile = File(...),
     name: str = Form(...),
+    category: str = Form("uncategorized"),
+    severity: str = Form("medium"),
     confidence: str = Form("medium"),
 ):
     require_feature(request, "settings", sme_only=True)
@@ -1040,6 +1568,8 @@ async def upload_ioc_source(
 
     if confidence not in {"low", "medium", "high"}:
         raise HTTPException(status_code=422, detail="invalid confidence")
+    if severity not in {"informational", "low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=422, detail="invalid severity")
     content = await file.read(MAX_SOURCE_BYTES + 1)
     await file.close()
     if not content or len(content) > MAX_SOURCE_BYTES:
@@ -1051,8 +1581,8 @@ async def upload_ioc_source(
         raise HTTPException(status_code=422, detail="invalid IOC source filename")
     path.write_bytes(content)
     payload = IOCSourceCreate(
-        name=name.strip(), kind="local", location=str(path), confidence=confidence,
-        enabled=False,
+        name=name.strip(), kind="local", location=str(path), category=category.strip(),
+        severity=severity, confidence=confidence, enabled=False,
     )
     return await create_ioc_source(payload, request)
 
@@ -1093,12 +1623,138 @@ async def refresh_ioc_source_now(source_id: str, request: Request):
 async def refresh_all_ioc_sources(request: Request):
     require_feature(request, "settings", sme_only=True)
     results = []
-    for source in read_config().get("ioc_sources", []):
+    for source in (
+        item for item in read_config().get("ioc_sources", []) if item.get("enabled", True)
+    ):
         try:
             results.append(await _refresh_ioc_source(str(source["id"])))
         except HTTPException as exc:
             results.append({"source_id": source.get("id"), "error": exc.detail})
     return {"results": results}
+
+
+def _freshness(last_seen: str) -> tuple[str, float]:
+    try:
+        observed = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        age = max(0.0, (datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return "unknown", float("inf")
+    if age <= 6 * 3600:
+        return "fresh", age
+    if age <= 24 * 3600:
+        return "current", age
+    if age <= 7 * 86400:
+        return "aging", age
+    return "stale", age
+
+
+@router.get("/threat-intelligence/iocs")
+async def list_threat_intelligence_iocs(
+    request: Request,
+    query: str = "",
+    indicator_type: str = "all",
+    category: str = "all",
+    severity: str = "all",
+    page: int = 1,
+    page_size: int = 100,
+):
+    require_feature(request, "threat_intel")
+    from services.enrichment.ioc_management import load_blocklist
+
+    query = query.strip().casefold()[:512]
+    indicator_type = indicator_type.strip().casefold()
+    category = category.strip().casefold()
+    severity = severity.strip().casefold()
+    page = max(1, min(page, 100))
+    page_size = max(1, min(page_size, 200))
+    end = page * page_size
+    data = load_blocklist()
+    indicators = data.get("indicators", {}) if isinstance(data.get("indicators", {}), dict) else {}
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
+    total = 0
+    type_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+
+    def candidates():
+        nonlocal total
+        for value, raw in indicators.items():
+            meta = raw if isinstance(raw, dict) else {}
+            item_type = str(meta.get("type", "unknown")).casefold()
+            item_severity = str(meta.get("severity", "medium")).casefold()
+            categories = [
+                str(item).casefold() for item in (
+                    meta.get("categories") or [meta.get("category", "uncategorized")]
+                )
+            ]
+            source_details = meta.get("source_details") or {}
+            source_names = sorted({
+                str(item.get("name") or source_id)
+                for source_id, item in source_details.items()
+                if isinstance(item, dict)
+            }) or [str(meta.get("source_name") or "local intelligence")]
+            haystack = " ".join([
+                str(value), item_type, item_severity, " ".join(categories), " ".join(source_names),
+            ]).casefold()
+            if query and query not in haystack:
+                continue
+            if indicator_type != "all" and item_type != indicator_type:
+                continue
+            if category != "all" and category not in categories:
+                continue
+            if severity != "all" and item_severity != severity:
+                continue
+            freshness, age_seconds = _freshness(str(meta.get("last_seen_by_thos", "")))
+            total += 1
+            type_counts[item_type] = type_counts.get(item_type, 0) + 1
+            for item_category in categories:
+                category_counts[item_category] = category_counts.get(item_category, 0) + 1
+            yield {
+                "indicator": str(value),
+                "type": item_type,
+                "category": ", ".join(categories),
+                "categories": categories,
+                "severity": item_severity,
+                "confidence": str(meta.get("confidence", "medium")).casefold(),
+                "first_seen": meta.get("first_seen_by_thos", ""),
+                "last_seen": meta.get("last_seen_by_thos", ""),
+                "freshness": freshness,
+                "_age_seconds": age_seconds,
+                "sources": source_names,
+                "source_count": len(source_names),
+            }
+
+    ordered = heapq.nsmallest(
+        end,
+        candidates(),
+        key=lambda item: (
+            (
+                item["_age_seconds"]
+                if item["_age_seconds"] == float("inf")
+                else int(item["_age_seconds"])
+            ),
+            severity_rank.get(item["severity"], 5),
+            item["_age_seconds"],
+            item["category"],
+            item["type"],
+            item["indicator"],
+        ),
+    )
+    start = (page - 1) * page_size
+    items = ordered[start:end]
+    for item in items:
+        item.pop("_age_seconds", None)
+    return {
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "indexed_total": int(data.get("indicator_count", len(indicators))),
+        "updated_at": data.get("updated_at", ""),
+        "type_counts": dict(sorted(type_counts.items())),
+        "category_counts": dict(sorted(category_counts.items())),
+    }
 
 
 @router.get("/detections")
@@ -1130,7 +1786,17 @@ async def kb_delete(doc_id: str, request: Request):
 @router.post("/chat")
 async def model_chat(payload: ChatRequest, request: Request):
     require_feature(request, "chat")
-    return await _upstream("POST", "/chat", json={**payload.model_dump(), "analyst": request.state.analyst}, timeout=httpx.Timeout(300, connect=10))
+    return await _upstream(
+        "POST",
+        "/chat",
+        json={
+            **payload.model_dump(),
+            "analyst": request.state.analyst,
+            "role": request.state.role,
+            "permissions": list(request.state.permissions),
+        },
+        timeout=httpx.Timeout(300, connect=10),
+    )
 
 
 @router.get("/chat/conversations")
@@ -1166,40 +1832,401 @@ async def delete_chat_conversation(conversation_id: str, request: Request):
     )
 
 
-async def _execute_schedule(item: dict[str, Any]) -> None:
+async def _persist_schedule_progress(kind: str, schedule_id: str,
+                                     updates: dict[str, Any]) -> None:
+    async with _schedule_state_lock:
+        config = read_config()
+        for stored in _schedule_collection(config, kind):
+            if stored.get("id") == schedule_id:
+                stored.update(updates)
+                stored["progress_updated_at"] = datetime.now().astimezone().isoformat()
+                break
+        write_config(config)
+
+
+def _duration_percentiles(values: list[int]) -> dict[str, int]:
+    ordered = sorted(max(0, int(value)) for value in values if value is not None)
+    if not ordered:
+        return {"sample_count": 0, "p50_duration_ms": 0, "p95_duration_ms": 0}
+
+    def percentile(fraction: float) -> int:
+        position = (len(ordered) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = position - lower
+        return int(round(ordered[lower] * (1 - weight) + ordered[upper] * weight))
+
+    return {
+        "sample_count": len(ordered),
+        "p50_duration_ms": percentile(0.50),
+        "p95_duration_ms": percentile(0.95),
+    }
+
+
+def _datetime_rank(value: Any) -> float:
+    parsed = _parse_local_datetime(value)
+    return parsed.timestamp() if parsed else 0.0
+
+
+async def _scheduler_capacity_snapshot(item: dict[str, Any]) -> dict[str, Any]:
+    """Collect bounded, best-effort pressure signals used to shrink a batch."""
+    active_count = 0
+    try:
+        status = await _upstream("GET", "/hunt/status")
+        active_count = max(0, int(status.get("active_count", 0)))
+    except Exception:  # noqa: BLE001 - pressure telemetry must not stop scheduling
+        pass
+
+    memory_ratio = 0.0
+    ollama_host = os.environ.get(
+        "THOS_SCHEDULED_OLLAMA_HOST", OLLAMA_HOST
+    ).rstrip("/")
+    try:
+        metrics_url = os.environ.get("THOS_OLLAMA_METRICS_URL", "").strip()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3)) as client:
+            if metrics_url:
+                response = await client.get(metrics_url)
+                response.raise_for_status()
+                metrics = response.json()
+                memory_ratio = float(metrics.get("memory_used_bytes") or 0) / max(
+                    1.0, float(metrics.get("memory_limit_bytes") or 0)
+                )
+            else:
+                response = await client.get(f"{ollama_host}/api/ps")
+                response.raise_for_status()
+                models = response.json().get("models") or []
+                estimated_bytes = sum(
+                    max(int(model.get("size_vram") or 0), int(model.get("size") or 0))
+                    for model in models
+                    if isinstance(model, dict)
+                )
+                # Ollama's /api/ps reports resident GGUF weights, not process,
+                # KV-cache, allocator, and runtime overhead. Calibrate the
+                # conservative estimate to measured container RAM unless an
+                # operator supplies the exact metrics endpoint above.
+                overhead = max(
+                    1.0,
+                    float(os.environ.get(
+                        "THOS_OLLAMA_MEMORY_OVERHEAD_FACTOR", "4"
+                    )),
+                )
+                budget_gb = max(
+                    1.0, float(os.environ.get(
+                        "THOS_OLLAMA_MEMORY_BUDGET_GB", "8"
+                    ))
+                )
+                memory_ratio = (
+                    estimated_bytes * overhead / (budget_gb * 1024 ** 3)
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
+    siem_values = [
+        int(value)
+        for value in (item.get("recent_siem_duration_ms") or [])
+        if isinstance(value, (int, float))
+    ]
+    siem_stats = _duration_percentiles(siem_values[-50:])
+    return {
+        "queue_depth": active_count,
+        "ollama_memory_ratio": round(memory_ratio, 3),
+        "siem_p95_ms": siem_stats["p95_duration_ms"],
+    }
+
+
+def _adaptive_hypothesis_targets(
+    item: dict[str, Any],
+    all_targets: list[dict[str, Any]],
+    duration_rows: list[dict[str, Any]],
+    last_run_rows: list[dict[str, Any]],
+    capacity: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Prioritize overdue risk and fit predicted p95 work into the window."""
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    target_history = item.get("target_run_history") or {}
+    last_runs = {
+        str(row.get("hypothesis_id")): row.get("last_ran_at")
+        for row in last_run_rows
+    }
+    durations = {
+        str(row.get("hypothesis_id")): row
+        for row in duration_rows
+    }
+    default_duration_ms = max(
+        60_000,
+        int(os.environ.get("THOS_DEFAULT_HYPOTHESIS_DURATION_MS", "1200000")),
+    )
+
+    def severity(target: dict[str, Any]) -> str:
+        return str(target.get("severity") or item.get("severity") or "medium").lower()
+
+    def last_completed(target: dict[str, Any]) -> Any:
+        target_id = str(target.get("id") or "")
+        return (
+            (target_history.get(target_id) or {}).get("last_completed_at")
+            or last_runs.get(target_id)
+        )
+
+    # Critical/high work is always placed ahead of lower-risk work, and the
+    # oldest/never-run hypothesis wins within each severity.
+    ordered = sorted(
+        all_targets,
+        key=lambda target: (
+            severity_rank.get(severity(target), 4),
+            _datetime_rank(last_completed(target)),
+            str(target.get("id") or ""),
+        ),
+    )
+    maintenance_minutes = max(
+        1, int(item.get("maintenance_window_minutes") or 60)
+    )
+    window_ms = maintenance_minutes * 60_000
+    configured = max(1, int(item.get("run_batch_size") or 1))
+    max_batch = max(
+        configured,
+        min(
+            len(ordered),
+            int(item.get("run_batch_max") or os.environ.get(
+                "THOS_ADAPTIVE_HYPOTHESIS_BATCH_MAX", "16"
+            )),
+        ),
+    )
+    selected: list[dict[str, Any]] = []
+    predicted_ms = 0
+    estimates: dict[str, int] = {}
+    for target in ordered:
+        target_id = str(target.get("id") or "")
+        estimate = max(
+            1,
+            int((durations.get(target_id) or {}).get("p95_duration_ms")
+                or (target_history.get(target_id) or {}).get("p95_duration_ms")
+                or default_duration_ms),
+        )
+        estimates[target_id] = estimate
+        if selected and predicted_ms + estimate > window_ms:
+            continue
+        selected.append(target)
+        predicted_ms += estimate
+        if len(selected) >= max_batch:
+            break
+    if not selected and ordered:
+        selected = [ordered[0]]
+        predicted_ms = estimates.get(str(ordered[0].get("id") or ""), default_duration_ms)
+
+    pressure_reasons: list[str] = []
+    reduction = 1.0
+    memory_ratio = float(capacity.get("ollama_memory_ratio") or 0)
+    if memory_ratio >= float(os.environ.get("THOS_OLLAMA_MEMORY_CRITICAL_RATIO", "0.95")):
+        reduction = min(reduction, 0.25)
+        pressure_reasons.append("Ollama memory critical")
+    elif memory_ratio >= float(os.environ.get("THOS_OLLAMA_MEMORY_HIGH_RATIO", "0.80")):
+        reduction = min(reduction, 0.5)
+        pressure_reasons.append("Ollama memory high")
+    if int(capacity.get("siem_p95_ms") or 0) >= int(
+        os.environ.get("THOS_SIEM_LATENCY_HIGH_MS", "5000")
+    ):
+        reduction = min(reduction, 0.5)
+        pressure_reasons.append("SIEM latency high")
+    if int(capacity.get("queue_depth") or 0) >= int(
+        os.environ.get("THOS_HUNT_QUEUE_HIGH", "1")
+    ):
+        reduction = min(reduction, 0.5)
+        pressure_reasons.append("hunt queue occupied")
+    if selected and reduction < 1:
+        selected = selected[:max(1, int(len(selected) * reduction))]
+        predicted_ms = sum(
+            estimates.get(str(target.get("id") or ""), default_duration_ms)
+            for target in selected
+        )
+    return selected, {
+        "maintenance_window_minutes": maintenance_minutes,
+        "predicted_p95_duration_ms": predicted_ms,
+        "configured_batch_size": configured,
+        "adaptive_batch_size": len(selected),
+        "capacity": capacity,
+        "pressure_reasons": pressure_reasons,
+        "selection_order": "severity_then_oldest_last_run",
+    }
+
+
+async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
+    started_at = time_module.perf_counter()
     kind = item.get("kind", "hypothesis")
-    base_payload: dict[str, Any] = {}
-    if kind == "hypothesis":
-        base_payload = {
-            "hunter_name": "scheduler",
-            "siem_type": item.get("siem_type", "mock"),
-            "log_source_path": item.get("log_source_path"),
-            "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
-            "cover_style": "2",
-        }
-    else:
-        siem_type = item.get("siem_type", "mock")
-        payload = {
-            "schedule_id": item["id"],
-            "rule_id": item["target_id"],
-            "siem_type": siem_type,
-            "log_source_path": item.get("log_source_path") or (os.environ.get("LOG_SOURCE_DIR", "/data/log_sources") if siem_type == "folder" else None),
-        }
     status, error = "completed", ""
     result_summary: dict[str, Any] = {}
+    target_history = dict(item.get("target_run_history") or {})
+    recent_siem = list(item.get("recent_siem_duration_ms") or [])
     try:
         if kind == "sigma":
-            result = await _upstream("POST", "/sigma/scheduled/run", json=payload, timeout=httpx.Timeout(1200, connect=10))
+            siem_type = item.get("siem_type", "mock")
+            payload = {
+                "schedule_id": item["id"],
+                "rule_id": item["target_id"],
+                "siem_type": siem_type,
+                "log_source_path": item.get("log_source_path") or (
+                    os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+                    if siem_type == "folder" else None
+                ),
+            }
+            if item.get("target_id") == "__all_compatible__":
+                catalog = await _upstream(
+                    "GET", "/sigma/catalog/ready", params={"siem_type": siem_type},
+                )
+                rule_ids = list(catalog.get("rule_ids") or [])
+                cursor = min(int(item.get("next_target_index", 0)), len(rule_ids))
+                budget = max(1, int(os.environ.get("THOS_SIGMA_RULES_PER_BATCH", "200")))
+                selected = rule_ids[cursor:cursor + budget]
+                completed, detected, failures, matched = 0, 0, [], 0
+                execution_mode = "individual_search"
+                if siem_type == "wazuh" and selected:
+                    batch = await _upstream(
+                        "POST",
+                        "/sigma/scheduled/run-batch",
+                        json={
+                            "schedule_id": item["id"],
+                            "rule_ids": selected,
+                            "siem_type": "wazuh",
+                        },
+                        timeout=httpx.Timeout(1200, connect=10),
+                    )
+                    execution_mode = str(
+                        batch.get("execution_mode") or "wazuh_msearch"
+                    )
+                    for result in batch.get("results") or []:
+                        if result.get("status") == "failed":
+                            failures.append({
+                                "rule_id": result.get("rule_id"),
+                                "error": result.get("error_msg")
+                                or result.get("error")
+                                or "multi-search rule execution failed",
+                            })
+                        else:
+                            completed += 1
+                            matched += int(result.get("events_matched", 0))
+                            detected += int(result.get("events_matched", 0) > 0)
+                    await _persist_schedule_progress(
+                        kind,
+                        item["id"],
+                        {"next_target_index": cursor + len(selected)},
+                    )
+                else:
+                    for offset, rule_id in enumerate(selected, start=1):
+                        try:
+                            result = await _upstream(
+                                "POST", "/sigma/scheduled/run",
+                                json={**payload, "rule_id": rule_id},
+                                timeout=httpx.Timeout(600, connect=10),
+                            )
+                            completed += 1
+                            matched += int(result.get("events_matched", 0))
+                            detected += int(result.get("events_matched", 0) > 0)
+                        except Exception as exc:  # noqa: BLE001 - isolate one bad rule
+                            failures.append({"rule_id": rule_id, "error": str(exc)})
+                        await _persist_schedule_progress(
+                            kind, item["id"], {"next_target_index": cursor + offset},
+                        )
+                next_index = cursor + len(selected)
+                cycle_complete = next_index >= len(rule_ids)
+                status = "completed" if not failures else ("partial" if completed else "failed")
+                result_summary = {
+                    "catalog_total": len(rule_ids),
+                    "batch_selected": len(selected),
+                    "completed": completed,
+                    "detected_rules": detected,
+                    "events_matched": matched,
+                    "failed": len(failures),
+                    "failures": failures[:20],
+                    "execution_mode": execution_mode,
+                    "cycle_complete": cycle_complete,
+                    "next_target_index": 0 if cycle_complete else next_index,
+                }
+            else:
+                result = await _upstream(
+                    "POST", "/sigma/scheduled/run", json=payload,
+                    timeout=httpx.Timeout(1200, connect=10),
+                )
+                status = str(result.get("status", "completed"))
+                result_summary = {
+                    "duration_ms": (result.get("analysis") or {}).get("duration_ms"),
+                    "events_matched": result.get("events_matched", 0),
+                    "rule_id": result.get("rule_id"),
+                }
+        elif kind == "yara":
+            bundle = item.get("target_id") == "__all_enabled__"
+            payload = {
+                "schedule_id": item["id"],
+                "rule_id": None if bundle else item["target_id"],
+                "path": item.get("log_source_path"),
+                "recursive": True,
+                "modified_since": item.get("last_completed_at") if bundle else None,
+            }
+            result = await _upstream(
+                "POST", "/yara/scheduled/run", json=payload,
+                timeout=httpx.Timeout(1200, connect=10),
+            )
             status = str(result.get("status", "completed"))
+            result_summary = result
         else:
-            targets = item.get("hypothesis_targets") or [{
+            all_targets = item.get("hypothesis_targets") or [{
                 "id": item["target_id"],
                 "hypothesis_text": item.get("hypothesis_text"),
                 "hypothesis_tactic": item.get("hypothesis_tactic", ""),
                 "hypothesis_technique": item.get("hypothesis_technique", ""),
             }]
+            try:
+                duration_rows, last_run_rows = await asyncio.gather(
+                    _upstream("GET", "/hypotheses/duration-stats"),
+                    _upstream("GET", "/hypotheses/last-runs"),
+                )
+            except Exception:  # noqa: BLE001 - use local rolling history
+                duration_rows, last_run_rows = [], []
+            capacity = await _scheduler_capacity_snapshot(item)
+            targets, adaptive_plan = _adaptive_hypothesis_targets(
+                item,
+                all_targets,
+                duration_rows if isinstance(duration_rows, list) else [],
+                last_run_rows if isinstance(last_run_rows, list) else [],
+                capacity,
+            )
             completed, failures = 0, []
-            for target in targets:
+            base_payload = {
+                "hunter_name": "scheduler",
+                "siem_type": item.get("siem_type", "mock"),
+                "log_source_path": item.get("log_source_path"),
+                "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
+                "cover_style": "2",
+                "workload_class": "scheduled",
+            }
+            for offset, target in enumerate(targets, start=1):
+                if offset > 1:
+                    live_capacity = await _scheduler_capacity_snapshot({
+                        **item,
+                        "recent_siem_duration_ms": recent_siem[-50:],
+                    })
+                    high_memory = float(
+                        live_capacity.get("ollama_memory_ratio") or 0
+                    ) >= float(os.environ.get(
+                        "THOS_OLLAMA_MEMORY_HIGH_RATIO", "0.80"
+                    ))
+                    high_siem = int(
+                        live_capacity.get("siem_p95_ms") or 0
+                    ) >= int(os.environ.get(
+                        "THOS_SIEM_LATENCY_HIGH_MS", "5000"
+                    ))
+                    queued = int(
+                        live_capacity.get("queue_depth") or 0
+                    ) >= int(os.environ.get("THOS_HUNT_QUEUE_HIGH", "1"))
+                    if high_memory or high_siem or queued:
+                        adaptive_plan["runtime_capacity"] = live_capacity
+                        adaptive_plan["runtime_reduced_after"] = offset - 1
+                        adaptive_plan["pressure_reasons"] = sorted(set([
+                            *adaptive_plan.get("pressure_reasons", []),
+                            *(["Ollama memory high"] if high_memory else []),
+                            *(["SIEM latency high"] if high_siem else []),
+                            *(["hunt queue occupied"] if queued else []),
+                        ]))
+                        break
+                target_started = time_module.perf_counter()
                 payload = {
                     **base_payload,
                     "hypothesis_id": target["id"],
@@ -1207,37 +2234,152 @@ async def _execute_schedule(item: dict[str, Any]) -> None:
                     "hypothesis_tactic": target.get("hypothesis_tactic", ""),
                     "hypothesis_technique": target.get("hypothesis_technique", ""),
                 }
+                target_error = ""
                 try:
-                    result = await _upstream("POST", "/hunt", json=payload, timeout=httpx.Timeout(1200, connect=10))
+                    result = await _upstream(
+                        "POST", "/hunt", json=payload,
+                        timeout=httpx.Timeout(
+                            int(os.environ.get("THOS_SCHEDULED_HUNT_TIMEOUT_SECONDS", "2400")),
+                            connect=10,
+                        ),
+                    )
                     if result.get("error"):
-                        failures.append({"hypothesis_id": target["id"], "error": str(result["error"])})
+                        target_error = str(result["error"])
+                        failures.append({
+                            "hypothesis_id": target["id"], "error": target_error
+                        })
                     else:
                         completed += 1
-                except Exception as exc:  # noqa: BLE001 - continue the selected severity group
-                    failures.append({"hypothesis_id": target["id"], "error": str(exc)})
+                        hunt_id = str(result.get("hunt_id") or "")
+                        if hunt_id:
+                            try:
+                                metrics = await _upstream(
+                                    "GET", f"/hunts/{hunt_id}/metrics"
+                                )
+                                siem_ms = sum(
+                                    int(row.get("avg_duration_ms") or 0)
+                                    for row in (metrics or [])
+                                    if row.get("node_name") == "siem_fetch"
+                                )
+                                if siem_ms:
+                                    recent_siem.append(siem_ms)
+                            except Exception:  # noqa: BLE001
+                                pass
+                except Exception as exc:  # noqa: BLE001 - continue the selected group
+                    target_error = str(exc)
+                    failures.append({
+                        "hypothesis_id": target["id"], "error": target_error
+                    })
                     logger.exception("scheduled hypothesis failed for %s", target["id"])
+                target_duration_ms = int(
+                    (time_module.perf_counter() - target_started) * 1000
+                )
+                target_id = str(target["id"])
+                prior = dict(target_history.get(target_id) or {})
+                samples = [
+                    int(value)
+                    for value in (prior.get("durations_ms") or [])
+                    if isinstance(value, (int, float))
+                ][-29:]
+                samples.append(target_duration_ms)
+                stats = _duration_percentiles(samples)
+                prior.update({
+                    "durations_ms": samples,
+                    **stats,
+                    "last_duration_ms": target_duration_ms,
+                    "last_status": "failed" if target_error else "completed",
+                    "last_error": target_error[:1000],
+                    "last_attempt_at": datetime.now().astimezone().isoformat(),
+                })
+                if not target_error:
+                    prior["last_completed_at"] = prior["last_attempt_at"]
+                target_history[target_id] = prior
+                await _persist_schedule_progress(
+                    kind,
+                    item["id"],
+                    {
+                        "targets_completed_this_run": offset,
+                        "target_run_history": target_history,
+                        "recent_siem_duration_ms": recent_siem[-50:],
+                    },
+                )
             status = "completed" if not failures else ("partial" if completed else "failed")
-            error = "; ".join(f"{failure['hypothesis_id']}: {failure['error']}" for failure in failures)[:4000]
+            error = "; ".join(
+                f"{failure['hypothesis_id']}: {failure['error']}" for failure in failures
+            )[:4000]
             result_summary = {
-                "selected": len(targets),
+                "selected": len(all_targets),
+                "processed_this_run": completed + len(failures),
                 "completed": completed,
                 "failed": len(failures),
                 "failures": failures[:20],
+                "cycle_complete": all(
+                    (target_history.get(str(target.get("id"))) or {}).get(
+                        "last_completed_at"
+                    )
+                    for target in all_targets
+                ),
+                "next_target_index": 0,
+                "adaptive_plan": adaptive_plan,
+                "target_duration_stats": {
+                    target_id: {
+                        key: value
+                        for key, value in details.items()
+                        if key in {
+                            "sample_count",
+                            "p50_duration_ms",
+                            "p95_duration_ms",
+                            "last_duration_ms",
+                            "last_status",
+                            "last_completed_at",
+                        }
+                    }
+                    for target_id, details in target_history.items()
+                },
             }
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", str(exc)
         logger.exception("scheduled %s run failed", item.get("kind"))
-    config = read_config()
-    collection = _schedule_collection(config, kind)
-    for stored in collection:
-        if stored.get("id") == item.get("id"):
-            stored.update({
-                "last_status": status,
-                "last_error": error,
-                "last_result": result_summary,
-                "last_run_at": datetime.now().astimezone().isoformat(),
-            })
-    write_config(config)
+    duration_ms = int((time_module.perf_counter() - started_at) * 1000)
+    now_iso = datetime.now().astimezone().isoformat()
+    async with _schedule_state_lock:
+        config = read_config()
+        for stored in _schedule_collection(config, kind):
+            if stored.get("id") == item.get("id"):
+                stored.update({
+                    "last_status": status,
+                    "last_error": error,
+                    "last_result": result_summary,
+                    "last_duration_ms": duration_ms,
+                    "last_run_at": now_iso,
+                    "next_target_index": result_summary.get(
+                        "next_target_index", stored.get("next_target_index", 0),
+                    ),
+                })
+                if kind == "hypothesis":
+                    stored["target_run_history"] = target_history
+                    stored["recent_siem_duration_ms"] = recent_siem[-50:]
+                if status in {"completed", "partial", "detected", "no_match"}:
+                    stored["last_completed_at"] = now_iso
+        write_config(config)
+
+
+async def _execute_schedule(item: dict[str, Any]) -> None:
+    """Run scheduled work in resource-appropriate bounded lanes.
+
+    Hypotheses must serialize because the Orchestrator intentionally admits
+    one hunt at a time. Sigma permits a small amount of SIEM I/O parallelism.
+    YARA remains single-file-lane because every job maps the shared compiled
+    corpus and can otherwise multiply memory pressure.
+    """
+    kind = item.get("kind", "hypothesis")
+    slot = (
+        _scheduled_hypothesis_slot if kind == "hypothesis"
+        else _scheduled_sigma_slots if kind == "sigma"
+        else _scheduled_yara_slot
+    )
+    async with slot:
+        await _execute_schedule_unlocked(item)
 
 
 def _schedule_is_due(item: dict[str, Any], now: datetime) -> bool:
@@ -1288,7 +2430,10 @@ def _schema_refresh_is_due(config: dict[str, Any], now: datetime) -> bool:
     maintenance = config.get("maintenance", {})
     if not maintenance.get("schema_refresh_enabled", True):
         return False
-    live = [item for item in telemetry_sources(config)["items"] if item["id"] != "folder"]
+    live = [
+        item for item in telemetry_sources(config)["items"]
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm"}
+    ]
     if not live:
         return False
     last_started = _parse_local_datetime(maintenance.get("schema_refresh_last_started_at"))
@@ -1315,7 +2460,10 @@ async def _run_schema_refresh() -> None:
     results: list[dict[str, Any]] = []
     errors: list[str] = []
     config = read_config()
-    sources = [item["id"] for item in telemetry_sources(config)["items"] if item["id"] != "folder"]
+    sources = [
+        item["id"] for item in telemetry_sources(config)["items"]
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm"}
+    ]
     for siem_type in sources:
         try:
             results.append(await _discover_and_compile_siem(siem_type))
@@ -1345,6 +2493,36 @@ async def _run_schema_refresh() -> None:
 
 async def _scheduler_loop() -> None:
     global _schema_refresh_task
+    # Compose can start this API a few seconds before the orchestrator has
+    # finished accepting connections.  Scheduled work should not be marked as
+    # failed merely because its dependency is still in that startup window.
+    for _attempt in range(30):
+        try:
+            await _upstream(
+                "GET",
+                "/health",
+                timeout=httpx.Timeout(3, connect=2),
+            )
+            break
+        except httpx.HTTPError:
+            await asyncio.sleep(2)
+    else:
+        logger.warning(
+            "orchestrator did not become ready during the scheduler startup grace period; "
+            "scheduled work will proceed with normal error reporting"
+        )
+    # A process restart can interrupt a long severity/catalog batch. Preserve
+    # its persisted cursor and mark it clearly; the next due run resumes there.
+    config = read_config()
+    reconciled = False
+    for kind in ("hypothesis", "sigma", "yara"):
+        for item in _schedule_collection(config, kind):
+            if item.get("last_status") == "running":
+                item["last_status"] = "interrupted"
+                item["last_error"] = "Service restarted; the next scheduled run will resume from the saved cursor."
+                reconciled = True
+    if reconciled:
+        write_config(config)
     while True:
         try:
             now = datetime.now().astimezone()
@@ -1355,7 +2533,7 @@ async def _scheduler_loop() -> None:
                 (_schema_refresh_task is None or _schema_refresh_task.done())
                 and _schema_refresh_is_due(config, now)
             )
-            for kind in ("hypothesis", "sigma"):
+            for kind in ("hypothesis", "sigma", "yara"):
                 for item in _schedule_collection(config, kind):
                     if not item.get("enabled", True) or not _schedule_is_due(item, now):
                         continue
@@ -1382,7 +2560,12 @@ async def _scheduler_loop() -> None:
             if due or due_ioc_sources or maintenance_due:
                 write_config(config)
                 for item in due:
-                    asyncio.create_task(_execute_schedule(item))
+                    task = asyncio.create_task(
+                        _execute_schedule(item),
+                        name=f"scheduled-{item.get('kind')}-{item.get('id')}",
+                    )
+                    _schedule_run_tasks.add(task)
+                    task.add_done_callback(_schedule_run_tasks.discard)
                 for source_id in due_ioc_sources:
                     if source_id:
                         asyncio.create_task(
@@ -1414,6 +2597,11 @@ async def stop_scheduler() -> None:
         except asyncio.CancelledError:
             pass
         _scheduler_task = None
+    if _schedule_run_tasks:
+        for task in list(_schedule_run_tasks):
+            task.cancel()
+        await asyncio.gather(*list(_schedule_run_tasks), return_exceptions=True)
+        _schedule_run_tasks.clear()
     if _schema_refresh_task:
         _schema_refresh_task.cancel()
         try:

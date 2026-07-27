@@ -10,12 +10,50 @@ from services.detection.sigma_detection_agent import LOCAL_SOURCES, query_sigma_
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
 
+_TECHNIQUE_ARTIFACTS = {
+    # Deterministic artifact aliases supplement, but never replace, Sigma.
+    # They are intentionally narrow and must occur literally in evidence.
+    "T1046": ("nmap", "nmap scripting engine", "masscan", "zmap",
+              "network service discovery", "port scan"),
+}
+
 
 def _keyword_matches(log: dict, event_ids: list[str], keywords: list[str]) -> bool:
     event = str(log.get("event", "")).lower()
-    detail = str(log.get("detail", "")).lower()
+    detail = " ".join((
+        str(log.get("evidence_summary", "")),
+        str(log.get("detail", "")),
+    )).lower()
     return (any(event == eid.lower() or event.endswith(f":{eid.lower()}") for eid in event_ids)
             or any(keyword in detail for keyword in keywords))
+
+
+def _artifact_highlights(logs: list[dict], technique_id: str,
+                         technique_name: str) -> list[dict]:
+    terms = list(_TECHNIQUE_ARTIFACTS.get(technique_id.upper(), ()))
+    normalized_name = technique_name.strip().lower()
+    if len(normalized_name) >= 5:
+        terms.append(normalized_name)
+    highlights = []
+    for index, log in enumerate(logs):
+        haystack = " ".join((
+            str(log.get("event", "")),
+            str(log.get("evidence_summary", "")),
+            str(log.get("detail", "")),
+        )).lower()
+        matched = sorted({term for term in terms if term and term in haystack})
+        if not matched:
+            continue
+        evidence = str(log.get("evidence_summary") or log.get("event") or "")[:800]
+        highlights.append({
+            "record_index": index,
+            "matched_artifacts": matched,
+            "event": str(log.get("event", "unknown")),
+            "evidence": evidence,
+        })
+        if len(highlights) >= 25:
+            break
+    return highlights
 
 
 def _record_key(record: dict) -> str:
@@ -106,9 +144,11 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     keywords = [str(value).lower() for value in indicators.get("keywords", [])]
     llm_refs = {index for index, log in enumerate(processed_logs)
                 if _keyword_matches(log, event_ids, keywords)}
+    evidence_highlights = _artifact_highlights(processed_logs, technique_id, technique_name)
+    artifact_refs = {item["record_index"] for item in evidence_highlights}
     for index, record in enumerate(processed_logs):
         record["_llm_indicator_match"] = index in llm_refs
-    all_refs = sorted(sigma_refs | llm_refs)
+    all_refs = sorted(sigma_refs | llm_refs | artifact_refs)
     rule_matches.sort(key=lambda item: item.get("matched_count", 0), reverse=True)
 
     mode_text = ("locally evaluated because the source has no query engine" if siem_type in LOCAL_SOURCES
@@ -140,6 +180,7 @@ async def run_soc_tools_node(state: HuntState) -> dict:
         "sigma_matched_count": len(all_refs), "sigma_matched_refs": all_refs,
         "sigma_rule_matches": [{key: value for key, value in item.items() if key != "matched_indices"}
                                for item in rule_matches],
+        "evidence_highlights": evidence_highlights,
         "enrichment": {
             "technique_id": technique_id, "log_count_analyzed": len(processed_logs),
             "sigma_execution_mode": coverage.get("mode"), "sigma_query_coverage": coverage,

@@ -32,11 +32,15 @@ import random
 import datetime
 import json
 
+import httpx
+
 from services.siem import file_log_parser
 from services.siem import logrhythm as logrhythm_connector
 from services.siem import splunk as splunk_connector
 from services.siem import qradar as qradar_connector
 from services.siem import wazuh as wazuh_connector
+from services.integrations import api_connector
+from services.integrations.catalog import INTEGRATION_CATALOG
 from services.observability import cache
 from services.runtime_config import env_or_runtime
 
@@ -224,7 +228,20 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
                 "error": str(e),
             }
 
+    if siem_type in INTEGRATION_CATALOG:
+        try:
+            return api_connector.fetch_logs(siem_type, query, limit)
+        except (api_connector.IntegrationConfigError, httpx.HTTPError, ValueError) as e:
+            return {
+                "siem_type": siem_type,
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": str(e),
+            }
+
     raise NotImplementedError(
         f"SIEM_TYPE='{siem_type}' is not implemented yet. "
-        f"Supported: mock, folder, logrhythm, splunk, qradar, wazuh."
+        f"Supported: mock, folder, logrhythm, splunk, qradar, wazuh, "
+        f"and configured direct integrations."
     )

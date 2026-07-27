@@ -1,0 +1,1062 @@
+{
+  "sheet": "Sheet1",
+  "range": "A1:F133",
+  "sources": [
+    {
+      "Sl. No": 1,
+      "Source": "https://openphish.com/feed.txt",
+      "Threat Category": "Phishing",
+      "IOC type": "URL",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 2,
+      "Source": "http://malc0de.com/bl/",
+      "Threat Category": "Malware",
+      "IOC type": "IP",
+      "Weightage": "High",
+      "Integration": "Need script and has a captcha"
+    },
+    {
+      "Sl. No": 3,
+      "Source": "https://urlhaus.abuse.ch/browse/",
+      "Threat Category": "Malware",
+      "IOC type": "URL",
+      "Weightage": "High",
+      "Integration": "has a csv download and API too"
+    },
+    {
+      "Sl. No": 4,
+      "Source": "https://ransomwaretracker.abuse.ch/blocklist/",
+      "Threat Category": "Ransomware",
+      "IOC type": "Domain, URL, IP",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 5,
+      "Source": "https://ransomwaretracker.abuse.ch/tracker/",
+      "Threat Category": "Malware",
+      "IOC type": "IP",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 6,
+      "Source": "https://feodotracker.abuse.ch/blocklist/",
+      "Threat Category": "Botnet, C2",
+      "IOC type": "Hash, IP, Snort rules",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 7,
+      "Source": "http://malc0de.com/database/",
+      "Threat Category": "Malware",
+      "IOC type": "Domain, IP",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 8,
+      "Source": "https://zeustracker.abuse.ch/blocklist.php",
+      "Threat Category": "Malware",
+      "IOC type": "IP, URL, Domain",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 9,
+      "Source": "http://www.malshare.com/daily/",
+      "Threat Category": "Malware",
+      "IOC type": "Hash",
+      "Weightage": "High",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 10,
+      "Source": "https://check.torproject.org/exit-addresses",
+      "Threat Category": "TOR Exit Node",
+      "IOC type": "IP",
+      "Weightage": "Average",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 11,
+      "Source": "http://torstatus.blutmagie.de/ip_list_exit.php/Tor_ip_list_EXIT.csv",
+      "Threat Category": "TOR Exit Node",
+      "IOC type": "IP",
+      "Weightage": "Average",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 12,
+      "Source": "http://torstatus.blutmagie.de/ip_list_all.php/Tor_ip_list_ALL.csv",
+      "Threat Category": "TOR Exit Node",
+      "IOC type": "IP",
+      "Weightage": "Average",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 13,
+      "Source": "https://avcaesar.malware.lu",
+      "Threat Category": "Malware",
+      "IOC type": "IP, Hash",
+      "Weightage": "Average",
+      "Integration": "API available"
+    },
+    {
+      "Sl. No": 14,
+      "Source": "https://virusshare.com/hashes.4n6",
+      "Threat Category": "malware",
+      "IOC type": "Hash",
+      "Weightage": "Good",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 15,
+      "Source": "http://osint.bambenekconsulting.com/feeds/c 2-ipmasterlist.txt",
+      "Threat Category": "C2",
+      "IOC type": "IP",
+      "Weightage": "Good",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 16,
+      "Source": "http://iplists.firehol.org/",
+      "Threat Category": "Malware, C2",
+      "IOC type": "IP",
+      "Weightage": "Good",
+      "Integration": "Need script"
+    },
+    {
+      "Sl. No": 17,
+      "Source": "https://www.cyber45.com/malware-tracker+",
+      "Threat Category": "Malware",
+      "IOC type": "IP, Hash,",
+      "Weightage": "Good",
+      "Integration": "Script available"
+    },
+    {
+      "Sl. No": 18,
+      "Source": "https://myip.ms/files/blacklist/general/latest_blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "Good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 19,
+      "Source": "https://www.dshield.org/ipsascii.html",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "API available"
+    },
+    {
+      "Sl. No": 20,
+      "Source": "http://malc0de.com/bl/IP_Blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 21,
+      "Source": "https://db.aa419.org/fakebankslist.php",
+      "Threat Category": "fake websites",
+      "IOC type": "domains",
+      "Weightage": "Average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 22,
+      "Source": "https://easylist-downloads.adblockplus.org/malwaredomains_full.txt",
+      "Threat Category": "malicious domains",
+      "IOC type": "domains",
+      "Weightage": "Good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 23,
+      "Source": "https://raw.githubusercontent.com/ABPindo/indonesianadblockrules/master/subscriptions/abpindo.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 24,
+      "Source": "https://raw.githubusercontent.com/greatis/Anti-WebMiner/master/blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 25,
+      "Source": "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 26,
+      "Source": "http://osint.bambenekconsulting.com/feeds/dga-feed.txt",
+      "Threat Category": "malicious domains",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 27,
+      "Source": "https://raw.githubusercontent.com/betterwebleon/slovenian-list/master/filters.txt",
+      "Threat Category": "malicious domains",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 28,
+      "Source": "https://raw.githubusercontent.com/CHEF-KOCH/BarbBlock-filter-list/master/OpenWrt.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 29,
+      "Source": "http://www.carl.net/spam/access.txt",
+      "Threat Category": "malicious domains",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 30,
+      "Source": "https://mirror.cedia.org.ec/malwaredomains/",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": ".txt files available to download"
+    },
+    {
+      "Sl. No": 31,
+      "Source": "https://raw.githubusercontent.com/CHEF-KOCH/BarbBlock-filter-list/master/uBlock.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 32,
+      "Source": "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 33,
+      "Source": "https://raw.githubusercontent.com/Dawsey21/Lists/master/main-blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 34,
+      "Source": "http://mirror1.malwaredomains.com/files/domains.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 35,
+      "Source": "https://ransomwaretracker.abuse.ch/downloads/RW_DOMBL.txt",
+      "Threat Category": "Ransomware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 36,
+      "Source": "https://www.dshield.org/feeds/suspiciousdomains_Low.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 37,
+      "Source": "https://www.dshield.org/feeds/suspiciousdomains_Medium.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 38,
+      "Source": "https://www.dshield.org/feeds/suspiciousdomains_High.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 39,
+      "Source": "https://bitbucket.org/ethanr/dns-blacklists/raw/8575c9f96e5b4a1308f2f12394abd86d0927a4a0/bad_lists/Mandiant_APT1_Report_Appendix_D.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 40,
+      "Source": "https://v.firebog.net/hosts/AdguardDNS.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 41,
+      "Source": "https://v.firebog.net/hosts/Airelle-hrsk.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 42,
+      "Source": "https://v.firebog.net/hosts/Airelle-trc.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 43,
+      "Source": "https://v.firebog.net/hosts/BillStearns.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 44,
+      "Source": "https://v.firebog.net/hosts/Easylist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 45,
+      "Source": "https://v.firebog.net/hosts/Easyprivacy.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 46,
+      "Source": "https://v.firebog.net/hosts/Kowabit.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 47,
+      "Source": "https://v.firebog.net/hosts/Prigent-Ads.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 48,
+      "Source": "https://v.firebog.net/hosts/Prigent-Malware.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 49,
+      "Source": "https://v.firebog.net/hosts/Prigent-Phishing.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 50,
+      "Source": "https://v.firebog.net/hosts/Shalla-mal.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 51,
+      "Source": "https://v.firebog.net/hosts/static/w3kbl.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 52,
+      "Source": "https://raw.githubusercontent.com/gfmaster/adblock-korea-contrib/master/filter.txt",
+      "Threat Category": "korean adblock",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 53,
+      "Source": "https://hexxiumcreations.github.io/threat-list/hexxiumthreatlist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 54,
+      "Source": "https://hostsfile.mine.nu/hosts0.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 55,
+      "Source": "https://hosts-file.net/ad_servers.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 56,
+      "Source": "https://hosts-file.net/emd.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 57,
+      "Source": "https://hosts-file.net/grm.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 58,
+      "Source": "http://hosts-file.net/download/hosts.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 59,
+      "Source": "https://hosts-file.net/psh.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 60,
+      "Source": "https://raw.githubusercontent.com/joelotz/URL_Blacklist/master/blacklist.csv",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 61,
+      "Source": "https://joewein.net/dl/bl/dom-bl-base.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 62,
+      "Source": "https://joewein.net/dl/bl/dom-bl.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 63,
+      "Source": "https://joewein.net/dl/bl/from-bl.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 64,
+      "Source": "https://raw.githubusercontent.com/azet12/KADhosts/master/KADhosts.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 65,
+      "Source": "http://www.malwaredomainlist.com/hostslist/hosts.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 66,
+      "Source": "https://github.com/matomo-org/referrer-spam-blacklist/blob/master/spammers.txt",
+      "Threat Category": "spam",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 67,
+      "Source": "https://github.com/mitchellkrogza/The-Big-List-of-Hacked-Malware-Web-Sites/blob/master/hacked-domains.list",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 68,
+      "Source": "https://raw.githubusercontent.com/mitchellkrogza/Badd-Boyz-Hosts/master/PULL_REQUESTS/domains.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 69,
+      "Source": "https://raw.githubusercontent.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker/master/_generator_lists/bad-referrers.list",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 70,
+      "Source": "https://raw.githubusercontent.com/oleksiig/Squid-BlackList/master/denied_ext.conf",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 71,
+      "Source": "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt",
+      "Threat Category": "Phishing",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 72,
+      "Source": "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/android-tracking.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 73,
+      "Source": "https://raw.githubusercontent.com/quedlin/blacklist/master/domains",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 74,
+      "Source": "https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-blocklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 75,
+      "Source": "https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-malware.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 76,
+      "Source": "https://hostsfile.org/Downloads/hosts.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 77,
+      "Source": "https://someonewhocares.org/hosts/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 78,
+      "Source": "https://www.squidblacklist.org/downloads/dg-ads.acl",
+      "Threat Category": "adware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 79,
+      "Source": "https://www.squidblacklist.org/downloads/dg-malicious.acl",
+      "Threat Category": "malicious domains",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 80,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/add.2o7Net/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 81,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/add.Risk/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 82,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling-porn-social/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 83,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 84,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/add.Spam/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 85,
+      "Source": "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/UncheckyAds/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 86,
+      "Source": "https://raw.githubusercontent.com/CHEF-KOCH/BarbBlock-filter-list/master/HOSTS.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 87,
+      "Source": "https://raw.githubusercontent.com/CHEF-KOCH/BarbBlock-filter-list/master/HOSTS-nulled.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 88,
+      "Source": "https://www.stopforumspam.com/downloads/toxic_domains_whole.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 89,
+      "Source": "https://raw.githubusercontent.com/tankmohit/UnifiedHosts/master/hosts.all",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 90,
+      "Source": "http://www.taz.net.au/Mail/SpamDomains",
+      "Threat Category": "spam",
+      "IOC type": "domains,ip",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 91,
+      "Source": "https://raw.githubusercontent.com/vokins/yhosts/master/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 92,
+      "Source": "http://winhelp2002.mvps.org/hosts.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 93,
+      "Source": "https://raw.githubusercontent.com/yous/YousList/master/youslist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 94,
+      "Source": "http://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 95,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/hosts",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 96,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/hosts_browser",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 97,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/hosts_optional",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 98,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/list.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 99,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/list_browser.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 100,
+      "Source": "https://zerodot1.gitlab.io/CoinBlockerLists/list_browser_UBO.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "average",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 101,
+      "Source": "https://docs.google.com/spreadsheets/u/1/d/1TWS238xacAto-fLKh1n5uTsdijWdCEsGIM0Y0Hvmc5g/pubhtml#",
+      "Threat Category": "Ransomware",
+      "IOC type": "domains",
+      "Weightage": "high",
+      "Integration": "need script or you can download spreadsheet"
+    },
+    {
+      "Sl. No": 102,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_abusers_1d.netset",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 103,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_abusers_30d.netset",
+      "Threat Category": "abuse",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 104,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_anonymous.netset",
+      "Threat Category": "annonimyzers",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 105,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 106,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 107,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 108,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level4.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 109,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_proxies.netset",
+      "Threat Category": "anonymizers",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 110,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_webclient.netset",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 111,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_webserver.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 112,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/gofferje_sip.netset",
+      "Threat Category": "attacks",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 113,
+      "Source": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/graphiclineweb.netset",
+      "Threat Category": "abuse",
+      "IOC type": "ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 114,
+      "Source": "https://github.com/firehol/blocklist-ipsets",
+      "Threat Category": "malware",
+      "IOC type": "domains,ip",
+      "Weightage": "high",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 115,
+      "Source": "https://www.projecthoneypot.org/list_of_ips.php",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 116,
+      "Source": "https://rescure.fruxlabs.com/rescure_malware_hashes.txt",
+      "Threat Category": "malware",
+      "IOC type": "hash",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 117,
+      "Source": "https://rescure.fruxlabs.com/rescure_blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "ip",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 118,
+      "Source": "https://rescure.fruxlabs.com/rescure_domain_blacklist.txt",
+      "Threat Category": "malware",
+      "IOC type": "domains",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 119,
+      "Source": "https://hashes.org/leaks.php",
+      "Threat Category": "malware",
+      "IOC type": "hash",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 120,
+      "Source": "http://tweettioc.com/",
+      "Threat Category": "All IOC",
+      "IOC type": "Domain, IP, Hash, URL, mail",
+      "Weightage": "good",
+      "Integration": "need script"
+    },
+    {
+      "Sl. No": 121,
+      "Source": "https://ddanchev.blogspot.com/",
+      "Threat Category": "SURFACE WEB",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 122,
+      "Source": "https://threatmap.checkpoint.com/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 123,
+      "Source": "https://www.fireeye.com/cyber-map/threat-map.html",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 124,
+      "Source": "https://cybermap.kaspersky.com/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 125,
+      "Source": "https://threatmap.fortiguard.com/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 126,
+      "Source": "https://www.akamai.com/uk/en/resources/visualizing-akamai/real-time-web-monitor.jsp",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 127,
+      "Source": "https://www.digitalattackmap.com/#anim=1&color=0&country=ALL&list=0&time=18188&view=map",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 128,
+      "Source": "https://map.lookingglasscyber.com/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 129,
+      "Source": "https://threatbutt.com/map/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 130,
+      "Source": "https://talosintelligence.com/fullpage_maps/pulse",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 131,
+      "Source": "https://www.sophos.com/en-us/threat-center/threat-monitoring/threatdashboard.aspx",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    },
+    {
+      "Sl. No": 132,
+      "Source": "https://scans.io/",
+      "Threat Category": "Malware, Exploit",
+      "IOC type": "IOC",
+      "Weightage": null,
+      "Integration": null
+    }
+  ]
+}

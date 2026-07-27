@@ -59,3 +59,46 @@ def test_follow_up_query_is_validated_immediately_before_siem_call(monkeypatch):
     assert captured["query"] == "SELECT * FROM events"
     assert result["query_used_fallback"] is True
     assert "complete SELECT" in result["query_validation_error"]
+
+
+def test_wazuh_technique_window_is_reused_across_related_hunts(monkeypatch):
+    values = {}
+    technique_calls = 0
+    normal_calls = 0
+
+    monkeypatch.setattr(
+        siem_fetch.cache,
+        "cache_get",
+        lambda namespace, payload: values.get((namespace, payload)),
+    )
+
+    def cache_set(namespace, payload, value, ttl=300):
+        values[(namespace, payload)] = value
+
+    monkeypatch.setattr(siem_fetch.cache, "cache_set", cache_set)
+
+    async def fake_call_tool(_name, payload):
+        nonlocal technique_calls, normal_calls
+        if "rule.mitre.id" in payload["query"]:
+            technique_calls += 1
+            return {"record_count": 1, "logs": [{"event": "technique event"}]}
+        normal_calls += 1
+        return {"record_count": 0, "logs": []}
+
+    monkeypatch.setattr(siem_fetch, "call_tool", fake_call_tool)
+    state = {
+        "siem_type": "wazuh",
+        "hypothesis_text": "Network service discovery",
+        "query": '{"query":{"match_all":{}}}',
+        "technique_id": "T1046",
+        "technique_name": "Network Service Discovery",
+        "executed_queries": [],
+    }
+    first = asyncio.run(siem_fetch.fetch_logs_node(state))
+    second = asyncio.run(siem_fetch.fetch_logs_node(state))
+
+    assert technique_calls == 1
+    assert normal_calls == 2
+    assert first["telemetry_cache_hit"] is False
+    assert second["telemetry_cache_hit"] is True
+    assert second["technique_telemetry_records"] == 1

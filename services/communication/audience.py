@@ -8,7 +8,7 @@ async def communicate_node(state: HuntState) -> dict:
     if style == "2":
         text = f"SOC analyst brief: {summary} Verify cited records and the verifier result before containment."
     elif style == "3":
-        text = f"Compliance brief: {summary} Retain this report, cited evidence, verifier outcome, and approval record for audit."
+        text = f"Compliance brief: {summary} Retain this report, cited evidence, verifier outcome, and case record for audit."
     else:
         text = f"Executive brief: {summary} No automated response action is taken by THOS."
     return {"communication_summary": text}

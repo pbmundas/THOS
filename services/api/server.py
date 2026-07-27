@@ -97,12 +97,19 @@ def refresh_hearth_hypotheses() -> dict:
     a fully air-gapped on-prem deployment."""
     from services.knowledge.hearth_fetch import fetch_and_parse_hearth
     from services.siem.clients import get_or_create_collection
+    from services.hunting.hearth import REQUIRED_GAP_HYPOTHESES
 
     try:
         items = fetch_and_parse_hearth()
     except Exception as e:  # noqa: BLE001
         return {"refreshed": False, "count": 0, "error": str(e)}
 
+    items_by_id = {str(item["id"]): item for item in items if item.get("id")}
+    items_by_id.update({
+        str(item["id"]): item for item in REQUIRED_GAP_HYPOTHESES
+        if item.get("id")
+    })
+    items = list(items_by_id.values())
     collection = get_or_create_collection("hearth_kb")
     ids = [h["id"] for h in items]
     docs = [f'{h["title"]}. {h["text"]}' for h in items]
@@ -110,12 +117,21 @@ def refresh_hearth_hypotheses() -> dict:
         {
             "id": h["id"], "title": h["title"], "tactic": h.get("tactic", ""),
             "technique": h.get("technique", ""), "text": h["text"],
+            "severity": h.get("severity", ""), "category": h.get("category", ""),
         }
         for h in items
     ]
     if ids:
+        existing_ids = set(collection.get(include=[]).get("ids", []))
+        stale_ids = sorted(existing_ids - set(ids))
+        if stale_ids:
+            collection.delete(ids=stale_ids)
         collection.upsert(ids=ids, documents=docs, metadatas=metas)
-    return {"refreshed": True, "count": len(ids)}
+    return {
+        "refreshed": True,
+        "count": len(ids),
+        "retired_removed": len(stale_ids) if ids else 0,
+    }
 
 
 # ---------------------------------------------------------------
@@ -330,7 +346,7 @@ def cache_lookup(namespace: str, payload: str) -> dict:
 
 
 @mcp.tool()
-def cache_store(namespace: str, payload: str, value: dict, ttl_seconds: int = 900) -> dict:
+def cache_store(namespace: str, payload: str, value: dict, ttl_seconds: int = 300) -> dict:
     """Store a value in cache under namespace + payload, with a TTL."""
     cache.cache_set(namespace, payload, value, ttl_seconds)
     return {"stored": True}

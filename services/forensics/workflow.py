@@ -36,8 +36,14 @@ async def run_forensic_case(case_dir: str, progress: Progress | None = None) -> 
             output = await asyncio.to_thread(function, case_dir)
         elif stage_id == "forensic_artifact":
             output = await asyncio.to_thread(function, values["forensic_intake"])
-        else:
+        elif stage_id == "forensic_correlation":
             output = await asyncio.to_thread(function, values["forensic_artifact"])
+        else:
+            output = await asyncio.to_thread(
+                function,
+                values["forensic_artifact"],
+                values["forensic_correlation"],
+            )
         values[stage_id] = output
         duration_ms = int((time.perf_counter() - started) * 1000)
         if progress:

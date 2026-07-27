@@ -23,8 +23,9 @@ def test_supervisor_selects_optional_read_only_branches():
         "hypothesis_text": "Investigate domain IOC and DNS activity",
         "siem_type": "folder",
     }))
-    assert "threat_intel_enrichment" in result["plan"]
-    assert "coverage_gap_check" in result["plan"]
+    assert "threat_intel" in result["plan"]
+    assert "coverage_gap" in result["plan"]
+    assert "adaptive_replan" in result["plan"]
     assert result["plan"][-1] == "report"
 
 
@@ -46,7 +47,7 @@ def test_verifier_requires_valid_citations():
     assert passed["verifier_result"]["status"] == "passed"
     assert failed["verifier_result"]["status"] == "passed"
     assert len(failed["verifier_result"]["repaired_references"]) == 1
-    assert failed["human_approval_required"] is True
+    assert failed["analyst_review_required"] is True
 
 
 def test_verifier_accepts_bounded_reference_lists_and_ranges():
@@ -87,11 +88,8 @@ def test_report_sample_is_bounded_valid_json():
     assert len(parsed[0]["detail"]) <= 501
 
 
-def test_verifier_proactively_creates_case_and_approval_on_failure():
-    with patch("services.observability.audit.create_approval", new_callable=AsyncMock) as mock_create_approval, \
-         patch("services.observability.audit.create_case", new_callable=AsyncMock) as mock_create_case:
-        
-        mock_create_approval.return_value = {"approval_id": "mock-approval-123"}
+def test_verifier_proactively_creates_case_on_failure():
+    with patch("services.observability.audit.create_case", new_callable=AsyncMock) as mock_create_case:
         mock_create_case.return_value = {"case_id": "mock-case-123"}
         
         result = asyncio.run(verify_findings_node({
@@ -104,11 +102,9 @@ def test_verifier_proactively_creates_case_and_approval_on_failure():
         }))
         
         assert result["verifier_result"]["status"] == "failed"
-        assert result["human_approval_required"] is True
-        assert result["approval_id"] == "mock-approval-123"
+        assert result["analyst_review_required"] is True
+        assert "approval_id" not in result
         assert result["case_id"] == "mock-case-123"
-        
-        mock_create_approval.assert_called_once_with("test-hunt-id", result["verifier_result"]["reason"])
         mock_create_case.assert_called_once_with(
             "test-hunt-id",
             "Analyst review required: Test Technique",
@@ -147,8 +143,7 @@ def test_write_report_node_with_lifecycle_fields():
             "case_id": "mock-case-123",
             "coverage_gaps": ["Log check"],
             "hunt_memory": [{"hunt_id": "old-hunt", "status": "completed"}],
-            "approval_id": "mock-approval-123",
-            "human_approval_required": False
+            "analyst_review_required": False
         }
         
         result = asyncio.run(write_report_node(state))
@@ -160,7 +155,7 @@ def test_write_report_node_with_lifecycle_fields():
         assert kwargs["plan"] == ["guardrail", "query_gen"]
         assert kwargs["guardrail_result"] == {"status": "clean", "scanned_records": 1, "hits": []}
         assert kwargs["case_id"] == "mock-case-123"
-        assert kwargs["approval_id"] == "mock-approval-123"
+        assert "approval_id" not in kwargs
         assert kwargs["hunt_started_at"] == "2026-07-26T09:00:00+05:30"
         assert kwargs["hunt_completed_at"]
         assert result["hunt_completed_at"] == kwargs["hunt_completed_at"]
@@ -192,6 +187,9 @@ def test_hunt_report_contains_local_audit_timestamps(tmp_path):
     with open(path, encoding="utf-8") as report_file:
         content = report_file.read()
     assert "## Hunt Timing & Audit Trail" in content
+    assert content.index("## Hunt Summary") < content.index("## Hunt Timing & Audit Trail")
+    assert "No malicious activity found." in content
+    assert "Verification & Escalation Approvals" not in content
     assert "| Hunt started | 2026-07-26 10:00:00 +0530" in content
     assert "| Hunt completed | 2026-07-26 10:15:25 +0530" in content
     assert "| Report generated | 2026-07-26 10:15:30 +0530" in content

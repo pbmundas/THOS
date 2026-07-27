@@ -15,8 +15,8 @@ Endpoints:
                          blocking wait)
 
 Extension point (Phase 2+): add a `/hunt/{hunt_id}/continue` endpoint that
-resumes a paused graph (e.g. after a human-approval gate) using
-LangGraph's checkpointing, instead of always running start-to-finish.
+resumes a paused graph using LangGraph's checkpointing, instead of always
+running start-to-finish.
 """
 import base64
 import json
@@ -43,10 +43,13 @@ from services.observability.logging_config import (
     reset_hunt_context,
     set_hunt_context,
 )
-from services.detection_engineering.rule_drafter import detection_rule_approval_error
 from services.runtime_config import get_value
 from services.agents.registry import agent_by_graph_node
-from services.reasoning.model_router import target_for
+from services.reasoning.model_router import (
+    reset_model_workload,
+    set_model_workload,
+    target_for,
+)
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -208,6 +211,9 @@ class HuntRequest(BaseModel):
     # "1" = Executive cover page (plain-language, for management/compliance)
     # "2" = SOC Analyst cover panel (technique/tactic/ingestion-stats table)
     cover_style: str = "1"
+    workload_class: str = Field(
+        default="interactive", pattern="^(interactive|scheduled)$"
+    )
 
 
 class CaseCreateRequest(BaseModel):
@@ -227,11 +233,6 @@ class CaseUpdateRequest(BaseModel):
     actor: str = "api-user"
 
 
-class ApprovalDecisionRequest(BaseModel):
-    status: str
-    decided_by: str
-
-
 class FeedbackRequest(BaseModel):
     hunt_id: str
     rating: str
@@ -240,16 +241,25 @@ class FeedbackRequest(BaseModel):
     analyst_name: str = "api-user"
 
 
-class RulePromotionRequest(BaseModel):
-    hunt_id: str
-    rule_yaml: str
-    approval_id: str
+class AuditEventRequest(BaseModel):
+    level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR)$")
+    service: str = Field(default="thos-ui", min_length=1, max_length=120)
+    category: str = Field(default="operation", min_length=1, max_length=120)
+    actor: str = Field(default="", max_length=160)
+    action: str = Field(min_length=1, max_length=200)
+    resource: str = Field(default="", max_length=1000)
+    status_code: int | None = Field(default=None, ge=100, le=599)
+    duration_ms: int | None = Field(default=None, ge=0)
+    message: str = Field(min_length=1, max_length=4000)
+    context: dict = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=16_000)
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     analyst: str = "analyst"
+    role: str = Field(default="Expert", pattern="^(Admin|SME|Expert)$")
+    permissions: list[str] = Field(default_factory=list, max_length=32)
 
 
 class ChatConversationRequest(BaseModel):
@@ -262,6 +272,23 @@ class ScheduledSigmaRequest(BaseModel):
     rule_id: str = Field(min_length=1, max_length=256)
     siem_type: str = Field(pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar)$")
     log_source_path: str | None = None
+
+
+class ScheduledSigmaBatchRequest(BaseModel):
+    schedule_id: str = Field(min_length=1, max_length=128)
+    rule_ids: list[str] = Field(min_length=1, max_length=500)
+    siem_type: str = Field(pattern="^wazuh$")
+
+
+class YaraScanRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    recursive: bool = True
+    rule_id: str | None = Field(default=None, max_length=256)
+    modified_since: str | None = None
+
+
+class ScheduledYaraRequest(YaraScanRequest):
+    schedule_id: str = Field(min_length=1, max_length=128)
 
 
 class ForensicAnalyzeRequest(BaseModel):
@@ -288,8 +315,12 @@ def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
         "need_more_logs": False,
         "executed_queries": [],
         "max_reasoning_followups": max(0, MAX_REASONING_FOLLOWUPS),
+        "adaptive_replans": 0,
+        "max_adaptive_replans": 1,
+        "replan_history": [],
         "enrichment": {},
         "cover_style": req.cover_style,
+        "workload_class": req.workload_class,
     }
 
 
@@ -307,6 +338,39 @@ async def hypotheses(tactic: str = ""):
 @app.get("/hypotheses/last-runs", dependencies=[Depends(require_api_key)])
 async def hypothesis_last_runs():
     return await audit.hypothesis_last_runs()
+
+
+@app.get("/hypotheses/duration-stats", dependencies=[Depends(require_api_key)])
+async def hypothesis_duration_stats(limit_per_hypothesis: int = 30):
+    return await audit.hypothesis_duration_statistics(limit_per_hypothesis)
+
+
+@app.get("/dashboard/operations", dependencies=[Depends(require_api_key)])
+async def operations_dashboard(hours: int = 24):
+    return await audit.operations_dashboard(max(1, min(hours, 24 * 365)))
+
+
+@app.post("/audit/events", dependencies=[Depends(require_api_key)], status_code=202)
+async def record_audit_event(request: AuditEventRequest):
+    await audit.log_platform_event(request.model_dump())
+    return {"recorded": True}
+
+
+@app.get("/audit/logs", dependencies=[Depends(require_api_key)])
+async def platform_audit_logs(
+    hours: int = 24,
+    limit: int = 500,
+    level: str = "all",
+    query: str = "",
+):
+    if level.lower() not in {"all", "debug", "info", "warning", "error"}:
+        raise HTTPException(status_code=422, detail="invalid log level")
+    return await audit.list_platform_audit_logs(
+        hours=max(1, min(hours, 24 * 365)),
+        limit=max(1, min(limit, 2000)),
+        level=level,
+        query=query,
+    )
 
 
 @app.get("/hunts", dependencies=[Depends(require_api_key)])
@@ -475,6 +539,54 @@ async def run_scheduled_sigma(request: ScheduledSigmaRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@app.post("/sigma/scheduled/run-batch", dependencies=[Depends(require_api_key)])
+async def run_scheduled_sigma_batch(request: ScheduledSigmaBatchRequest):
+    from services.detection.sigma_detection_agent import (
+        run_scheduled_sigma_batch as execute_batch,
+    )
+
+    results = await execute_batch(
+        schedule_id=request.schedule_id,
+        rule_ids=request.rule_ids,
+        siem_type=request.siem_type,
+    )
+    stored_results = []
+    for result in results:
+        if result.get("status") == "detected" and result.get("events_matched", 0):
+            triage = (result.get("analysis") or {}).get("triage") or {}
+            case = await audit.create_case(
+                None,
+                f"Scheduled detection: {result.get('rule_title') or result.get('rule_id')}",
+                str(triage.get("priority") or "medium"),
+                None,
+                str(triage.get("note") or result.get("analysis", {}).get("summary") or ""),
+                "scheduled-detection-agent",
+            )
+            if case:
+                result["case_id"] = str(case["case_id"])
+        stored = await audit.log_sigma_detection(result)
+        stored_results.append(stored or result)
+    return {
+        "execution_mode": "wazuh_msearch",
+        "rules_submitted": len(request.rule_ids),
+        "results": stored_results,
+    }
+
+
+@app.get("/sigma/catalog/ready", dependencies=[Depends(require_api_key)])
+async def ready_sigma_rules(siem_type: str):
+    """Return the current schema-compatible rule IDs for bounded batch scheduling."""
+    from services.detection.sigma_query_catalog import ready_rule_ids
+
+    if siem_type not in {"wazuh", "splunk"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Bulk Sigma scheduling requires a precompiled Wazuh or Splunk backend",
+        )
+    rule_ids = ready_rule_ids(siem_type)
+    return {"siem_type": siem_type, "rule_ids": rule_ids, "count": len(rule_ids)}
+
+
 @app.post("/siem/test/{siem_type}", dependencies=[Depends(require_api_key)])
 async def test_siem_connection(siem_type: str):
     queries = {
@@ -493,18 +605,83 @@ async def test_siem_connection(siem_type: str):
     return {"status": "connected", "siem_type": siem_type, "record_count": result.get("record_count", 0)}
 
 
+def _managed_yara_targets(value: str, recursive: bool,
+                          modified_since: str | None = None) -> list[str]:
+    candidate = Path(value).resolve()
+    allowed_roots = [
+        Path(os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")).resolve(),
+        Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic")).resolve(),
+    ]
+    if not any(candidate == root or root in candidate.parents for root in allowed_roots):
+        raise HTTPException(status_code=422, detail="YARA target is outside managed evidence roots")
+    cutoff = None
+    if modified_since:
+        try:
+            cutoff = datetime.fromisoformat(modified_since).timestamp()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="modified_since must be ISO-8601") from exc
+    if candidate.is_file():
+        return [str(candidate)] if cutoff is None or candidate.stat().st_mtime > cutoff else []
+    if not candidate.is_dir():
+        raise HTTPException(status_code=404, detail="YARA target does not exist")
+    iterator = candidate.rglob("*") if recursive else candidate.glob("*")
+    return [
+        str(path) for path in iterator
+        if path.is_file() and (cutoff is None or path.stat().st_mtime > cutoff)
+    ][:1_000]
+
+
+@app.post("/yara/scan", dependencies=[Depends(require_api_key)])
+async def run_yara_scan(request: YaraScanRequest):
+    from services.detection.yara_engine import scan_paths
+
+    targets = _managed_yara_targets(
+        request.path, request.recursive, request.modified_since,
+    )
+    started_at = time.perf_counter()
+    result = await asyncio.to_thread(
+        scan_paths,
+        targets,
+        {request.rule_id} if request.rule_id else None,
+    )
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    return {
+        **result,
+        "duration_ms": duration_ms,
+        "files_scanned": len(targets),
+        "modified_since": request.modified_since,
+        "files_per_second": round(
+            len(targets) / max(duration_ms / 1000, 0.001), 3
+        ),
+    }
+
+
+@app.post("/yara/scheduled/run", dependencies=[Depends(require_api_key)])
+async def run_scheduled_yara(request: ScheduledYaraRequest):
+    result = await run_yara_scan(request)
+    return {
+        **result,
+        "schedule_id": request.schedule_id,
+        "rule_id": request.rule_id or "__all_enabled__",
+        "status": "detected" if result.get("match_count") else "completed",
+    }
+
+
 _NEXT_PIPELINE_NODE = {
     "refresh_hearth_kb": "hypothesis", "hypothesis": "hunt_memory",
     "hunt_memory": "supervisor", "supervisor": "query_gen",
     "query_gen": "siem_fetch", "siem_fetch": "log_processing",
     "log_processing": "guardrail", "guardrail": "soc_tools",
-    "soc_tools": "coverage_gap", "coverage_gap": "threat_intel",
+    "soc_tools": "coverage_gap", "coverage_gap": "adaptive_replan",
     "threat_intel": "reasoning", "verifier": "detection_engineering",
     "detection_engineering": "communication", "communication": "report",
 }
 
 
 def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
+    if completed_node == "adaptive_replan":
+        from services.orchestration.graph import route_after_adaptive_replan
+        return route_after_adaptive_replan(state)
     if completed_node == "reasoning":
         from services.orchestration.graph import route_after_reasoning
         route = route_after_reasoning(state)
@@ -548,7 +725,13 @@ async def chat_with_model(request: ChatRequest):
             conversation["id"],
             {"role": "user", "content": request.message},
         )
-        result = await chat(request.message, history, request.analyst)
+        result = await chat(
+            request.message,
+            history,
+            request.analyst,
+            role=request.role,
+            permissions=request.permissions,
+        )
         answer = str(result.get("answer", "")).strip()
         if not answer:
             raise RuntimeError("chat completed without an answer")
@@ -561,6 +744,7 @@ async def chat_with_model(request: ChatRequest):
                 "content": answer,
                 "tools": result.get("tools_used", []),
                 "sources": result.get("knowledge_sources", []),
+                "agents": result.get("delegated_agents", []),
             },
         )
         return {
@@ -711,26 +895,6 @@ async def update_case(case_id: str, request: CaseUpdateRequest):
     return result
 
 
-@app.post("/approvals/{approval_id}/decision", dependencies=[Depends(require_api_key)])
-async def decide_approval(approval_id: str, request: ApprovalDecisionRequest):
-    if request.status not in {"approved", "rejected"}:
-        raise HTTPException(status_code=422, detail="status must be approved or rejected")
-    decided_by = request.decided_by.strip()
-    if not decided_by:
-        raise HTTPException(status_code=422, detail="decided_by must identify the human reviewer")
-    result = await audit.decide_approval(approval_id, request.status, decided_by)
-    if result is None:
-        raise HTTPException(status_code=404, detail="pending approval not found")
-    return result
-
-
-@app.get("/approvals", dependencies=[Depends(require_api_key)])
-async def approvals(status: str | None = "pending", limit: int = 100):
-    if status and status not in {"pending", "approved", "rejected"}:
-        raise HTTPException(status_code=422, detail="invalid approval status")
-    return await audit.list_approvals(status, max(1, min(limit, 200)))
-
-
 @app.post("/feedback", dependencies=[Depends(require_api_key)], status_code=201)
 async def capture_feedback(request: FeedbackRequest):
     if request.rating not in _FEEDBACK_RATINGS:
@@ -753,42 +917,12 @@ async def get_hunt_metrics(hunt_id: str):
     return await audit.hunt_metrics(hunt_id)
 
 
-@app.post("/detection-rules/promote", dependencies=[Depends(require_api_key)], status_code=201)
-async def promote_detection_rule(request: RulePromotionRequest):
-    """Stage a proposal only after a human approved this exact rule content."""
-    rule = request.rule_yaml.strip()
-    if not request.hunt_id.strip() or not request.approval_id.strip():
-        raise HTTPException(status_code=422, detail="hunt_id and approval_id are required")
-    if len(rule) > 20_000 or "status: experimental" not in rule or "title:" not in rule or "detection:" not in rule:
-        raise HTTPException(status_code=422, detail="only an experimental THOS detection proposal may be staged")
-    approval = await audit.get_approval(request.approval_id)
-    approval_error = detection_rule_approval_error(approval, request.hunt_id, rule)
-    if approval_error:
-        raise HTTPException(status_code=403, detail=approval_error)
-    staging = Path(os.environ.get("DETECTION_PROPOSALS_DIR", "/data/detection_rule_proposals"))
-    staging.mkdir(parents=True, exist_ok=True)
-    safe_hunt = "".join(char for char in request.hunt_id if char.isalnum() or char == "-")[:64]
-    path = staging / f"{safe_hunt}_approved.yml"
-    path.write_text(
-        f"# Approval: {request.approval_id}\n"
-        f"# Approved by: {approval['decided_by']}\n"
-        f"# Hunt: {request.hunt_id}\n{rule}\n",
-        encoding="utf-8",
-    )
-    return {"status": "staged", "path": str(path), "message": "Rule is staged only; review and merge it into the live ruleset through change control."}
-
-
 async def _create_review_artifacts(hunt_id: str, final_state: dict, owner: str) -> None:
-    """Persist approval + case artifacts once the verifier requires review."""
-    if not final_state.get("human_approval_required"):
+    """Persist a case when deterministic verification requires analyst review."""
+    if not final_state.get("analyst_review_required"):
         return
-    if final_state.get("approval_id") or final_state.get("case_id"):
+    if final_state.get("case_id"):
         return
-    approval = await audit.create_approval(
-        hunt_id, final_state.get("escalation_reason") or "Verifier requested analyst review",
-    )
-    if approval:
-        final_state["approval_id"] = str(approval["approval_id"])
     case = await audit.create_case(
         hunt_id, f"Analyst review required: {final_state.get('technique_name') or 'THOS hunt'}",
         "high", owner, final_state.get("reasoning_summary"), "thos-verifier",
@@ -828,6 +962,7 @@ async def run_hunt(req: HuntRequest):
     # request handled by this worker (or logging done outside any hunt)
     # doesn't inherit a stale hunt_id.
     ctx_tokens = set_hunt_context(hunt_id, req.hunter_name)
+    workload_token = set_model_workload(req.workload_class)
     try:
         logger.info("hunt started", extra={"hypothesis_id": req.hypothesis_id, "siem_type": req.siem_type})
 
@@ -891,6 +1026,7 @@ async def run_hunt(req: HuntRequest):
         ))
         raise
     finally:
+        reset_model_workload(workload_token)
         reset_hunt_context(ctx_tokens)
 
 
@@ -941,6 +1077,7 @@ async def run_hunt_stream(req: HuntRequest):
     async def produce_hunt() -> None:
         """Run independently of the HTTP consumer so a browser disconnect cannot cancel the hunt."""
         gen_ctx_tokens = set_hunt_context(hunt_id, req.hunter_name)
+        workload_token = set_model_workload(req.workload_class)
         final_state = dict(state)
         last_step_at = time.perf_counter()
         terminal_recorded = False
@@ -1023,6 +1160,7 @@ async def run_hunt_stream(req: HuntRequest):
                     hunt_id, "failed", "worker", interruption, _audit_outcome(final_state),
                 ))
             await slot.__aexit__(None, None, None)
+            reset_model_workload(workload_token)
             reset_hunt_context(gen_ctx_tokens)
             await events.put(None)
 

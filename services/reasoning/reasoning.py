@@ -140,6 +140,13 @@ Write a thorough analysis, not a one-line verdict. Specifically:
      audit policy, GPO setting, Sysmon config, or log source to check,
      not generic phrases like "review manually."
 
+OUTPUT DISCIPLINE:
+  - Return between 1 and 4 findings, choosing the strongest supported evidence.
+  - Keep the complete JSON response under 5,000 characters.
+  - Use only exact numeric `_ref` values from the supplied sample, compact
+    comma/range syntax, or `histogram`; never add prose to `ref`.
+  - Close every JSON string, array, and object within the response budget.
+
 Respond ONLY with a JSON object with these exact keys:
 {
   "summary": "<3-5 sentence executive summary with specifics>",
@@ -214,7 +221,9 @@ _PER_EVENT_TYPE_CAP = 4
 
 # Fields that carry raw, attacker-controlled text in a real intrusion
 # (as opposed to fields we generate ourselves, like "_ref"/"_sigma_match").
-_UNTRUSTED_TEXT_FIELDS = ("detail", "event", "user", "host", "src_ip", "dst_ip")
+_UNTRUSTED_TEXT_FIELDS = (
+    "detail", "evidence_summary", "event", "user", "host", "src_ip", "dst_ip",
+)
 
 # Phrases that indicate an embedded prompt-injection attempt inside log
 # content (e.g. a command line or filename crafted to talk to the model
@@ -254,6 +263,8 @@ def _slim_log(log: dict, ref: int, is_sigma_match: bool = False) -> dict:
             slim[field] = _sanitize_untrusted_text(slim[field])
     if isinstance(slim.get("detail"), str) and len(slim["detail"]) > _DETAIL_CHARS_IN_PROMPT:
         slim["detail"] = slim["detail"][:_DETAIL_CHARS_IN_PROMPT] + "…(truncated)"
+    if isinstance(slim.get("evidence_summary"), str) and len(slim["evidence_summary"]) > 1600:
+        slim["evidence_summary"] = slim["evidence_summary"][:1600] + "…(truncated)"
     slim["_ref"] = ref
     if is_sigma_match:
         slim["_sigma_match"] = True
@@ -394,8 +405,18 @@ async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | No
     failures: list[str] = []
     for attempt in range(1, REASONING_MAX_ATTEMPTS + 1):
         try:
+            attempt_prompt = prompt
+            if failures:
+                attempt_prompt += (
+                    "\n\nRETRY CORRECTION: The previous response was rejected because: "
+                    f"{failures[-1]}. Generate a new, complete JSON object from scratch. "
+                    "Keep it under 5,000 characters with no more than 4 findings. "
+                    "Every ref must be only an exact supplied numeric _ref, a comma/range "
+                    "combination of those refs, or histogram. Close every JSON string, array, "
+                    "and object."
+                )
             raw = await generate(
-                prompt,
+                attempt_prompt,
                 system=SYSTEM_PROMPT,
                 format=FINDINGS_SCHEMA,
                 agent="reasoning",
@@ -489,13 +510,70 @@ def _deterministic_reasoning_fallback(state: HuntState, histogram: dict) -> dict
             f"The available deterministic evidence {support} the hunting hypothesis. "
             f"THOS analyzed {len(logs)} normalized records and identified {len(matched)} "
             "records requiring review. The model-independent evidence fallback completed "
-            "the analysis and the findings below remain subject to human approval."
+            "the analysis; an analyst should review the cited evidence before action."
         ),
         "findings": findings,
         "recommendations": _recommendations_or_default(state, ""),
         "need_more_logs": False,
-        "follow_up_query": None,
+        "follow_up_query": "",
     }
+
+
+def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None:
+    """Return a model-free result when every deterministic evidence lane is empty.
+
+    Coverage gaps do not disable the optimization: a language model cannot
+    manufacture missing telemetry.  Instead, the deterministic fallback keeps
+    the outcome explicitly inconclusive and carries the gaps into the report.
+    """
+    # Missing fields mean a screening stage did not run; never reinterpret
+    # unavailable evidence lanes as verified zeroes.
+    required_lanes = (
+        "enrichment", "evidence_highlights", "enrichment_hits", "anomaly_scores"
+    )
+    if any(lane not in state for lane in required_lanes):
+        return None
+    enrichment = state.get("enrichment") or {}
+    sigma_matches = (
+        int(enrichment.get("sigma_matched_records") or 0)
+        if "sigma_matched_records" in enrichment
+        else len(state.get("sigma_matched_refs") or [])
+    )
+    artifact_matches = len(state.get("evidence_highlights") or [])
+    ioc_matches = len(state.get("enrichment_hits") or [])
+    behavioral_matches = (
+        len(state.get("anomaly_scores") or [])
+        + int(enrichment.get("llm_indicator_matched_records") or 0)
+    )
+    evidence_counts = {
+        "sigma": sigma_matches,
+        "artifact": artifact_matches,
+        "ioc": ioc_matches,
+        "behavioral": behavioral_matches,
+    }
+    if any(evidence_counts.values()):
+        return None
+
+    parsed = _deterministic_reasoning_fallback(state, histogram)
+    coverage_status = str(
+        (state.get("coverage_assessment") or {}).get("status") or "unknown"
+    )
+    if coverage_status != "covered":
+        parsed["summary"] = (
+            "Deterministic negative screening found zero Sigma, artifact, IOC, "
+            "or behavioral-evidence matches. Model reasoning was skipped because "
+            "it cannot compensate for absent evidence. Telemetry coverage is "
+            f"{coverage_status}, so the result is inconclusive rather than clean."
+        )
+    else:
+        parsed["summary"] = (
+            "Deterministic negative screening found zero Sigma, artifact, IOC, "
+            "or behavioral-evidence matches in the covered telemetry window. "
+            "Model reasoning was skipped; this absence does not prove the "
+            "hypothesis false."
+        )
+    parsed["_screening_counts"] = evidence_counts
+    return parsed
 
 
 async def _build_kb_context(state: HuntState, max_chunks: int = 3, max_chars: int = 600) -> str:
@@ -547,11 +625,35 @@ async def _build_kb_context(state: HuntState, max_chunks: int = 3, max_chars: in
 
 async def reason_node(state: HuntState) -> dict:
     processed_logs = state.get("processed_logs", [])
+    reasoning_logs = state.get("reasoning_logs") or processed_logs
     histogram = _event_histogram(processed_logs)
     sigma_matched_refs = state.get("sigma_matched_refs") or []
     sigma_matched_count = state.get("sigma_matched_count", 0)
 
-    diverse = _diverse_sample(processed_logs, _SAMPLE_SIZE, _PER_EVENT_TYPE_CAP,
+    screened = _negative_screening_result(state, histogram)
+    if screened is not None:
+        iteration = state.get("iteration", 0) + 1
+        return {
+            "reasoning_summary": screened["summary"],
+            "findings": _render_findings(screened["findings"]),
+            "recommendations": _recommendations_or_default(
+                state, screened.get("recommendations")
+            ),
+            "need_more_logs": False,
+            "follow_up_query": None,
+            "iteration": iteration,
+            "reasoning_cache_hit": False,
+            "reasoning_failed": False,
+            "reasoning_degraded": False,
+            "reasoning_mode": "deterministic_negative_screening",
+            "reasoning_attempts": 0,
+            "reasoning_error": None,
+            "reasoning_skipped": True,
+            "negative_screening_counts": screened["_screening_counts"],
+            "report_status": "pending",
+        }
+
+    diverse = _diverse_sample(reasoning_logs, _SAMPLE_SIZE, _PER_EVENT_TYPE_CAP,
                                priority_indices=sigma_matched_refs)
     matched_set = set(sigma_matched_refs)
     sample = [_slim_log(log, ref=i, is_sigma_match=(i in matched_set)) for i, log in diverse]
@@ -581,8 +683,10 @@ async def reason_node(state: HuntState) -> dict:
         f"below and were prioritized into it.\n"
     )
     coverage_section = "\n".join(f"- {gap}" for gap in state.get("coverage_gaps") or []) or "- No deterministic coverage gaps identified."
+    coverage_matrix = json.dumps(state.get("coverage_assessment") or {}, indent=2)
     intel_section = json.dumps(state.get("enrichment_hits") or [], indent=2)
     anomaly_section = json.dumps(state.get("anomaly_scores") or [], indent=2)
+    evidence_highlights_section = json.dumps(state.get("evidence_highlights") or [], indent=2)
     memory_section = json.dumps(state.get("hunt_memory") or [], indent=2, default=str)
 
     prompt = (
@@ -590,9 +694,12 @@ async def reason_node(state: HuntState) -> dict:
         f"MITRE technique: {state.get('technique_id')} ({state.get('technique_name')}) — {state.get('tactic')}\n"
         f"SIGMA rule draft + matcher results:\n{state.get('sigma_rule')}\n\n"
         f"Ingestion diagnostics:\n{diagnostics}\n"
+        f"MITRE ATT&CK telemetry coverage matrix:\n{coverage_matrix}\n\n"
         f"Deterministic coverage-gap assessment:\n{coverage_section}\n\n"
         f"On-prem threat-intel hits (local blocklist only):\n{intel_section}\n\n"
         f"Deterministic behavioural rarity signals (not findings by themselves):\n{anomaly_section}\n\n"
+        f"Deterministic artifact highlights (literal matches in normalized evidence):\n"
+        f"{evidence_highlights_section}\n\n"
         f"Prior completed hunts with similar technique context (context only, not evidence):\n{memory_section}\n\n"
         f"{kb_section}"
         f"Event-type histogram across ALL {len(processed_logs)} processed records "
@@ -635,28 +742,18 @@ async def reason_node(state: HuntState) -> dict:
     reasoning_degraded = False
     reasoning_mode = "model"
     if parsed is None:
-        terminal_error = (
-            "Report not generated: reasoning model did not return a complete, "
-            f"validated response after {REASONING_MAX_ATTEMPTS} attempts. "
-            f"{reasoning_error or 'No valid response was returned.'}"
+        strike_error = reasoning_error or "No valid response was returned."
+        reasoning_error = (
+            f"Reasoning model did not return a complete, validated response after "
+            f"{REASONING_MAX_ATTEMPTS} attempts. {strike_error}"
         )
-        logger.error("reasoning model exhausted all strikes; report suppressed: %s", terminal_error)
-        return {
-            "reasoning_summary": "",
-            "findings": "",
-            "recommendations": "",
-            "need_more_logs": False,
-            "follow_up_query": None,
-            "iteration": state.get("iteration", 0) + 1,
-            "reasoning_cache_hit": False,
-            "reasoning_failed": True,
-            "reasoning_degraded": False,
-            "reasoning_mode": "failed",
-            "reasoning_attempts": REASONING_MAX_ATTEMPTS,
-            "reasoning_error": terminal_error,
-            "report_status": "not_generated",
-            "error": terminal_error,
-        }
+        logger.error(
+            "reasoning model exhausted all strikes; using deterministic evidence fallback: %s",
+            reasoning_error,
+        )
+        parsed = _deterministic_reasoning_fallback(state, histogram)
+        reasoning_degraded = True
+        reasoning_mode = "deterministic_fallback"
 
     iteration = state.get("iteration", 0) + 1
     max_iterations = state.get("max_iterations", 1)

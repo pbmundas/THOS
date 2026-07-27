@@ -274,6 +274,24 @@ def _normalize_record(hit: dict) -> dict:
     raw = hit.get("_source") if isinstance(hit.get("_source"), dict) else {}
     index = str(hit.get("_index", ""))
     detail = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str)
+    evidence_parts = []
+    evidence_fields = (
+        ("rule", "rule.description"),
+        ("MITRE ID", "rule.mitre.id"),
+        ("MITRE technique", "rule.mitre.technique"),
+        ("full log", "full_log"),
+        ("URL", "data.url"),
+        ("user agent", "data.user_agent"),
+        ("command", "data.command"),
+        ("command line", "data.win.eventdata.commandLine"),
+        ("process", "data.win.eventdata.image"),
+        ("parent process", "data.win.eventdata.parentImage"),
+    )
+    for label, field_path in evidence_fields:
+        value = _pick(raw, field_path)
+        if value:
+            evidence_parts.append(f"{label}: {value[:1200]}")
+    evidence_summary = " | ".join(evidence_parts)[:4000]
 
     return {
         "timestamp": _pick(raw, "@timestamp", "timestamp"),
@@ -295,6 +313,11 @@ def _normalize_record(hit: dict) -> dict:
             default="wazuh_event",
         ),
         "detail": detail,
+        # Keep the fields that carry an artifact's identity ahead of the
+        # bounded raw JSON. This prevents a long Wazuh document from hiding
+        # high-signal values (for example the Nmap NSE user-agent) beyond the
+        # reasoning prompt's raw-detail limit.
+        "evidence_summary": evidence_summary,
         "src_ip": _pick(raw, "data.srcip", "srcip", "agent.ip"),
         "dst_ip": _pick(raw, "data.dstip", "dstip"),
         "source_file": index,
@@ -458,3 +481,114 @@ def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_igno
         "indices": cfg["index_pattern"],
         "logs": records,
     }
+
+
+def fetch_multi_logs(requests: list[dict], limit: int = 100) -> list[dict]:
+    """Execute trusted Sigma queries in one OpenSearch ``_msearch`` request."""
+    if not requests:
+        return []
+    cfg = _get_config()
+    bounded_limit = max(1, min(int(limit), cfg["max_results"]))
+    lines: list[str] = []
+    for request in requests:
+        query = str(request.get("query") or "")
+        # An index is connector-owned and never accepted from the compiled rule.
+        lines.append(json.dumps({
+            "index": cfg["index_pattern"],
+            "ignore_unavailable": True,
+            "allow_no_indices": True,
+        }, separators=(",", ":")))
+        lines.append(json.dumps(
+            _build_search_body(
+                query, cfg["lookback_minutes"], bounded_limit, trusted_sigma=True
+            ),
+            separators=(",", ":"),
+        ))
+    body = "\n".join(lines) + "\n"
+    url = f"{cfg['base_url']}/_msearch"
+
+    with httpx.Client(
+        auth=(cfg["username"], cfg["password"]),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-ndjson",
+        },
+        timeout=cfg["timeout_seconds"],
+        verify=cfg["verify"],
+    ) as client:
+        def _post_multi_search():
+            result = client.post(url, content=body)
+            if result.status_code >= 500:
+                result.raise_for_status()
+            return result
+
+        response = sync_retry(
+            _post_multi_search, what="wazuh indexer multi-search"
+        )
+
+    if response.status_code in (401, 403):
+        raise WazuhAPIError(
+            "Wazuh Indexer multi-search is not authorized "
+            f"(HTTP {response.status_code})."
+        )
+    if response.status_code >= 400:
+        raise WazuhAPIError(
+            f"Wazuh Indexer multi-search failed: HTTP {response.status_code} - "
+            f"{response.text[:500]}"
+        )
+    try:
+        responses = response.json().get("responses") or []
+    except ValueError as exc:
+        raise WazuhAPIError(
+            "Wazuh Indexer returned a non-JSON multi-search response."
+        ) from exc
+    if not isinstance(responses, list) or len(responses) != len(requests):
+        raise WazuhAPIError(
+            "Wazuh Indexer multi-search response count did not match the request."
+        )
+
+    results: list[dict] = []
+    for request, payload in zip(requests, responses):
+        error = payload.get("error") if isinstance(payload, dict) else "malformed response"
+        if error:
+            results.append({
+                "siem_type": "wazuh",
+                "query": request.get("query", ""),
+                "rule_id": request.get("rule_id", ""),
+                "record_count": 0,
+                "total_hits": 0,
+                "logs": [],
+                "error": json.dumps(error, default=str)[:1000],
+            })
+            continue
+        shard_failures = ((payload.get("_shards") or {}).get("failures") or [])
+        if shard_failures:
+            results.append({
+                "siem_type": "wazuh",
+                "query": request.get("query", ""),
+                "rule_id": request.get("rule_id", ""),
+                "record_count": 0,
+                "total_hits": 0,
+                "logs": [],
+                "error": f"shard failure: {str(shard_failures[0])[:900]}",
+            })
+            continue
+        hits_payload = payload.get("hits") or {}
+        hits = hits_payload.get("hits") or []
+        if not isinstance(hits, list):
+            hits = []
+        records = _deduplicate(
+            [_normalize_record(hit) for hit in hits]
+        )[:bounded_limit]
+        total = hits_payload.get("total", 0)
+        total_value = total.get("value", 0) if isinstance(total, dict) else total
+        results.append({
+            "siem_type": "wazuh",
+            "query": request.get("query", ""),
+            "rule_id": request.get("rule_id", ""),
+            "record_count": len(records),
+            "total_hits": int(total_value or 0),
+            "indices": cfg["index_pattern"],
+            "logs": records,
+        })
+    return results

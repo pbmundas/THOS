@@ -13,7 +13,7 @@ def test_core_user_questions_retrieve_the_expected_product_topics():
         "How do I test every agent?": "PK-TESTING",
         "Which SIEM and evidence files are supported?": "PK-SOURCES",
         "Can Ask THOS promote a Sigma detection automatically?": "PK-DETECTIONS",
-        "How are approvals, cases, and citations governed?": "PK-GOVERNANCE",
+        "How are analyst review, cases, and citations governed?": "PK-GOVERNANCE",
         "Does uploading a runbook retrain the model?": "PK-KNOWLEDGE",
         "How does the forensic evidence chain of custody work?": "PK-FORENSICS",
     }

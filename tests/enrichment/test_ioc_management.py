@@ -1,8 +1,10 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
+from services.api import control_plane
 from services.api.control_plane import require_feature
 from services.enrichment import ioc_management
 
@@ -24,6 +26,22 @@ def test_extract_indicators_from_structured_and_unstructured_content():
     assert "https://malicious.example/path" in found["url"]
     assert "malicious.example" in found["domain"]
     assert "cve-2026-12345" in found["cve"]
+
+
+def test_extracts_and_normalizes_network_indicators():
+    found = ioc_management.extract_indicators(b"203.0.113.77/24\n", "feed.netset")
+
+    assert "203.0.113.0/24" in found["network"]
+    assert "203.0.113.77" not in found["ipv4"]
+
+
+def test_dshield_parser_uses_address_and_netmask_without_header_noise():
+    found = ioc_management._dshield_networks(
+        b"# SANS ISC contact@example.org\n198.51.100.0\t198.51.100.255\t24\t42\n",
+    )
+
+    assert found["network"] == {"198.51.100.0/24"}
+    assert not any(found[kind] for kind in found if kind != "network")
 
 
 @pytest.mark.asyncio
@@ -51,6 +69,71 @@ async def test_local_refresh_preserves_snapshot_and_updates_index(tmp_path, monk
     assert (intelligence_root / "sources" / "provider-a").is_dir()
     assert blocklist["indicators"]["198.51.100.44"]["confidence"] == "high"
     assert blocklist["indicators"]["indicator.example"]["sources"] == ["provider-a"]
+    assert blocklist["indicators"]["indicator.example"]["severity"] == "medium"
+    assert blocklist["indicators"]["indicator.example"]["source_details"]["provider-a"]["name"] == "Provider A"
+
+
+@pytest.mark.asyncio
+async def test_successful_refresh_replaces_expired_source_indicators(tmp_path, monkeypatch):
+    local_root = tmp_path / "sources"
+    intelligence_root = tmp_path / "intelligence"
+    local_root.mkdir()
+    source_path = local_root / "provider.txt"
+    source_path.write_text("expired.example\n", encoding="utf-8")
+    monkeypatch.setattr(ioc_management, "LOCAL_SOURCE_ROOT", local_root)
+    monkeypatch.setattr(ioc_management, "THREAT_INTEL_ROOT", intelligence_root)
+    monkeypatch.setattr(ioc_management, "BLOCKLIST_PATH", intelligence_root / "blocklist.json")
+    source = {
+        "id": "provider-a", "name": "Provider A", "kind": "local",
+        "location": str(source_path), "category": "malware", "severity": "high",
+        "confidence": "high",
+    }
+
+    await ioc_management.refresh_source(source)
+    source_path.write_text("current.example\n", encoding="utf-8")
+    await ioc_management.refresh_source(source)
+
+    blocklist = ioc_management.load_blocklist()["indicators"]
+    assert "expired.example" not in blocklist
+    assert blocklist["current.example"]["category"] == "malware"
+
+
+@pytest.mark.asyncio
+async def test_threat_intelligence_catalog_orders_by_freshness_then_severity(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(ioc_management, "load_blocklist", lambda: {
+        "indicator_count": 3,
+        "updated_at": now.isoformat(),
+        "indicators": {
+            "older-critical.example": {
+                "type": "domain", "category": "malware", "categories": ["malware"],
+                "severity": "critical", "confidence": "high",
+                "last_seen_by_thos": (now - timedelta(hours=2)).isoformat(),
+                "source_name": "Test",
+            },
+            "fresh-low.example": {
+                "type": "domain", "category": "phishing", "categories": ["phishing"],
+                "severity": "low", "confidence": "medium",
+                "last_seen_by_thos": (now - timedelta(minutes=5)).isoformat(),
+                "source_name": "Test",
+            },
+            "fresh-high.example": {
+                "type": "domain", "category": "malware", "categories": ["malware"],
+                "severity": "high", "confidence": "high",
+                "last_seen_by_thos": (now - timedelta(minutes=5)).isoformat(),
+                "source_name": "Test",
+            },
+        },
+    })
+    request = SimpleNamespace(
+        state=SimpleNamespace(role="Expert", permissions={"threat_intel"}),
+    )
+
+    result = await control_plane.list_threat_intelligence_iocs(request)
+
+    assert [item["indicator"] for item in result["items"]] == [
+        "fresh-high.example", "fresh-low.example", "older-critical.example",
+    ]
 
 
 def test_local_refresh_rejects_path_outside_managed_root(tmp_path, monkeypatch):

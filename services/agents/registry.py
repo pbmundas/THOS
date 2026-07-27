@@ -27,9 +27,23 @@ class AgentSpec:
 AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         "ask_thos", "Ask THOS Agent",
-        "Answers product and SOC questions with temporary conversation memory, built-in product knowledge, and an audited read-only MCP tool allowlist.",
+        "Helps users investigate authorized hunt and forensic state, answers product and SOC questions, and delegates evidence interpretation to specialist agents.",
         "services.chat_agent", "chat", "tests/agents/test_agent_behaviors.py",
         model_route="chat", execution="local LLM + retrieval", resource_profile="One fast-tier local-model call, plus one follow-up only when tools are required",
+    ),
+    AgentSpec(
+        "hunt_investigation_specialist", "Hunt Investigation Specialist Agent",
+        "Answers follow-up questions from persisted hunt state, agent outputs, ATT&CK coverage, and the generated report without changing the hunt.",
+        "services.chat_agent", "_delegate_specialist", "tests/agents/test_agent_behaviors.py",
+        model_route="investigation_specialist", execution="delegated local LLM + persisted evidence",
+        safety_boundary="Read-only; report and hunt content are treated as untrusted data",
+    ),
+    AgentSpec(
+        "forensic_investigation_specialist", "Digital Forensic Specialist Agent",
+        "Answers follow-up questions from persisted forensic state, integrity results, suspicious-activity assessment, timeline, and technical report.",
+        "services.chat_agent", "_delegate_specialist", "tests/agents/test_agent_behaviors.py",
+        model_route="investigation_specialist", execution="delegated local LLM + persisted evidence",
+        safety_boundary="Read-only; never modifies original evidence or asserts unsupported attribution",
     ),
     AgentSpec(
         "knowledge_refresh", "Hypothesis Knowledge Refresh Agent",
@@ -53,7 +67,8 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         "supervisor", "Supervisor Agent",
         "Builds a bounded hunt plan and selects optional read-only analysis branches from observable hunt context.",
         "services.orchestration.supervisor", "plan_hunt_node", "tests/orchestration/test_agentic_foundations.py",
-        graph_node="supervisor",
+        graph_node="supervisor", model_route="supervisor",
+        execution="local LLM with deterministic safety fallback",
     ),
     AgentSpec(
         "query_generation", "Query Generation Agent",
@@ -77,7 +92,9 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         "guardrail", "Guardrail Agent",
         "Flags instruction-like text in untrusted telemetry without deleting evidence.",
         "services.guardrails.sentinel", "guardrail_node", "tests/orchestration/test_agentic_foundations.py",
-        graph_node="guardrail", safety_boundary="Read-only; suspicious evidence remains auditable",
+        graph_node="guardrail", model_route="guardrail",
+        execution="canonicalization + semantic heuristics + bounded local classifier",
+        safety_boundary="Read-only; suspicious evidence remains auditable",
     ),
     AgentSpec(
         "soc_tools", "SOC Tools Agent",
@@ -90,6 +107,13 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         "Explains when low volume, missing event types, fallback data, or absent files make a negative hunt conclusion unreliable.",
         "services.coverage.gap_analysis", "coverage_gap_node", "tests/agents/test_agent_behaviors.py",
         graph_node="coverage_gap",
+    ),
+    AgentSpec(
+        "adaptive_replan", "Adaptive Replanning Agent",
+        "Uses intermediate telemetry attribution and ATT&CK coverage to decide whether one bounded read-only query refinement is justified.",
+        "services.orchestration.supervisor", "adaptive_replan_node", "tests/orchestration/test_agentic_foundations.py",
+        graph_node="adaptive_replan", model_route="supervisor",
+        safety_boundary="At most one refinement against the same configured source",
     ),
     AgentSpec(
         "threat_intel", "Threat Intelligence Agent",
@@ -105,15 +129,15 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
     ),
     AgentSpec(
         "verifier", "Verifier Agent",
-        "Validates evidence references, repairs bounded citation mistakes, and opens an approval and case when analyst review is required.",
+        "Validates evidence references, repairs bounded citation mistakes, and opens a case when analyst review is required.",
         "services.verification.verifier", "verify_findings_node", "tests/orchestration/test_agentic_foundations.py",
         graph_node="verifier", safety_boundary="Fail-closed for unsupported claims",
     ),
     AgentSpec(
         "detection_engineering", "Detection Engineering Agent",
-        "Drafts an experimental detection-rule proposal only from verifier-passed hunts and binds promotion approval to the exact rule hash.",
+        "Drafts an experimental detection-rule proposal only from verifier-passed hunts and records the exact rule hash for change control.",
         "services.detection_engineering.rule_drafter", "draft_detection_rule_node", "tests/orchestration/test_detection_rule_approval.py",
-        graph_node="detection_engineering", safety_boundary="Draft/staging only; human approval required for promotion",
+        graph_node="detection_engineering", safety_boundary="Draft only; use normal detection change control before deployment",
     ),
     AgentSpec(
         "communication", "Communication Agent",
@@ -123,7 +147,7 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
     ),
     AgentSpec(
         "report", "Reporting Agent",
-        "Writes the final hunt report with evidence, ingestion diagnostics, agent outcomes, cases, and approvals.",
+        "Writes the final hunt report with evidence, ingestion diagnostics, agent outcomes, and cases.",
         "services.reporting.report", "write_report_node", "tests/orchestration/test_agentic_foundations.py",
         graph_node="report", execution="file write", safety_boundary="Writes only to the configured reports root",
     ),

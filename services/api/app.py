@@ -135,8 +135,9 @@ NODE_LABELS = {
     "siem_fetch": "📥 Fetching logs from SIEM",
     "log_processing": "🧹 Normalizing / deduplicating logs",
     "guardrail": "🛡️ Screening untrusted telemetry",
-    "soc_tools": "🛠️ Running SOC tools (SIGMA/enrichment)",
+    "soc_tools": "🛠️ Running detection and enrichment tools",
     "coverage_gap": "📊 Checking telemetry coverage gaps",
+    "adaptive_replan": "🧭 Reviewing intermediate findings",
     "threat_intel": "📡 Enriching indicators with threat intelligence",
     "reasoning": "🧠 Reasoning over evidence (Ollama)",
     "verifier": "🔎 Verifying citations and confidence",
@@ -154,8 +155,9 @@ NODE_REASONS = {
     "siem_fetch": "executes the query and retrieves bounded telemetry",
     "log_processing": "normalizes records and removes duplicates",
     "guardrail": "checks untrusted log text for instruction-injection patterns",
-    "soc_tools": "runs SigmaHQ, THOS Sigma, and derived-indicator matching concurrently",
+    "soc_tools": "runs community rules, local rules, and derived-indicator matching concurrently",
     "coverage_gap": "checks whether collection volume and sources support the conclusion",
+    "adaptive_replan": "decides whether one bounded query refinement is supported by intermediate findings",
     "threat_intel": "compares observed IOCs with the local blocklist",
     "reasoning": "turns the evidence into cited findings and recommendations",
     "verifier": "validates every cited record before findings are trusted",
@@ -341,13 +343,12 @@ def run_hunt(message, history, siem_type, log_source_path, max_iterations, reque
     findings = final_state.get("findings", "")
     recs = final_state.get("recommendations", "")
     report_path = final_state.get("report_path", "")
-    approval_id = final_state.get("approval_id", "")
     case_id = final_state.get("case_id", "")
     review_notice = ""
-    if approval_id or case_id:
+    if final_state.get("analyst_review_required") or case_id:
         review_notice = (
             "\n\n⚠️ **Analyst review required.** "
-            f"Approval: `{approval_id or 'not persisted'}` · Case: `{case_id or 'not persisted'}`"
+            f"Case: `{case_id or 'not persisted'}`"
         )
 
     final_msg = (
@@ -508,33 +509,6 @@ def update_case(case_id, status, priority, assigned_to, summary, request: gr.Req
         return f"Could not update case: {e}"
 
 
-def list_approvals(status):
-    try:
-        params = {"status": status} if status != "all" else {}
-        resp = httpx.get(f"{ORCHESTRATOR_URL}/approvals", params=params, headers=_AUTH_HEADERS, timeout=20)
-        resp.raise_for_status()
-        rows = [[str(a.get("approval_id", "")), str(a.get("hunt_id", "")), a.get("status", ""),
-                 a.get("reason", ""), a.get("decided_by", ""), a.get("created_at", "")]
-                for a in resp.json()]
-        return f"**{len(rows)} approval(s)**", rows
-    except Exception as e:  # noqa: BLE001
-        return f"Could not load approvals: {e}", []
-
-
-def decide_approval(approval_id, decision, request: gr.Request):
-    approval_id = (approval_id or "").strip()
-    if not approval_id:
-        return "Enter an approval ID."
-    actor = (getattr(request, "username", None) or "unknown").strip()
-    try:
-        resp = httpx.post(f"{ORCHESTRATOR_URL}/approvals/{approval_id}/decision", headers=_AUTH_HEADERS,
-                          timeout=20, json={"status": decision, "decided_by": actor})
-        resp.raise_for_status()
-        return f"Approval `{approval_id}` {decision}."
-    except Exception as e:  # noqa: BLE001
-        return f"Could not record decision: {e}"
-
-
 def submit_feedback(hunt_id, rating, finding_ref, correction, request: gr.Request):
     hunt_id = (hunt_id or "").strip()
     if not hunt_id:
@@ -616,8 +590,8 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
             upload_btn = gr.Button("⬆️ Upload to folder", size="sm")
             folder_status = gr.Markdown(value="")
 
-        hyp_dropdown = gr.Dropdown(label="HEARTH hypotheses (click to insert into chat box)", choices=[], interactive=True)
-        refresh_btn = gr.Button("🔄 Load hypotheses from HEARTH", size="sm")
+        hyp_dropdown = gr.Dropdown(label="Curated hypotheses (click to insert into chat box)", choices=[], interactive=True)
+        refresh_btn = gr.Button("🔄 Load hypothesis catalog", size="sm")
 
         chatbot = gr.Chatbot(label="Hunt conversation", height=420)
         msg_box = gr.Textbox(
@@ -728,17 +702,7 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
         ).then(fn=case_list, inputs=case_filter, outputs=[case_status, case_table])
 
     with gr.Tab("Review & Feedback"):
-        gr.Markdown("Approve or reject verifier escalations, then capture analyst feedback for future evaluation and fine-tuning.")
-        with gr.Row():
-            approval_filter = gr.Dropdown(label="Approval status", choices=["pending", "approved", "rejected", "all"], value="pending")
-            approval_refresh = gr.Button("Refresh approvals", size="sm")
-        approval_status = gr.Markdown(value="")
-        approval_table = gr.Dataframe(headers=["approval_id", "hunt_id", "status", "reason", "decided_by", "created_at"], interactive=False, wrap=True)
-        with gr.Row():
-            approval_id_input = gr.Textbox(label="Approval ID", scale=3)
-            approval_decision = gr.Dropdown(label="Decision", choices=["approved", "rejected"], value="approved")
-            approval_decide_btn = gr.Button("Record decision")
-        approval_notice = gr.Markdown(value="")
+        gr.Markdown("Capture analyst feedback for future evaluation and fine-tuning.")
         gr.Markdown("### Analyst feedback")
         feedback_hunt_id = gr.Textbox(label="Hunt ID")
         with gr.Row():
@@ -747,10 +711,6 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
         feedback_correction = gr.Textbox(label="Correction / note", lines=3)
         feedback_submit = gr.Button("Capture feedback")
         feedback_notice = gr.Markdown(value="")
-        approval_refresh.click(fn=list_approvals, inputs=approval_filter, outputs=[approval_status, approval_table])
-        approval_decide_btn.click(fn=decide_approval, inputs=[approval_id_input, approval_decision], outputs=approval_notice).then(
-            fn=list_approvals, inputs=approval_filter, outputs=[approval_status, approval_table]
-        )
         feedback_submit.click(fn=submit_feedback, inputs=[feedback_hunt_id, feedback_rating, feedback_ref, feedback_correction], outputs=feedback_notice)
 
     with gr.Tab("Report Browser"):
@@ -766,7 +726,6 @@ with gr.Blocks(title="THOS — AI Threat Hunting") as demo:
     demo.load(fn=lambda: gr.update(choices=list_reports()), outputs=report_dropdown)
     demo.load(fn=kb_list_documents, outputs=[kb_list_status, kb_table])
     demo.load(fn=case_list, inputs=case_filter, outputs=[case_status, case_table])
-    demo.load(fn=list_approvals, inputs=approval_filter, outputs=[approval_status, approval_table])
     demo.load(fn=get_logged_in_user, outputs=hunter_name_display)
 
 

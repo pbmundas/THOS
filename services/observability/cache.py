@@ -8,7 +8,7 @@ import json
 import logging
 from services.siem.clients import get_redis_client
 
-DEFAULT_TTL_SECONDS = 900  # 15 minutes
+DEFAULT_TTL_SECONDS = 300  # 5 minutes
 logger = logging.getLogger(__name__)
 
 

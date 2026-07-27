@@ -10,7 +10,7 @@ repo (rate-limited via Redis so it doesn't re-fetch on every hunt — see
 services/hunting/kb_refresh.py) before hypothesis selection runs.
 
 Extension point (Phase 4): add more conditional branches — e.g. a
-human-approval gate before `report`, parallel fan-out to multiple SOC
+analyst-review case creation before `report`, parallel fan-out to multiple SOC
 tools, or a dedicated "escalate" node that pages a human analyst when
 confidence is low.
 """
@@ -25,7 +25,7 @@ from services.siem.log_processing import process_logs_node
 from services.mcp.soc_tools import run_soc_tools_node
 from services.reasoning.reasoning import reason_node
 from services.reporting.report import write_report_node
-from services.orchestration.supervisor import plan_hunt_node
+from services.orchestration.supervisor import adaptive_replan_node, plan_hunt_node
 from services.guardrails.sentinel import guardrail_node
 from services.verification.verifier import verify_findings_node
 from services.coverage.gap_analysis import coverage_gap_node
@@ -50,6 +50,10 @@ def route_after_reasoning(state: HuntState) -> str:
     return "siem_fetch" if can_follow_up else "verifier"
 
 
+def route_after_adaptive_replan(state: HuntState) -> str:
+    return "siem_fetch" if state.get("replan_action") == "refine_query" else "threat_intel"
+
+
 def build_graph():
     graph = StateGraph(HuntState)
 
@@ -63,6 +67,7 @@ def build_graph():
     graph.add_node("guardrail", guardrail_node)
     graph.add_node("soc_tools", run_soc_tools_node)
     graph.add_node("coverage_gap", coverage_gap_node)
+    graph.add_node("adaptive_replan", adaptive_replan_node)
     graph.add_node("threat_intel", enrich_iocs_node)
     graph.add_node("reasoning", reason_node)
     graph.add_node("verifier", verify_findings_node)
@@ -80,7 +85,11 @@ def build_graph():
     graph.add_edge("log_processing", "guardrail")
     graph.add_edge("guardrail", "soc_tools")
     graph.add_edge("soc_tools", "coverage_gap")
-    graph.add_edge("coverage_gap", "threat_intel")
+    graph.add_edge("coverage_gap", "adaptive_replan")
+    graph.add_conditional_edges("adaptive_replan", route_after_adaptive_replan, {
+        "siem_fetch": "siem_fetch",
+        "threat_intel": "threat_intel",
+    })
     graph.add_edge("threat_intel", "reasoning")
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
         "siem_fetch": "siem_fetch",

@@ -84,14 +84,31 @@ def ingest_hearth(client):
                 items.extend(json.load(f))
         source = f"local JSON ({KB_ROOT}/hearth/*.json)"
 
+    # THOS-required gap hypotheses are versioned with the application and
+    # overlay the upstream HEARTH feed. They cover techniques for which the
+    # live SIEM schema has runnable Sigma detections but HEARTH has no exact
+    # hypothesis. Upstream refreshes must never erase this local coverage.
+    from services.hunting.hearth import REQUIRED_GAP_HYPOTHESES
+    items_by_id = {str(item["id"]): item for item in items if item.get("id")}
+    items_by_id.update({
+        str(item["id"]): item for item in REQUIRED_GAP_HYPOTHESES
+        if item.get("id")
+    })
+    items = list(items_by_id.values())
+
     for h in items:
         ids.append(h["id"])
         docs.append(f'{h["title"]}. {h["text"]}')
         metas.append({
             "id": h["id"], "title": h["title"], "tactic": h.get("tactic", ""),
             "technique": h.get("technique", ""), "text": h["text"],
+            "severity": h.get("severity", ""), "category": h.get("category", ""),
         })
     if ids:
+        existing_ids = set(collection.get(include=[]).get("ids", []))
+        stale_ids = sorted(existing_ids - set(ids))
+        if stale_ids:
+            collection.delete(ids=stale_ids)
         collection.upsert(ids=ids, documents=docs, metadatas=metas)
     print(f"[hearth_kb] ingested {len(ids)} hypotheses from {source}")
 

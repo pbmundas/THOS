@@ -41,14 +41,32 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
             correlation["sigmahq_rule_matches"] + correlation["local_sigma_rule_matches"]
         )[:200]
     ]
+    ioc_rows = [
+        [
+            item.get("indicator"), item.get("matched_indicator"), item.get("type"),
+            item.get("category"), item.get("severity"), item.get("confidence"),
+            ", ".join(item.get("sources", [])), item.get("last_seen"),
+            ", ".join(item.get("evidence_refs", [])),
+        ]
+        for item in correlation.get("ioc_matches", [])[:500]
+    ]
     observation_rows = [
         [item["ref"], item.get("event"), item.get("source_file"), item["basis"], item["excerpt"]]
         for item in correlation["suspicious_observations"][:200]
     ]
+    activity_rows = [
+        [
+            item.get("classification"), item.get("confidence"), item.get("timestamp"),
+            item.get("ref"), item.get("host"), item.get("user"), item.get("event"),
+            item.get("source_file"), item.get("basis"), item.get("excerpt"),
+        ]
+        for item in correlation.get("activity_assessments", [])[:500]
+    ]
     timeline_rows = [
         [
             item["timestamp"], item["evidence_ref"], item.get("host"), item.get("user"),
-            item.get("event"), item.get("source_file"), item.get("detail"),
+            item.get("event"), item.get("source_file"), item.get("classification"),
+            item.get("confidence"), item.get("activity_basis"), item.get("detail"),
         ]
         for item in timeline[:500]
     ]
@@ -60,6 +78,30 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
         }
         for item in triage["archives"]
     ]
+    activities = correlation.get("activity_assessments", [])
+    malicious_count = sum(
+        1 for item in activities if str(item.get("classification", "")).lower() == "malicious"
+    )
+    suspicious_count = sum(
+        1 for item in activities if str(item.get("classification", "")).lower() == "suspicious"
+    )
+    sigma_match_count = len(
+        correlation.get("sigmahq_rule_matches", [])
+        + correlation.get("local_sigma_rule_matches", [])
+    )
+    yara_match_count = int(correlation.get("yara_scan", {}).get("match_count", 0) or 0)
+    ioc_match_count = len(correlation.get("ioc_matches", []))
+    if malicious_count or suspicious_count:
+        conclusion = (
+            f"The automated examination identified {malicious_count} malicious and "
+            f"{suspicious_count} suspicious activity assessment(s) requiring examiner review "
+            "and corroboration."
+        )
+    else:
+        conclusion = (
+            "The automated examination did not identify suspicious or malicious activity "
+            "through the configured deterministic checks."
+        )
     report = f"""# Digital Forensic Examination Report — {verified.get('case_title') or case_id}
 
 > **Report classification:** Digital forensic technical report  
@@ -70,12 +112,15 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
 > **Evidence source/tool:** {verified.get('acquired_from') or 'Not supplied'}  
 > **Legal authority / authorization:** {verified.get('legal_authority') or 'Not supplied — reviewer must verify before legal use'}
 
-## Executive technical conclusion
+## Executive summary
 
 THOS verified {len(triage['inventory'])} original evidence file(s) by SHA-256 and analyzed
-{correlation['records_analyzed']} normalized artifact/log records. Automated results are
-triage leads, not a substitute for examiner validation. No finding below is treated as
-proof of attribution or intent without corroborating evidence.
+{correlation['records_analyzed']} normalized artifact/log records and reconstructed
+{len(timeline)} timeline entries. The examination produced {sigma_match_count} Sigma rule
+match(es), {yara_match_count} YARA match(es), {ioc_match_count} managed-intelligence IOC
+match(es), {malicious_count} malicious assessment(s), and {suspicious_count} suspicious
+assessment(s). Automated results are triage leads, not a substitute for examiner validation.
+No finding below is treated as proof of attribution or intent without corroborating evidence.
 
 ## Scope and examination request
 
@@ -98,8 +143,10 @@ proof of attribution or intent without corroborating evidence.
 3. Identify artifacts by extension and magic, parse supported log/evidence formats, inventory
    archives without unsafe extraction, and run available disk-image metadata tools.
 4. Normalize records using the same schema used for active-SIEM hunting.
-5. Evaluate the pinned SigmaHQ and local THOS rules, enumerate indicators, score rare events,
-   and construct a timestamp-ordered timeline.
+5. Evaluate the pinned SigmaHQ and local THOS rules, scan files with the enabled YARA
+   catalog, correlate observed indicators with the managed threat-intelligence index,
+   map matched detection knowledge to ATT&CK, score rare events, and construct a
+   timestamp-ordered timeline.
 6. Preserve references back to evidence ID and normalized record.
 
 Tooling is local to THOS. Sigma matches, keywords, strings, and anomaly scores are screening
@@ -136,8 +183,36 @@ an opaque container was fully examined.
 - SigmaHQ rules evaluated: {correlation['sigmahq_rules_evaluated']}
 - Local THOS rules evaluated: {correlation['local_sigma_rules_evaluated']}
 - Matched record references: {', '.join(correlation['sigma_matched_record_refs'][:500]) or 'None'}
+- ATT&CK techniques represented by matched rules: {', '.join(correlation.get('attack_techniques', [])) or 'None mapped'}
 
 {_table(sigma_matches, ['Rule ID', 'Title', 'Level', 'Matches']) if sigma_matches else '_No Sigma rule matched._'}
+
+## YARA file and artifact correlation
+
+- Files scanned: {correlation.get('yara_scan', {}).get('files_scanned', 0)}
+- Files with matches: {correlation.get('yara_scan', {}).get('matched_files', 0)}
+- Total YARA matches: {correlation.get('yara_scan', {}).get('match_count', 0)}
+
+```json
+{json.dumps(correlation.get('yara_scan', {}), indent=2, default=str)}
+```
+
+## Managed threat-intelligence correlation
+
+Observed evidence indicators were compared with the same bounded, locally persisted IOC
+index used by hunt enrichment. A match is a triage lead and does not by itself prove malicious
+intent; freshness, source provenance, confidence, network role, and surrounding evidence must
+be reviewed.
+
+{_table(ioc_rows, ['Observed IOC', 'Matched IOC/network', 'Type', 'Category', 'Severity', 'Confidence', 'Sources', 'Last indexed', 'Evidence refs']) if ioc_rows else '_No observed indicator matched the managed intelligence index._'}
+
+## Suspicious or malicious activity assessment
+
+Classifications are evidence-grounded triage conclusions. A **malicious** classification
+requires corroborating deterministic signals; **suspicious** activity requires examiner
+review and is not treated as proof of intent or attribution.
+
+{_table(activity_rows, ['Classification', 'Confidence', 'Timestamp', 'Evidence ref', 'Host', 'User', 'Event', 'Source', 'Basis', 'Excerpt']) if activity_rows else '_No suspicious or malicious activity was identified by the configured deterministic checks._'}
 
 ## Observations requiring examiner review
 
@@ -145,7 +220,7 @@ an opaque container was fully examined.
 
 ## Reconstructed timeline
 
-{_table(timeline_rows, ['Timestamp', 'Evidence ref', 'Host', 'User', 'Event', 'Source', 'Detail']) if timeline_rows else '_No parseable timestamps were recovered._'}
+{_table(timeline_rows, ['Timestamp', 'Evidence ref', 'Host', 'User', 'Event', 'Source', 'Classification', 'Confidence', 'Assessment basis', 'Detail']) if timeline_rows else '_No parseable timestamps were recovered._'}
 
 ## Legal and evidentiary considerations
 
@@ -165,6 +240,13 @@ an opaque container was fully examined.
 | Forensic examiner |  |  |  |
 | Technical reviewer |  |  |  |
 | Legal/case authority (if required) |  |  |  |
+
+## Final conclusion
+
+{conclusion} This conclusion is limited to the evidence supplied, successfully parsed
+formats, configured detection and intelligence knowledge, collection gaps, and documented
+tool limitations. Material findings require examiner validation before legal, disciplinary,
+containment, or attribution decisions.
 """
     path.write_text(report, encoding="utf-8")
     return {
@@ -173,6 +255,6 @@ an opaque container was fully examined.
         "summary": (
             f"Verified {len(triage['inventory'])} evidence file(s); analyzed "
             f"{correlation['records_analyzed']} records; produced "
-            f"{len(correlation['suspicious_observations'])} review observations."
+            f"{len(correlation.get('activity_assessments', []))} suspicious/malicious activity assessments."
         ),
     }
