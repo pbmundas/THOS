@@ -280,12 +280,19 @@ def correlate_evidence(triage: dict) -> dict:
                 "evidence_refs": sorted(indicator_refs.get(value, set()))[:50],
             })
     rule_by_ref: dict[str, list[str]] = {}
+    attack_by_ref: dict[str, set[str]] = {}
     for rule in sigmahq.get("rule_matches", []) + local_sigma.get("rule_matches", []):
-        title = str(rule.get("title") or rule.get("rule_id") or "Sigma rule")
+        title = str(rule.get("title") or rule.get("rule_id") or "Detection rule")
+        techniques = {
+            str(tag).split(".", 1)[1].upper()
+            for tag in rule.get("tags", [])
+            if re.fullmatch(r"attack\.t\d{4}(?:\.\d{3})?", str(tag), re.IGNORECASE)
+        }
         for index in rule.get("matched_indices", []):
             if isinstance(index, int) and 0 <= index < len(records):
                 ref = str(records[index].get("_record_ref", index))
                 rule_by_ref.setdefault(ref, []).append(title)
+                attack_by_ref.setdefault(ref, set()).update(techniques)
     suspicious_refs = {str(item["ref"]): item for item in suspicious}
     activity = []
     for index in matched_indices:
@@ -306,11 +313,12 @@ def correlate_evidence(triage: dict) -> dict:
             "event": record.get("event"),
             "source_file": record.get("source_file"),
             "basis": (
-                f"corroborated by {len(rules)} Sigma rule(s) and review behavior"
+                f"corroborated by {len(rules)} detection rule(s) and review behavior"
                 if classification == "malicious"
-                else f"matched Sigma rule(s): {', '.join(rules[:5])}"
+                else f"matched detection rule(s): {', '.join(rules[:5])}"
             ),
             "sigma_rules": rules[:20],
+            "mitre_techniques": sorted(attack_by_ref.get(ref, set())),
             "excerpt": str(record.get("detail", ""))[:500],
         })
     known_refs = {item["ref"] for item in activity}
@@ -388,6 +396,9 @@ def correlate_evidence(triage: dict) -> dict:
         "yara_scan": yara_scan,
         "ioc_matches": ioc_matches[:1_000],
         "attack_techniques": attack_techniques,
+        "attack_techniques_by_ref": {
+            ref: sorted(techniques) for ref, techniques in attack_by_ref.items()
+        },
         "activity_assessments": activity[:1_000],
     }
 
@@ -397,6 +408,7 @@ def build_timeline(triage: dict, correlation: dict | None = None) -> list[dict]:
         str(item.get("ref")): item
         for item in (correlation or {}).get("activity_assessments", [])
     }
+    attack_by_ref = (correlation or {}).get("attack_techniques_by_ref", {})
     timeline = []
     for record in triage.get("records", []):
         timestamp = record.get("timestamp")
@@ -415,5 +427,6 @@ def build_timeline(triage: dict, correlation: dict | None = None) -> list[dict]:
             "classification": assessment.get("classification", "unclassified"),
             "confidence": assessment.get("confidence", ""),
             "activity_basis": assessment.get("basis", ""),
+            "mitre_techniques": list(attack_by_ref.get(reference, []))[:20],
         })
     return sorted(timeline, key=lambda item: item["timestamp"])[:10_000]

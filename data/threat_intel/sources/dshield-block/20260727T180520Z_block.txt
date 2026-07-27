@@ -1,0 +1,48 @@
+#
+#   DShield.org Recommended Block List 
+#    (c) $year DShield.org
+#   some rights reserved. Details http://creativecommons.org/licenses/by-nc-sa/2.5/
+#   use on your own risk. No warranties implied.
+#   primary URL: https://feeds.dshield.org/block.txt
+#     PGP Sign.: https://feeds.dshield.org/block.txt.asc
+#
+#   comments: systems@isc.sans.edu
+#    updated: 2026-07-27T18:00:43.518412
+#   
+#    This list summarizes the top 20 attacking class C (/24) subnets
+#   over the last three days. The number of 'attacks' indicates the 
+#   number of targets reporting scans from this subnet.
+#
+#
+#    Columns (tab delimited):
+#
+#    (1) start of netblock  
+#    (2) end of netblock
+#    (3) subnet (/24 for class C)
+#    (4) number of targets scanned
+#    (5) name of Network 
+#    (6) Country
+#    (7) contact email address
+#
+#    If a range is assigned to multiple users, the first one is listed. 
+#     
+45.205.1.0	45.205.1.255	24	347	MULTA-ASN1	US	abuse@multacom.com
+64.62.156.0	64.62.156.255	24	343	HURRICANE	US	abuse@he.net
+69.5.169.0	69.5.169.255	24	337	OMNIS	US	abuse@omnis.com
+198.235.24.0	198.235.24.255	24	336	GOOGLE-CLOUD-PLATFORM	US	None
+94.154.43.0	94.154.43.255	24	335	EKSENBILISIM	TR	abuse@ruyaserver.com
+151.243.11.0	151.243.11.255	24	335	RASANA	IR	abuse@rasana.net
+66.132.172.0	66.132.172.255	24	334	-	-	-
+64.62.197.0	64.62.197.255	24	330	HURRICANE	US	abuse@he.net
+199.45.154.0	199.45.154.255	24	328	CENSYS-ARIN-03	US	None
+147.185.132.0	147.185.132.255	24	326	GOOGLE-CLOUD-PLATFORM	US	None
+65.49.1.0	65.49.1.255	24	325	HURRICANE	US	abuse@he.net
+205.210.31.0	205.210.31.255	24	325	GOOGLE-CLOUD-PLATFORM	US	None
+45.194.67.0	45.194.67.255	24	323	Africa-on-Cloud-AS	ZA	>>UNKNOWN<<
+66.132.195.0	66.132.195.255	24	323	-	-	-
+193.163.125.0	193.163.125.255	24	323	INTERNET-MEASUREMENT	GB	>>UNKNOWN<<
+185.242.226.0	185.242.226.255	24	322	AS49870-BV	NL	abuse@westcall.ru
+195.178.110.0	195.178.110.255	24	322	DATAFOREST	DE	abuse@timeweb.ru
+213.209.159.0	213.209.159.255	24	322	AS43260	TR	ip@dgn.net.tr
+194.187.176.0	194.187.176.255	24	321	ALPHASTRIKE-RESEARCH	DE	abuse@alphastrike.io
+46.101.147.0	46.101.147.255	24	319	DIGITALOCEAN-ASN	US	abuse@digitalocean.com

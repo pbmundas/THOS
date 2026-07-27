@@ -50,6 +50,8 @@ from services.reasoning.model_router import (
     set_model_workload,
     target_for,
 )
+from services.risk.risk_agent import analyze_actionable_risks
+from services.detection.detection_analysis_agent import analyze_detection
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -60,6 +62,7 @@ configure_logging("thos-orchestrator")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="THOS Orchestrator", version="1.0.0")
+REPORTS_DIR = Path(os.environ.get("REPORTS_DIR", "/data/reports"))
 
 # --- Auth ---------------------------------------------------------------
 # This service can run hunts (which call every SOC tool via MCP) and read
@@ -270,7 +273,7 @@ class ChatConversationRequest(BaseModel):
 class ScheduledSigmaRequest(BaseModel):
     schedule_id: str = Field(min_length=1, max_length=128)
     rule_id: str = Field(min_length=1, max_length=256)
-    siem_type: str = Field(pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar)$")
+    siem_type: str = Field(pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar|elasticsearch)$")
     log_source_path: str | None = None
 
 
@@ -348,6 +351,33 @@ async def hypothesis_duration_stats(limit_per_hypothesis: int = 30):
 @app.get("/dashboard/operations", dependencies=[Depends(require_api_key)])
 async def operations_dashboard(hours: int = 24):
     return await audit.operations_dashboard(max(1, min(hours, 24 * 365)))
+
+
+@app.get("/risks", dependencies=[Depends(require_api_key)])
+async def actionable_risks(limit: int = 500, hours: int = 0):
+    bounded_limit = max(1, min(limit, 2000))
+    bounded_hours = max(1, min(hours, 24 * 365 * 10)) if hours else 0
+    cache_payload = f"v1|limit={bounded_limit}|hours={bounded_hours}"
+    cached = await asyncio.to_thread(cache.cache_get, "actionable_risks", cache_payload)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return {**cached, "cache_hit": True}
+    hunts, detections = await asyncio.gather(
+        audit.risk_source_hunts(),
+        audit.risk_source_detections(),
+    )
+    result = await asyncio.to_thread(
+        analyze_actionable_risks,
+        hunts,
+        detections,
+        REPORTS_DIR,
+        bounded_limit,
+        bounded_hours or None,
+    )
+    ttl = max(10, min(int(os.environ.get("THOS_RISK_CACHE_SECONDS", "60")), 600))
+    await asyncio.to_thread(
+        cache.cache_set, "actionable_risks", cache_payload, result, ttl
+    )
+    return {**result, "cache_hit": False}
 
 
 @app.post("/audit/events", dependencies=[Depends(require_api_key)], status_code=202)
@@ -472,9 +502,28 @@ async def scheduled_sigma_detections(limit: int = 100):
     return await audit.list_sigma_detections(limit)
 
 
+@app.post("/sigma/detections/{run_id}/analysis", dependencies=[Depends(require_api_key)])
+async def analyze_scheduled_sigma_detection(run_id: str):
+    try:
+        uuid.UUID(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid detection run identifier") from exc
+    detection = await audit.get_sigma_detection(run_id)
+    if detection is None:
+        raise HTTPException(status_code=404, detail="scheduled detection not found")
+    cached = (detection.get("analysis") or {}).get("ai_analysis")
+    if isinstance(cached, dict) and cached.get("analysis_lines"):
+        return {**cached, "cached": True}
+    result = await analyze_detection(detection)
+    saved = await audit.save_sigma_ai_analysis(run_id, result)
+    if saved is None:
+        raise HTTPException(status_code=503, detail="could not persist detection analysis")
+    return {**result, "cached": False}
+
+
 @app.post("/siem/schema/{siem_type}/discover", dependencies=[Depends(require_api_key)])
 async def discover_siem_schema(siem_type: str, sample_limit: int = 50):
-    if siem_type not in {"mock", "folder", "wazuh", "logrhythm", "splunk", "qradar"}:
+    if siem_type not in {"mock", "folder", "wazuh", "logrhythm", "splunk", "qradar", "elasticsearch"}:
         raise HTTPException(status_code=404, detail="unsupported SIEM")
     try:
         return await call_tool("discover_siem_fields", {
@@ -535,7 +584,7 @@ async def run_scheduled_sigma(request: ScheduledSigmaRequest):
             "analysis": {},
             "error": str(exc),
         })
-        logger.exception("scheduled Sigma detection failed")
+        logger.exception("scheduled detection-rule execution failed")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -581,7 +630,7 @@ async def ready_sigma_rules(siem_type: str):
     if siem_type not in {"wazuh", "splunk"}:
         raise HTTPException(
             status_code=422,
-            detail="Bulk Sigma scheduling requires a precompiled Wazuh or Splunk backend",
+            detail="Bulk detection-rule scheduling requires a precompiled Wazuh or Splunk backend",
         )
     rule_ids = ready_rule_ids(siem_type)
     return {"siem_type": siem_type, "rule_ids": rule_ids, "count": len(rule_ids)}
@@ -596,6 +645,7 @@ async def test_siem_connection(siem_type: str):
         "logrhythm": "*",
         "splunk": "search * | head 1",
         "qradar": "SELECT * FROM events LAST 5 MINUTES",
+        "elasticsearch": '{"query":{"match_all":{}}}',
     }
     if siem_type not in queries:
         raise HTTPException(status_code=404, detail="unsupported SIEM")

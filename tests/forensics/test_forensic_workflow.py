@@ -108,6 +108,9 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
     assert all(event["model_name"] is None and event["duration_ms"] >= 0 for event in completed)
     text = (reports / Path(result["report_path"]).name).read_text(encoding="utf-8")
     assert "Chain of custody and integrity" in text
+    assert "## Proven Facts" in text
+    assert "## Unresolved Anomalies" in text
+    assert "MITRE ATT&CK" in text
     assert "Legal and evidentiary considerations" in text
     assert "automated results are" in text.lower()
     headings = [line for line in text.splitlines() if line.startswith("## ")]

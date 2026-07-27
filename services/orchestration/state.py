@@ -83,6 +83,7 @@ class HuntState(TypedDict, total=False):
     sigma_matched_refs: List[int]
     sigma_rule_matches: List[Dict[str, Any]]
     evidence_highlights: List[Dict[str, Any]]
+    behavioral_evidence: List[Dict[str, Any]]
     enrichment: Dict[str, Any]
 
     # Set by caller (HuntRequest) — which report cover page style to render
@@ -100,6 +101,7 @@ class HuntState(TypedDict, total=False):
     reasoning_attempts: int
     reasoning_error: Optional[str]
     reasoning_skipped: bool
+    negative_screening_passed: bool
     negative_screening_counts: Dict[str, int]
     need_more_logs: bool
     follow_up_query: Optional[str]

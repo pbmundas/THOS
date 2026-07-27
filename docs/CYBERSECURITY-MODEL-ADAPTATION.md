@@ -19,7 +19,7 @@ The source manifest is
 - CISA Known Exploited Vulnerabilities for actively exploited advisories;
 - NIST CSF 2.0, SP 800-61 Rev. 3, SP 800-115, and SP 800-92 for frameworks,
   incident response, security assessment, and log-management foundations;
-- the repository's pinned SigmaHQ corpus for threat detection and detection
+- the repository's pinned community detection-rule corpus for threat detection and detection
   engineering.
 
 Every embedded chunk includes a `CYBER:*` citation, publisher, license, trust

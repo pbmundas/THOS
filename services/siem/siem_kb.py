@@ -53,6 +53,19 @@ SIEM_FIELD_MAP = {
         "rule_groups": "rule.groups",
         "mitre_technique": "rule.mitre.id",
     },
+    "elasticsearch": {
+        "process_name": "process.name",
+        "command_line": "process.command_line",
+        "src_ip": "source.ip",
+        "dst_ip": "destination.ip",
+        "user": "user.name",
+        "dns_query": "dns.question.name",
+        "event_time": "@timestamp",
+        "host": "host.name",
+        "rule_id": "rule.id",
+        "rule_description": "rule.name",
+        "mitre_technique": "threat.technique.id",
+    },
     # "folder" — normalized field names already used by file_log_parser
     # for every locally-parsed format (evtx/log/syslog/csv/CEF/JSON/ECS/
     # xml/txt/pcap), so the mapping is effectively an identity map. This

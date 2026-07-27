@@ -56,6 +56,13 @@ function activityTone(level) {
   return "info";
 }
 
+function displayOperationalText(value) {
+  return String(value || "")
+    .replace(/SigmaHQ/gi, "Community")
+    .replace(/sigma[_\s-]*detection/gi, "detection monitoring")
+    .replace(/Sigma/gi, "detection rule");
+}
+
 function MetricCard({ icon: Icon, label, value, note, tone = "indigo", onClick }) {
   const content = <>
     <span className={`overview-metric-icon ${tone}`}><Icon /></span>
@@ -76,7 +83,11 @@ export default function Overview({ onNavigate }) {
     setLoading(true);
     setError("");
     try {
-      setData(await api(`/api/dashboard/operations?hours=${hours}`));
+      const [operations, risks] = await Promise.all([
+        api(`/api/dashboard/operations?hours=${hours}`),
+        api(`/api/risks?limit=1000&hours=${hours}`),
+      ]);
+      setData({ ...operations, risks });
     } catch (reason) {
       setError(reason.message);
     } finally {
@@ -91,6 +102,7 @@ export default function Overview({ onNavigate }) {
   }, [load]);
 
   const summary = data?.summary || {};
+  const riskSummary = data?.risks?.summary || {};
   const platform = data?.platform || {};
   const trend = data?.trend || [];
   const maxTrend = Math.max(1, ...trend.flatMap((item) => [
@@ -129,6 +141,7 @@ export default function Overview({ onNavigate }) {
     {error && <div className="alert error-alert"><ExclamationTriangleIcon />{error}</div>}
 
     <section className="overview-metrics" aria-label="Operational metrics">
+      <MetricCard icon={ShieldExclamationIcon} label="Actionable risks" value={number(riskSummary.total)} note={`${number(Number(riskSummary.critical || 0) + Number(riskSummary.high || 0))} critical / high`} tone={(riskSummary.critical || riskSummary.high) ? "red" : "green"} onClick={() => onNavigate("risks")} />
       <MetricCard icon={BoltIcon} label="Hunts completed" value={number(summary.hunts_completed)} note={`${number(summary.hunts_running)} running · ${number(summary.hunts_failed)} failed`} tone={summary.hunts_failed ? "red" : "green"} onClick={() => onNavigate("reports")} />
       <MetricCard icon={CheckCircleIcon} label="Completion rate" value={`${Number(summary.completion_rate || 0).toFixed(1)}%`} note={`${number(summary.hypotheses_hunted)} unique hypotheses`} tone="green" />
       <MetricCard icon={ShieldExclamationIcon} label="Detection events" value={number(summary.matched_events)} note={`${number(summary.detections_triggered)} triggered rules`} tone={summary.matched_events ? "red" : "slate"} onClick={() => onNavigate("detections")} />
@@ -137,6 +150,35 @@ export default function Overview({ onNavigate }) {
       <MetricCard icon={DocumentTextIcon} label="Reports created" value={number(platform.report_library_created ?? summary.reports_created)} note="Hunt and forensic library" tone="indigo" onClick={() => onNavigate("reports")} />
       <MetricCard icon={FingerPrintIcon} label="Forensic cases" value={number(summary.forensic_cases)} note={`${number(summary.forensics_running)} currently running`} tone="amber" onClick={() => onNavigate("forensics")} />
       <MetricCard icon={ExclamationTriangleIcon} label="Workflow errors" value={number(summary.tool_errors)} note={`${number(platform.schedule_failures)} failed schedules`} tone={(summary.tool_errors || platform.schedule_failures) ? "red" : "green"} />
+    </section>
+
+    <section className="operating-kpi-framework">
+      <article className="kpi-domain impact panel">
+        <header><span><ShieldExclamationIcon /></span><div><h2>Security impact KPIs</h2><p>Current exposure requiring analyst decisions</p></div><button onClick={() => onNavigate("risks")}>View risks</button></header>
+        <div className="kpi-domain-grid">
+          <span><small>Risk exposure</small><strong>{Number(riskSummary.average_score || 0).toFixed(1)}<em>/100</em></strong></span>
+          <span><small>Affected entities</small><strong>{number(riskSummary.affected_entities)}</strong></span>
+          <span><small>Report findings</small><strong>{number(riskSummary.report_findings)}</strong></span>
+          <span><small>Detection findings</small><strong>{number(riskSummary.detection_findings)}</strong></span>
+        </div>
+      </article>
+      <article className="kpi-domain efficiency panel">
+        <header><span><BoltIcon /></span><div><h2>Operational efficiency</h2><p>How effectively THOS converts telemetry into decisions</p></div></header>
+        <div className="kpi-domain-grid">
+          <span><small>Workflow success</small><strong>{Number(summary.completion_rate || 0).toFixed(1)}<em>%</em></strong></span>
+          <span><small>Average hunt</small><strong>{duration(summary.avg_hunt_duration_ms)}</strong></span>
+          <span><small>Reasoning avoided</small><strong>{number(summary.model_reasoning_skipped)}</strong></span>
+          <span><small>Records reviewed</small><strong>{number(summary.records_analyzed)}</strong></span>
+        </div>
+      </article>
+      <article className="kpi-domain communication panel">
+        <header><span><DocumentTextIcon /></span><div><h2>Communication framework</h2><p>One evidence set, tailored for each operating audience</p></div></header>
+        <div className="communication-lanes">
+          <span><strong>Leadership</strong><small>Risk score, affected entities, and security impact trend</small></span>
+          <span><strong>SOC operations</strong><small>Detection evidence, hunt outcomes, and response priorities</small></span>
+          <span><strong>Governance</strong><small>Reports, audit trail, degraded runs, and control assurance</small></span>
+        </div>
+      </article>
     </section>
 
     <section className="overview-grid">
@@ -222,7 +264,7 @@ export default function Overview({ onNavigate }) {
         {(data?.recent_activity || []).slice(0, 12).map((item) => <div key={item.id}>
           <i className={activityTone(item.level)} />
           <time>{new Date(item.timestamp).toLocaleString()}</time>
-          <span><strong>{item.message}</strong><small>{item.service} · {item.category} · {item.actor || "system"}</small></span>
+          <span><strong>{displayOperationalText(item.message)}</strong><small>{displayOperationalText(item.service)} · {displayOperationalText(item.category)} · {item.actor || "system"}</small></span>
           <em>{item.duration_ms != null ? duration(item.duration_ms) : item.level}</em>
         </div>)}
         {!data?.recent_activity?.length && <p className="overview-empty">No recent activity was recorded.</p>}

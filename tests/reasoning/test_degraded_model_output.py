@@ -29,6 +29,18 @@ def _valid_response():
     })
 
 
+def test_absence_claim_cannot_be_rendered_as_hard_evidence():
+    rendered = reasoning._render_findings([{
+        "claim": "No evidence of unauthorized outbound traffic was found.",
+        "evidence": "The returned records were unrelated compliance checks.",
+        "ref": "0-3",
+        "confidence": "hard-evidence",
+    }])
+
+    assert "[circumstantial]" in rendered
+    assert "[hard-evidence]" not in rendered
+
+
 def test_empty_or_incomplete_reasoning_is_rejected_before_reporting():
     with pytest.raises(ReasoningResponseError, match="empty response"):
         _parse_complete_reasoning("")
@@ -156,6 +168,7 @@ async def test_zero_evidence_skips_model_reasoning_and_remains_inconclusive(monk
         },
         "evidence_highlights": [],
         "enrichment_hits": [],
+        "behavioral_evidence": [],
         "anomaly_scores": [],
         "coverage_assessment": {"status": "not_testable"},
         "coverage_gaps": ["No normalized event types were available."],
@@ -170,6 +183,79 @@ async def test_zero_evidence_skips_model_reasoning_and_remains_inconclusive(monk
     assert result["negative_screening_counts"] == {
         "sigma": 0, "artifact": 0, "ioc": 0, "behavioral": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_negative_screening_gate_stops_before_reasoning_agent():
+    result = await reasoning.negative_screening_gate_node({
+        "processed_logs": [],
+        "enrichment": {
+            "sigma_matched_records": 0,
+            "llm_indicator_matched_records": 0,
+        },
+        "evidence_highlights": [],
+        "enrichment_hits": [],
+        "behavioral_evidence": [],
+        "anomaly_scores": [],
+        "coverage_assessment": {"status": "covered"},
+        "max_iterations": 1,
+        "iteration": 0,
+    })
+
+    assert result["negative_screening_passed"] is False
+    assert result["reasoning_skipped"] is True
+    assert result["reasoning_attempts"] == 0
+    assert result["report_status"] == "not_generated_no_evidence"
+
+
+@pytest.mark.asyncio
+async def test_anomaly_and_loose_keyword_hits_do_not_bypass_evidence_gate():
+    result = await reasoning.negative_screening_gate_node({
+        "processed_logs": [
+            {"event": "sca", "detail": "CIS Benchmark compliance check"},
+            {
+                "event": "Purple lab rehearsal",
+                "detail": "purple-lab-attack-technique=T1071.001",
+            },
+        ],
+        "enrichment": {
+            "sigma_matched_records": 0,
+            "llm_indicator_matched_records": 1,
+        },
+        "evidence_highlights": [],
+        "enrichment_hits": [],
+        "behavioral_evidence": [],
+        "anomaly_scores": [{"record_index": 1, "reason": "rare event type"}],
+        "coverage_assessment": {"status": "partial"},
+        "max_iterations": 1,
+        "iteration": 0,
+    })
+
+    assert result["negative_screening_passed"] is False
+    assert result["reasoning_skipped"] is True
+    assert result["negative_screening_counts"]["behavioral"] == 0
+    assert result["report_status"] == "not_generated_no_evidence"
+
+
+@pytest.mark.asyncio
+async def test_zero_siem_results_stop_even_if_stale_match_state_is_present():
+    result = await reasoning.negative_screening_gate_node({
+        "processed_logs": [],
+        "total_hits": 0,
+        "enrichment": {
+            "sigma_matched_records": 1,
+            "llm_indicator_matched_records": 0,
+        },
+        "evidence_highlights": [],
+        "enrichment_hits": [],
+        "behavioral_evidence": [],
+        "coverage_assessment": {"status": "not_testable"},
+        "iteration": 0,
+    })
+
+    assert result["negative_screening_passed"] is False
+    assert result["reasoning_skipped"] is True
+    assert result["report_status"] == "not_generated_no_evidence"
 
 
 def test_folder_query_fallback_is_nonempty():

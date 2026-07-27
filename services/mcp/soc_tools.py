@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from services.detection import sigma_engine, sigmahq_engine
 from services.detection.anomaly_scoring import score_rare_events
@@ -16,6 +17,60 @@ _TECHNIQUE_ARTIFACTS = {
     "T1046": ("nmap", "nmap scripting engine", "masscan", "zmap",
               "network service discovery", "port scan"),
 }
+
+_NETWORK_BEHAVIOR_TECHNIQUES = (
+    "T1041", "T1046", "T1071", "T1095", "T1102", "T1105", "T1219",
+)
+
+
+def _behavioral_evidence(logs: list[dict], technique_id: str) -> list[dict]:
+    """Return only explicit, source-grounded technique behavior.
+
+    Rarity scores and model-derived keyword hits are useful for prioritization,
+    but neither is an explicit match. Rehearsal, simulation, and compliance
+    records remain eligible whenever they contain the requested technique
+    mapping or strict structured behavior.
+    """
+    normalized_id = str(technique_id or "").strip().upper()
+    if not normalized_id:
+        return []
+    attack_id = re.compile(
+        rf"(?<![A-Z0-9.]){re.escape(normalized_id)}(?![A-Z0-9.])",
+        re.IGNORECASE,
+    )
+    network_family = normalized_id.startswith(_NETWORK_BEHAVIOR_TECHNIQUES)
+    network_port = re.compile(
+        r"""(?ix)
+        ["']?(?:destination|dest|dst)[._ -]?port["']?\s*[:=]\s*["']?\d{1,5}
+        """
+    )
+    results = []
+    for index, log in enumerate(logs):
+        searchable = " ".join((
+            str(log.get("event", "")),
+            str(log.get("evidence_summary", "")),
+            str(log.get("detail", "")),
+        ))
+        exact_technique = bool(attack_id.search(searchable))
+        structured_network = bool(
+            network_family
+            and log.get("dst_ip")
+            and network_port.search(searchable)
+        )
+        if not (exact_technique or structured_network):
+            continue
+        results.append({
+            "record_index": index,
+            "event": str(log.get("event", "unknown")),
+            "reason": (
+                f"explicit ATT&CK mapping {normalized_id}"
+                if exact_technique
+                else "structured network destination and port"
+            ),
+        })
+        if len(results) >= 100:
+            break
+    return results
 
 
 def _keyword_matches(log: dict, event_ids: list[str], keywords: list[str]) -> bool:
@@ -145,10 +200,9 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     llm_refs = {index for index, log in enumerate(processed_logs)
                 if _keyword_matches(log, event_ids, keywords)}
     evidence_highlights = _artifact_highlights(processed_logs, technique_id, technique_name)
-    artifact_refs = {item["record_index"] for item in evidence_highlights}
+    behavioral_evidence = _behavioral_evidence(processed_logs, technique_id)
     for index, record in enumerate(processed_logs):
         record["_llm_indicator_match"] = index in llm_refs
-    all_refs = sorted(sigma_refs | llm_refs | artifact_refs)
     rule_matches.sort(key=lambda item: item.get("matched_count", 0), reverse=True)
 
     mode_text = ("locally evaluated because the source has no query engine" if siem_type in LOCAL_SOURCES
@@ -177,10 +231,11 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     return {
         "processed_logs": processed_logs,
         "sigma_rule": sigma_rule_text,
-        "sigma_matched_count": len(all_refs), "sigma_matched_refs": all_refs,
+        "sigma_matched_count": len(sigma_refs), "sigma_matched_refs": sorted(sigma_refs),
         "sigma_rule_matches": [{key: value for key, value in item.items() if key != "matched_indices"}
                                for item in rule_matches],
         "evidence_highlights": evidence_highlights,
+        "behavioral_evidence": behavioral_evidence,
         "enrichment": {
             "technique_id": technique_id, "log_count_analyzed": len(processed_logs),
             "sigma_execution_mode": coverage.get("mode"), "sigma_query_coverage": coverage,

@@ -18,7 +18,7 @@ Progress = Callable[[dict], Awaitable[None]]
 STAGES = (
     ("forensic_intake", "Forensic Intake & Integrity Agent", "Verifies case containment, custody metadata, file size, and full SHA-256.", verify_evidence),
     ("forensic_artifact", "Forensic Artifact Analysis Agent", "Identifies and parses artifacts, inventories archives, and checks disk-image tooling.", analyze_artifacts),
-    ("forensic_correlation", "Forensic Detection Correlation Agent", "Runs Sigma correlation, IOC extraction, anomaly scoring, and review-keyword triage.", correlate_evidence),
+    ("forensic_correlation", "Forensic Detection Correlation Agent", "Runs detection-rule correlation, IOC extraction, anomaly scoring, and review-keyword triage.", correlate_evidence),
     ("forensic_timeline", "Forensic Timeline Agent", "Builds a timestamp-ordered event reconstruction with evidence references.", build_timeline),
 )
 

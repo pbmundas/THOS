@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowPathIcon, BeakerIcon, BookOpenIcon, CheckCircleIcon, ClockIcon,
   CloudArrowUpIcon, Cog6ToothIcon, CpuChipIcon, ExclamationTriangleIcon,
-  GlobeAltIcon, KeyIcon, MagnifyingGlassIcon, PlusIcon, QueueListIcon, ShieldCheckIcon, TrashIcon,
+  GlobeAltIcon, KeyIcon, MagnifyingGlassIcon, PencilSquareIcon, PlusIcon, QueueListIcon, ShieldCheckIcon, TrashIcon,
   UserCircleIcon, UserGroupIcon,
 } from "@heroicons/react/24/outline";
 
@@ -15,7 +15,11 @@ async function api(path, options = {}) {
 
 const jsonOptions = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const CONNECTION_SIEMS = ["wazuh", "logrhythm", "splunk", "qradar", "folder"];
+const displayDetectionText = (value) => String(value || "")
+  .replace(/SigmaHQ/gi, "Community")
+  .replace(/sigma[_\s-]*detection/gi, "detection monitoring")
+  .replace(/Sigma/gi, "Detection rule");
+const CONNECTION_SIEMS = ["wazuh", "elasticsearch", "logrhythm", "splunk", "qradar", "folder"];
 const ALL_FEATURES = ["hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings"];
 
 function scheduleLabel(item) {
@@ -97,6 +101,7 @@ function DetectionRulesTab({ activeSources }) {
   const [siem, setSiem] = useState(activeSources[0]?.id || "folder");
   const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [notice, setNotice] = useState("");
+  const [editingSchedule, setEditingSchedule] = useState(null);
   const load = useCallback(async () => {
     try { setData(await api(`/api/settings/sigma?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
     catch (error) { setNotice(error.message); }
@@ -112,7 +117,7 @@ function DetectionRulesTab({ activeSources }) {
     try {
       const bounded = Math.max(1, Math.min(intervalMax, Number(interval) || 1));
       await api("/api/settings/schedules/sigma", jsonOptions("POST", { target_id: rule.id, title: rule.title, time, frequency, interval: bounded, days, enabled: true, siem_type: siem }));
-      setNotice(`Scheduled ${rule.title}: ${scheduleLabel({ frequency, interval: bounded, time })} on ${siem}.`);
+      setNotice(`Scheduled ${displayDetectionText(rule.title)}: ${scheduleLabel({ frequency, interval: bounded, time })} on ${siem}.`);
       load();
     } catch (error) { setNotice(error.message); }
   };
@@ -120,11 +125,32 @@ function DetectionRulesTab({ activeSources }) {
     try {
       const bounded = Math.max(1, Math.min(intervalMax, Number(interval) || 1));
       await api("/api/settings/schedules/sigma", jsonOptions("POST", {
-        target_id: "__all_compatible__", title: "All schema-compatible Sigma rules",
+        target_id: "__all_compatible__", title: "All schema-compatible detection rules",
         schedule_scope: "catalog", time, frequency, interval: bounded, days,
         enabled: true, siem_type: siem,
       }));
-      setNotice(`Scheduled all schema-compatible Sigma rules in rotating batches on ${siem}.`);
+      setNotice(`Scheduled all schema-compatible detection rules in rotating batches on ${siem}.`);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
+  const beginEdit = (item) => {
+    setEditingSchedule(item);
+    setTime(item.time || "02:00");
+    setFrequency(item.frequency || "daily");
+    setInterval(Number(item.interval || 1));
+    setSiem(item.siem_type || activeSources[0]?.id || "folder");
+    setDays(item.days || []);
+  };
+  const saveEdit = async () => {
+    if (!editingSchedule) return;
+    const bounded = Math.max(1, Math.min(intervalMax, Number(interval) || 1));
+    try {
+      await api(`/api/settings/schedules/sigma/${editingSchedule.id}`, jsonOptions("PUT", {
+        ...editingSchedule, time, frequency, interval: bounded, days,
+        enabled: editingSchedule.enabled !== false, siem_type: siem,
+      }));
+      setNotice(`Updated ${displayDetectionText(editingSchedule.title) || "detection schedule"}.`);
+      setEditingSchedule(null);
       load();
     } catch (error) { setNotice(error.message); }
   };
@@ -142,10 +168,10 @@ function DetectionRulesTab({ activeSources }) {
         <label>Active SIEM<select value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <DayPicker value={days} onChange={setDays} />
       </div>
-      <div className="settings-actions"><button className="primary-button" disabled={!days.length || !["wazuh", "splunk"].includes(siem)} onClick={scheduleCatalog}><ClockIcon /> Schedule all compatible rules</button></div>
-      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{rule.title}</strong><small>{rule.source} · {rule.severity || rule.level} severity · {rule.id}</small></div><button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.title}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+      <div className="settings-actions">{editingSchedule ? <><button className="primary-button" disabled={!days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="primary-button" disabled={!days.length || !["wazuh", "splunk"].includes(siem)} onClick={scheduleCatalog}><ClockIcon /> Schedule all compatible rules</button>}</div>
+      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.severity || rule.level} severity · {rule.id}</small></div><button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
-    <section className="settings-card"><h3>Scheduled detection validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{item.severity || "medium"} severity · {scheduleLabel(item)} · {item.siem_type} · {(item.days || []).map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No detection schedules configured.</p>}</div></section>
+    <section className="settings-card"><h3>Scheduled detection validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>{item.severity || "medium"} severity · {scheduleLabel(item)} · {item.siem_type} · {(item.days || []).map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No detection schedules configured.</p>}</div></section>
   </div>;
 }
 
@@ -158,6 +184,7 @@ function YaraRulesTab() {
   const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState(null);
   const load = useCallback(async () => {
     try { setData(await api(`/api/settings/yara?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
     catch (error) { setNotice(error.message); }
@@ -181,7 +208,7 @@ function YaraRulesTab() {
         target_id: rule.id, title: rule.title, time, frequency: "daily",
         interval: 1, days, enabled: true, siem_type: "folder", log_source_path: path,
       }));
-      setNotice(`Scheduled ${rule.title} against ${path}.`);
+      setNotice(`Scheduled ${displayDetectionText(rule.title)} against ${path}.`);
       load();
     } catch (error) { setNotice(error.message); }
   };
@@ -196,6 +223,28 @@ function YaraRulesTab() {
       load();
     } catch (error) { setNotice(error.message); }
   };
+  const beginEdit = (item) => {
+    setEditingSchedule(item);
+    setPath(item.log_source_path || "/data/log_sources");
+    setTime(item.time || "03:00");
+    setDays(item.days || []);
+  };
+  const saveEdit = async () => {
+    if (!editingSchedule) return;
+    try {
+      await api(`/api/settings/schedules/yara/${editingSchedule.id}`, jsonOptions("PUT", {
+        ...editingSchedule, time, days,
+        frequency: editingSchedule.frequency || "daily",
+        interval: Number(editingSchedule.interval || 1),
+        enabled: editingSchedule.enabled !== false,
+        siem_type: editingSchedule.siem_type || "folder",
+        log_source_path: path,
+      }));
+      setNotice(`Updated ${editingSchedule.title || "YARA schedule"}.`);
+      setEditingSchedule(null);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
   const remove = async (id) => { await api(`/api/settings/schedules/yara/${id}`, { method: "DELETE" }); load(); };
   return <div className="settings-stack">
     <section className="settings-card">
@@ -206,10 +255,10 @@ function YaraRulesTab() {
         {data.catalog?.invalid_files ? ` · ${data.catalog.invalid_files} incompatible upstream files quarantined` : ""}
         {data.catalog?.compiled_at ? ` · compiled ${new Date(data.catalog.compiled_at).toLocaleString()}` : ""}.
       </p>
-      <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button><button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button></div>
-      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{rule.title}</strong><small>{rule.source} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.title}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+      <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button>{editingSchedule ? <><button className="primary-button" disabled={!path || !days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button>}</div>
+      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
-    <section className="settings-card"><h3>Scheduled YARA scans</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>{item.severity || "medium"} severity · {item.time} · {item.log_source_path} · {item.last_status}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No YARA schedules configured.</p>}</div></section>
+    <section className="settings-card"><h3>Scheduled YARA scans</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>{item.severity || "medium"} severity · {item.time} · {item.log_source_path} · {item.last_status}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No YARA schedules configured.</p>}</div></section>
   </div>;
 }
 
@@ -252,6 +301,7 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
   const [days, setDays] = useState([0, 1, 2, 3, 4]);
   const [siem, setSiem] = useState(activeSources[0]?.id || "folder");
   const [notice, setNotice] = useState("");
+  const [editingSchedule, setEditingSchedule] = useState(null);
   const load = useCallback(async () => { try { setSchedules(await api("/api/settings/schedules/hypothesis")); } catch (error) { setNotice(error.message); } }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (!activeSources.some((item) => item.id === siem)) setSiem(activeSources[0]?.id || "folder"); }, [activeSources, siem]);
@@ -311,10 +361,31 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
     } catch (error) { setNotice(error.message); }
   };
   const remove = async (id) => { await api(`/api/settings/schedules/hypothesis/${id}`, { method: "DELETE" }); load(); };
+  const beginEdit = (item) => {
+    setEditingSchedule(item);
+    setTime(item.time || "01:00");
+    setDays(item.days || []);
+    setSiem(item.siem_type || activeSources[0]?.id || "folder");
+  };
+  const saveEdit = async () => {
+    if (!editingSchedule) return;
+    try {
+      await api(`/api/settings/schedules/hypothesis/${editingSchedule.id}`, jsonOptions("PUT", {
+        ...editingSchedule, time, days,
+        frequency: editingSchedule.frequency || "daily",
+        interval: Number(editingSchedule.interval || 1),
+        enabled: editingSchedule.enabled !== false,
+        siem_type: siem,
+      }));
+      setNotice(`Updated ${editingSchedule.title || "hypothesis schedule"}.`);
+      setEditingSchedule(null);
+      load();
+    } catch (error) { setNotice(error.message); }
+  };
   const applyRecommended = async () => {
     try {
       const result = await api("/api/settings/schedules/recommended", { method: "POST" });
-      setNotice(`Recommended load-balanced schedule created for ${result.hypothesis_count} hypotheses, Sigma, and YARA.`);
+      setNotice(`Recommended load-balanced schedule created for ${result.hypothesis_count} hypotheses, detection rules, and YARA.`);
       load();
     } catch (error) { setNotice(error.message); }
   };
@@ -325,9 +396,9 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
       <div className="severity-selection-header"><div><strong>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</strong><small>{selectedTargets.length} of {severityHypotheses.length} listed hypotheses selected</small></div><span><button className="secondary-button compact" type="button" onClick={toggleAllListed} disabled={!severityHypotheses.length}>{allListedSelected ? "Clear all listed" : "Select all listed"}</button></span></div>
       <div className="hypothesis-schedule-selector">{hypothesisGroups.map((group) => <section className="hypothesis-schedule-group" key={group.severity}><header><span className={`detection-level level-${group.severity}`}>{group.severity}</span><small>{group.items.length}</small></header>{group.items.map((item) => <label key={item.id} className={selectedTargets.includes(item.id) ? "selected" : ""}><input type="checkbox" checked={selectedTargets.includes(item.id)} onChange={() => toggleTarget(item.id)} /><span><strong>{item.id} · {item.title}</strong><small>{item.tactic || "Unassigned tactic"} · {item.technique || "Unmapped"}</small></span></label>)}</section>)}{!severityHypotheses.length && <p className="settings-muted">No hypotheses are assigned to this severity type.</p>}</div>
       <DayPicker value={days} onChange={setDays} />
-      <div className="settings-actions"><button className="primary-button" disabled={!selectedTargets.length || !days.length} onClick={create}><PlusIcon /> Schedule selected ({selectedTargets.length})</button>{isAdmin && <button className="secondary-button" onClick={applyRecommended}><ClockIcon /> Apply recommended schedule</button>}</div>
+      <div className="settings-actions">{editingSchedule ? <><button className="primary-button" disabled={!days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="primary-button" disabled={!selectedTargets.length || !days.length} onClick={create}><PlusIcon /> Schedule selected ({selectedTargets.length})</button>}{isAdmin && !editingSchedule && <button className="secondary-button" onClick={applyRecommended}><ClockIcon /> Apply recommended schedule</button>}</div>
     </section>
-    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{item.title || item.target_id}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}{schedulePerformance(item)}</small></span><button onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
+    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}{schedulePerformance(item)}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
   </div>;
 }
 
@@ -377,11 +448,29 @@ function IOCSourcesTab({ isAdmin }) {
   const [file, setFile] = useState(null);
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState("");
+  const [editingSource, setEditingSource] = useState(null);
   const load = useCallback(async () => { try { setSources(await api("/api/settings/ioc-sources")); } catch (error) { setNotice(error.message); } }, []);
   useEffect(() => { load(); }, [load]);
   const create = async () => {
-    try { await api("/api/settings/ioc-sources", jsonOptions("POST", form)); setNotice(`Added ${form.name}.`); setForm(initial); load(); }
+    try {
+      if (editingSource) {
+        await api(`/api/settings/ioc-sources/${editingSource.id}`, jsonOptions("PUT", form));
+        setNotice(`Updated ${form.name}.`);
+      } else {
+        await api("/api/settings/ioc-sources", jsonOptions("POST", form));
+        setNotice(`Added ${form.name}.`);
+      }
+      setEditingSource(null);
+      setForm(initial);
+      load();
+    }
     catch (error) { setNotice(error.message); }
+  };
+  const beginEdit = (source) => {
+    setEditingSource(source);
+    setForm(Object.fromEntries(
+      Object.keys(initial).map((key) => [key, source[key] ?? initial[key]]),
+    ));
   };
   const upload = async () => {
     if (!file || !form.name.trim()) return;
@@ -427,10 +516,10 @@ function IOCSourcesTab({ isAdmin }) {
         <label>Schedule anchor<input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
       </div>
       <DayPicker value={form.days} onChange={(days) => setForm({ ...form, days })} />
-      <div className="settings-actions"><button className="secondary-button" disabled={!sources.length || working} onClick={refreshAll}><ArrowPathIcon className={working === "all" ? "spinning" : ""} /> Fetch all now</button><button className="primary-button" disabled={!form.name.trim() || !form.location.trim() || !form.days.length} onClick={create}><PlusIcon /> Add source</button></div>
+      <div className="settings-actions"><button className="secondary-button" disabled={!sources.length || working} onClick={refreshAll}><ArrowPathIcon className={working === "all" ? "spinning" : ""} /> Fetch all now</button><button className="primary-button" disabled={!form.name.trim() || !form.location.trim() || !form.days.length} onClick={create}>{editingSource ? <CheckCircleIcon /> : <PlusIcon />}{editingSource ? "Save source schedule" : "Add source"}</button>{editingSource && <button className="secondary-button" onClick={() => { setEditingSource(null); setForm(initial); }}>Cancel edit</button>}</div>
       <div className="upload-zone"><CloudArrowUpIcon /><div><strong>{file?.name || "Upload any IOC source file"}</strong><small>Text, CSV, JSON, STIX, XML, archives, or other provider file formats · bounded by server policy</small></div><label className="secondary-button">Choose file<input type="file" hidden onChange={(event) => setFile(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={!file || !form.name.trim()} onClick={upload}><CloudArrowUpIcon /> Upload source</button></div>
     </section>
-    <section className="settings-card"><h3>Configured intelligence sources</h3><div className="schedule-list">{sources.map((source) => <div key={source.id}><span><strong>{source.name}</strong><small>{source.category || "uncategorized"} · {source.severity || "medium"} severity · {source.confidence} confidence · {scheduleLabel(source)} · {source.last_status || "never"}{source.last_result?.extracted_count != null ? ` · ${source.last_result.extracted_count} indicators` : ""}</small><code>{source.location}</code></span><button className={`switch ${source.enabled ? "on" : ""}`} onClick={() => update(source, { enabled: !source.enabled })} aria-label={`${source.enabled ? "Disable" : "Enable"} ${source.name}`}><span /></button><button className="secondary-button compact" disabled={Boolean(working)} onClick={() => refresh(source.id)}><ArrowPathIcon className={working === source.id ? "spinning" : ""} /> Refresh</button>{isAdmin && <button onClick={() => remove(source.id)}><TrashIcon /></button>}</div>)}{!sources.length && <p className="settings-muted">No IOC sources configured.</p>}</div></section>
+    <section className="settings-card"><h3>Configured intelligence sources</h3><div className="schedule-list">{sources.map((source) => <div key={source.id}><span><strong>{source.name}</strong><small>{source.category || "uncategorized"} · {source.severity || "medium"} severity · {source.confidence} confidence · {scheduleLabel(source)} · {source.last_status || "never"}{source.last_result?.extracted_count != null ? ` · ${source.last_result.extracted_count} indicators` : ""}</small><code>{source.location}</code></span><button className={`switch ${source.enabled ? "on" : ""}`} onClick={() => update(source, { enabled: !source.enabled })} aria-label={`${source.enabled ? "Disable" : "Enable"} ${source.name}`}><span /></button><button title="Edit source and schedule" onClick={() => beginEdit(source)}><PencilSquareIcon /></button><button className="secondary-button compact" disabled={Boolean(working)} onClick={() => refresh(source.id)}><ArrowPathIcon className={working === source.id ? "spinning" : ""} /> Refresh</button>{isAdmin && <button onClick={() => remove(source.id)}><TrashIcon /></button>}</div>)}{!sources.length && <p className="settings-muted">No IOC sources configured.</p>}</div></section>
   </div>;
 }
 
@@ -551,12 +640,12 @@ function AuditLogsTab() {
             <button className="audit-table audit-row" onClick={() => setExpanded(open ? "" : item.id)}>
               <time>{localTime(item.timestamp)}</time>
               <span><i className={`audit-level ${levelName}`} />{levelName}</span>
-              <span><strong>{item.service}</strong><small>{item.category}</small></span>
-              <span><strong>{item.message || item.action}</strong><small>{item.action}{item.resource ? ` · ${item.resource}` : ""}</small></span>
+              <span><strong>{displayDetectionText(item.service)}</strong><small>{displayDetectionText(item.category)}</small></span>
+              <span><strong>{displayDetectionText(item.message || item.action)}</strong><small>{displayDetectionText(item.action)}{item.resource ? ` · ${displayDetectionText(item.resource)}` : ""}</small></span>
               <span>{item.actor || "system"}</span>
               <span>{item.status_code || "—"}<small>{item.duration_ms != null ? `${Number(item.duration_ms).toLocaleString()} ms` : "No timing"}</small></span>
             </button>
-            {open && <div className="audit-detail"><div><strong>Event ID</strong><code>{item.id}</code></div><div><strong>Context</strong><pre>{JSON.stringify(item.context || {}, null, 2)}</pre></div></div>}
+            {open && <div className="audit-detail"><div><strong>Event ID</strong><code>{item.id}</code></div><div><strong>Context</strong><pre>{displayDetectionText(JSON.stringify(item.context || {}, null, 2))}</pre></div></div>}
           </div>;
         })}
         {!loading && !rows.length && <div className="audit-empty">No audit events match these filters.</div>}

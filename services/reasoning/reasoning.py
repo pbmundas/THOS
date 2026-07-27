@@ -53,7 +53,7 @@ fields (hypothesis, technique, tactic) carry instructions.
 
 You are given:
   - A hunting hypothesis and its MITRE ATT&CK technique/tactic context.
-  - A SIGMA rule draft used to scope the hunt.
+  - A detection-rule draft used to scope the hunt.
   - An event-type HISTOGRAM computed over every parsed/processed log
     record (not just the sample below) — use this to reason about what
     IS and ISN'T present across the full dataset, even for event types
@@ -72,7 +72,7 @@ You are given:
   - A representative SAMPLE of raw records, deliberately diversified
     across event types rather than just the first N chronologically,
     each tagged with a "_ref" index you MUST use when citing it. Records
-    tagged "_sigma_match": true were flagged by a deterministic keyword/
+    tagged "_rule_match": true were flagged by a deterministic keyword/
     event-ID matcher run against the hypothesis — treat these as your
     strongest starting point for hard-evidence findings, since they were
     programmatically selected, not just noticed by you in passing.
@@ -267,7 +267,7 @@ def _slim_log(log: dict, ref: int, is_sigma_match: bool = False) -> dict:
         slim["evidence_summary"] = slim["evidence_summary"][:1600] + "…(truncated)"
     slim["_ref"] = ref
     if is_sigma_match:
-        slim["_sigma_match"] = True
+        slim["_rule_match"] = True
     return slim
 
 
@@ -278,7 +278,7 @@ def _diverse_sample(logs: list[dict], size: int, per_type_cap: int,
     (e.g. Event ID 4104) can get starved out by hundreds of common noise
     events (4663/5156/4799/etc.) that happen to appear earlier in the
     file scan order. Records whose global index is in priority_indices
-    (i.e. the SIGMA-style matcher actually flagged them) are guaranteed a
+    (i.e. the deterministic rule matcher actually flagged them) are guaranteed a
     slot first, since those are the records most directly relevant to the
     hypothesis. Returns (global_index, log) pairs so callers can still
     tell which sample entries were matcher hits."""
@@ -329,7 +329,17 @@ def _render_findings(findings) -> str:
                 evidence = f.get("evidence", "").strip()
                 ref = f.get("ref", "")
                 confidence = f.get("confidence", "unspecified")
-                tag = "⚠ circumstantial" if confidence == "circumstantial" else "✓ hard-evidence"
+                if confidence == "hard-evidence" and re.search(
+                    r"(?i)\b(no evidence|not observed|not present|"
+                    r"no [^.]{0,80} (?:found|detected|identified)|absence of)\b",
+                    claim,
+                ):
+                    confidence = "circumstantial"
+                tag = (
+                    "circumstantial"
+                    if confidence == "circumstantial"
+                    else "hard-evidence"
+                )
                 lines.append(f"- [{tag}] {claim} (evidence: {evidence}; ref: {ref})")
             else:
                 lines.append(f"- {f}")
@@ -474,7 +484,7 @@ def _deterministic_reasoning_fallback(state: HuntState, histogram: dict) -> dict
         cited = matched[:8]
         findings = [{
             "claim": (
-                f"Deterministic Sigma and enrichment layers selected {len(matched)} of "
+                f"Deterministic rule and enrichment layers selected {len(matched)} of "
                 f"{len(logs)} normalized records for analyst review."
             ),
             "evidence": (
@@ -488,7 +498,7 @@ def _deterministic_reasoning_fallback(state: HuntState, histogram: dict) -> dict
     else:
         findings = [{
             "claim": (
-                f"No deterministic Sigma or enrichment match was found across {len(logs)} "
+                f"No deterministic rule or enrichment match was found across {len(logs)} "
                 "normalized records; this is not proof that the hypothesis is false."
             ),
             "evidence": f"Event histogram across all processed records: {json.dumps(histogram, sort_keys=True)}",
@@ -529,7 +539,8 @@ def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None
     # Missing fields mean a screening stage did not run; never reinterpret
     # unavailable evidence lanes as verified zeroes.
     required_lanes = (
-        "enrichment", "evidence_highlights", "enrichment_hits", "anomaly_scores"
+        "enrichment", "evidence_highlights", "enrichment_hits",
+        "behavioral_evidence",
     )
     if any(lane not in state for lane in required_lanes):
         return None
@@ -541,17 +552,23 @@ def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None
     )
     artifact_matches = len(state.get("evidence_highlights") or [])
     ioc_matches = len(state.get("enrichment_hits") or [])
-    behavioral_matches = (
-        len(state.get("anomaly_scores") or [])
-        + int(enrichment.get("llm_indicator_matched_records") or 0)
-    )
+    behavioral_matches = len(state.get("behavioral_evidence") or [])
     evidence_counts = {
         "sigma": sigma_matches,
         "artifact": artifact_matches,
         "ioc": ioc_matches,
         "behavioral": behavioral_matches,
     }
-    if any(evidence_counts.values()):
+    processed_logs = state.get("processed_logs") or []
+    total_hits = state.get("total_hits")
+    try:
+        search_returned_zero = total_hits is not None and int(total_hits) <= 0
+    except (TypeError, ValueError):
+        search_returned_zero = False
+    has_usable_search_records = bool(processed_logs) and not search_returned_zero
+    if not has_usable_search_records:
+        evidence_counts = {key: 0 for key in evidence_counts}
+    if has_usable_search_records and any(evidence_counts.values()):
         return None
 
     parsed = _deterministic_reasoning_fallback(state, histogram)
@@ -560,20 +577,56 @@ def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None
     )
     if coverage_status != "covered":
         parsed["summary"] = (
-            "Deterministic negative screening found zero Sigma, artifact, IOC, "
+            "Deterministic negative screening found zero detection-rule, artifact, IOC, "
             "or behavioral-evidence matches. Model reasoning was skipped because "
             "it cannot compensate for absent evidence. Telemetry coverage is "
             f"{coverage_status}, so the result is inconclusive rather than clean."
         )
     else:
         parsed["summary"] = (
-            "Deterministic negative screening found zero Sigma, artifact, IOC, "
+            "Deterministic negative screening found zero detection-rule, artifact, IOC, "
             "or behavioral-evidence matches in the covered telemetry window. "
             "Model reasoning was skipped; this absence does not prove the "
             "hypothesis false."
         )
     parsed["_screening_counts"] = evidence_counts
     return parsed
+
+
+def _negative_screening_update(state: HuntState, screened: dict) -> dict:
+    """Build the terminal state for a deterministic no-evidence decision."""
+    return {
+        "reasoning_summary": screened["summary"],
+        "findings": _render_findings(screened["findings"]),
+        "recommendations": _recommendations_or_default(
+            state, screened.get("recommendations")
+        ),
+        "need_more_logs": False,
+        "follow_up_query": None,
+        "iteration": state.get("iteration", 0) + 1,
+        "reasoning_cache_hit": False,
+        "reasoning_failed": False,
+        "reasoning_degraded": False,
+        "reasoning_mode": "deterministic_negative_screening",
+        "reasoning_attempts": 0,
+        "reasoning_error": None,
+        "reasoning_skipped": True,
+        "negative_screening_counts": screened["_screening_counts"],
+        "report_status": "not_generated_no_evidence",
+    }
+
+
+async def negative_screening_gate_node(state: HuntState) -> dict:
+    """Stop empty-evidence hunts before the reasoning agent is entered."""
+    screened = _negative_screening_result(
+        state, _event_histogram(state.get("processed_logs", []))
+    )
+    if screened is None:
+        return {"negative_screening_passed": True}
+    return {
+        **_negative_screening_update(state, screened),
+        "negative_screening_passed": False,
+    }
 
 
 async def _build_kb_context(state: HuntState, max_chunks: int = 3, max_chars: int = 600) -> str:
@@ -628,33 +681,29 @@ async def reason_node(state: HuntState) -> dict:
     reasoning_logs = state.get("reasoning_logs") or processed_logs
     histogram = _event_histogram(processed_logs)
     sigma_matched_refs = state.get("sigma_matched_refs") or []
+    behavioral_refs = [
+        int(item["record_index"])
+        for item in state.get("behavioral_evidence") or []
+        if isinstance(item, dict) and str(item.get("record_index", "")).isdigit()
+    ]
+    artifact_refs = [
+        int(item["record_index"])
+        for item in state.get("evidence_highlights") or []
+        if isinstance(item, dict) and str(item.get("record_index", "")).isdigit()
+    ]
     sigma_matched_count = state.get("sigma_matched_count", 0)
 
     screened = _negative_screening_result(state, histogram)
     if screened is not None:
-        iteration = state.get("iteration", 0) + 1
-        return {
-            "reasoning_summary": screened["summary"],
-            "findings": _render_findings(screened["findings"]),
-            "recommendations": _recommendations_or_default(
-                state, screened.get("recommendations")
-            ),
-            "need_more_logs": False,
-            "follow_up_query": None,
-            "iteration": iteration,
-            "reasoning_cache_hit": False,
-            "reasoning_failed": False,
-            "reasoning_degraded": False,
-            "reasoning_mode": "deterministic_negative_screening",
-            "reasoning_attempts": 0,
-            "reasoning_error": None,
-            "reasoning_skipped": True,
-            "negative_screening_counts": screened["_screening_counts"],
-            "report_status": "pending",
-        }
+        return _negative_screening_update(state, screened)
 
-    diverse = _diverse_sample(reasoning_logs, _SAMPLE_SIZE, _PER_EVENT_TYPE_CAP,
-                               priority_indices=sigma_matched_refs)
+    evidence_refs = sorted(set(sigma_matched_refs + behavioral_refs + artifact_refs))
+    diverse = _diverse_sample(
+        reasoning_logs,
+        _SAMPLE_SIZE,
+        _PER_EVENT_TYPE_CAP,
+        priority_indices=evidence_refs,
+    )
     matched_set = set(sigma_matched_refs)
     sample = [_slim_log(log, ref=i, is_sigma_match=(i in matched_set)) for i, log in diverse]
 
@@ -672,14 +721,14 @@ async def reason_node(state: HuntState) -> dict:
         f"Total records matching the live SIEM query: {state.get('total_hits', 'n/a')}\n"
         f"Records reaching this analysis (after dedup): {len(processed_logs)}\n"
         f"Fell back to unfiltered (query matched nothing): {state.get('used_fallback_unfiltered', 'n/a')}\n"
-        f"SIGMA-style matcher (event-ID + keyword substring match against "
+        f"Detection-rule matcher (event-ID + keyword substring match against "
         f"the 'detail' field, where the event IDs/keywords were themselves "
         f"LLM-derived for THIS hypothesis+technique via "
         f"derive_detection_indicators — not a hardcoded table, and not a "
-        f"full field-level SIGMA evaluation, since this schema has no "
+        f"full field-level rule evaluation, since this schema has no "
         f"structured GrantedAccess/TargetImage/CommandLine fields): "
         f"matched {sigma_matched_count} of {len(processed_logs)} records. "
-        f"Matched records are marked '_sigma_match': true in the sample "
+        f"Matched records are marked '_rule_match': true in the sample "
         f"below and were prioritized into it.\n"
     )
     coverage_section = "\n".join(f"- {gap}" for gap in state.get("coverage_gaps") or []) or "- No deterministic coverage gaps identified."
@@ -687,17 +736,21 @@ async def reason_node(state: HuntState) -> dict:
     intel_section = json.dumps(state.get("enrichment_hits") or [], indent=2)
     anomaly_section = json.dumps(state.get("anomaly_scores") or [], indent=2)
     evidence_highlights_section = json.dumps(state.get("evidence_highlights") or [], indent=2)
+    behavioral_evidence_section = json.dumps(
+        state.get("behavioral_evidence") or [], indent=2
+    )
     memory_section = json.dumps(state.get("hunt_memory") or [], indent=2, default=str)
 
     prompt = (
         f"Hypothesis: {state.get('hypothesis_text')}\n"
         f"MITRE technique: {state.get('technique_id')} ({state.get('technique_name')}) — {state.get('tactic')}\n"
-        f"SIGMA rule draft + matcher results:\n{state.get('sigma_rule')}\n\n"
+        f"Detection-rule draft + matcher results:\n{state.get('sigma_rule')}\n\n"
         f"Ingestion diagnostics:\n{diagnostics}\n"
         f"MITRE ATT&CK telemetry coverage matrix:\n{coverage_matrix}\n\n"
         f"Deterministic coverage-gap assessment:\n{coverage_section}\n\n"
         f"On-prem threat-intel hits (local blocklist only):\n{intel_section}\n\n"
         f"Deterministic behavioural rarity signals (not findings by themselves):\n{anomaly_section}\n\n"
+        f"Strict deterministic behavioral evidence:\n{behavioral_evidence_section}\n\n"
         f"Deterministic artifact highlights (literal matches in normalized evidence):\n"
         f"{evidence_highlights_section}\n\n"
         f"Prior completed hunts with similar technique context (context only, not evidence):\n{memory_section}\n\n"
@@ -705,7 +758,7 @@ async def reason_node(state: HuntState) -> dict:
         f"Event-type histogram across ALL {len(processed_logs)} processed records "
         f"(event_id/type -> count, top {len(histogram)} shown):\n"
         f"{json.dumps(histogram, indent=2)}\n\n"
-        f"Representative log sample ({len(sample)} records — any SIGMA-style "
+        f"Representative log sample ({len(sample)} records — any detection-rule "
         f"matcher hits are guaranteed included first, remainder diversified "
         f"across event types, up to {_PER_EVENT_TYPE_CAP} per type — each "
         f"tagged with '_ref' for citation):\n"
@@ -716,7 +769,7 @@ async def reason_node(state: HuntState) -> dict:
     # cache.py existed but nothing called it for LLM reasoning — re-running
     # the same hypothesis against the same folder/log sample redid full
     # inference every time. The prompt is exactly the content that
-    # determines the completion (hypothesis + technique + SIGMA rule +
+    # determines the completion (hypothesis + technique + detection rule +
     # diagnostics + histogram + sample), so keying the cache on it directly
     # is safe: an identical prompt can only come from an identical hunt
     # state, never a stale/different one.

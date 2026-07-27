@@ -23,7 +23,7 @@ from services.hunting.query_gen import generate_query_node
 from services.siem.siem_fetch import fetch_logs_node
 from services.siem.log_processing import process_logs_node
 from services.mcp.soc_tools import run_soc_tools_node
-from services.reasoning.reasoning import reason_node
+from services.reasoning.reasoning import negative_screening_gate_node, reason_node
 from services.reporting.report import write_report_node
 from services.orchestration.supervisor import adaptive_replan_node, plan_hunt_node
 from services.guardrails.sentinel import guardrail_node
@@ -38,6 +38,8 @@ from services.communication.audience import communicate_node
 def route_after_reasoning(state: HuntState) -> str:
     if state.get("reasoning_failed"):
         return "failed"
+    if state.get("reasoning_skipped"):
+        return "no_evidence"
     follow_up = (state.get("follow_up_query") or "").strip()
     # One targeted refinement is useful; repeated full-pipeline loops are
     # expensive and tend to re-analyze the same data rather than add evidence.
@@ -52,6 +54,10 @@ def route_after_reasoning(state: HuntState) -> str:
 
 def route_after_adaptive_replan(state: HuntState) -> str:
     return "siem_fetch" if state.get("replan_action") == "refine_query" else "threat_intel"
+
+
+def route_after_negative_screening(state: HuntState) -> str:
+    return "no_evidence" if state.get("reasoning_skipped") else "reasoning"
 
 
 def build_graph():
@@ -69,6 +75,7 @@ def build_graph():
     graph.add_node("coverage_gap", coverage_gap_node)
     graph.add_node("adaptive_replan", adaptive_replan_node)
     graph.add_node("threat_intel", enrich_iocs_node)
+    graph.add_node("negative_screening_gate", negative_screening_gate_node)
     graph.add_node("reasoning", reason_node)
     graph.add_node("verifier", verify_findings_node)
     graph.add_node("detection_engineering", draft_detection_rule_node)
@@ -90,11 +97,17 @@ def build_graph():
         "siem_fetch": "siem_fetch",
         "threat_intel": "threat_intel",
     })
-    graph.add_edge("threat_intel", "reasoning")
+    graph.add_edge("threat_intel", "negative_screening_gate")
+    graph.add_conditional_edges(
+        "negative_screening_gate",
+        route_after_negative_screening,
+        {"reasoning": "reasoning", "no_evidence": END},
+    )
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
         "siem_fetch": "siem_fetch",
         "verifier": "verifier",
         "failed": END,
+        "no_evidence": END,
     })
     graph.add_edge("verifier", "detection_engineering")
     graph.add_edge("detection_engineering", "communication")

@@ -35,7 +35,7 @@
 2. Generates a SIEM query for it
 3. Fetches matching logs from a SIEM (or a local log folder)
 4. Normalizes/parses those logs
-5. Runs deterministic detection logic (SigmaHQ + custom Sigma rules + LLM-derived indicators) against them
+5. Runs deterministic detection logic (community rules + custom detection rules + LLM-derived indicators) against them
 6. Uses a local LLM (via Ollama) to reason over the evidence
 7. Loops back for more logs if the LLM says it needs them
 8. Writes a structured Markdown hunt report
@@ -82,7 +82,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 **Key architectural decisions to internalize:**
 
 - **Chat UI never talks to the MCP server or the LLM directly.** It only calls the Orchestrator's REST API. The Orchestrator is the only client of the MCP server. This keeps a single, auditable choke point for every tool call.
-- **The MCP server is the tool boundary.** Every capability — SIEM query, Sigma evaluation, report writing, KB search — is exposed as an `@mcp.tool()` function. LangGraph nodes never call SIEM/DB/LLM code directly; they call `call_tool("tool_name", {...})` over MCP. This is what makes the system's capabilities discoverable and independently testable.
+- **The MCP server is the tool boundary.** Every capability — SIEM query, detection rule evaluation, report writing, KB search — is exposed as an `@mcp.tool()` function. LangGraph nodes never call SIEM/DB/LLM code directly; they call `call_tool("tool_name", {...})` over MCP. This is what makes the system's capabilities discoverable and independently testable.
 - **LangGraph owns the control flow**, not application code. The hunt is a directed graph of nodes (see Section 5); adding/re-ordering steps means editing the graph definition, not scattering `if` statements through a monolith.
 - **No service is safe to expose on the host network by default.** Only `chat-ui` publishes a host port (`7860`). Everything else communicates over the internal `thos-net` Docker network and is gated by a bearer token. This is deliberate — see Section 8.
 
@@ -99,7 +99,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 | Vector database (RAG) | **ChromaDB** | Collections: `hearth_kb`, `mitre_kb` (implicit), `siem_kb`, `custom_kb` |
 | Relational store | **PostgreSQL 16** | Audit trail: hunts, hunt_steps, tool_errors, reports |
 | Cache / rate limiting | **Redis 7** | SIEM/LLM response caching, per-hunter rate limits |
-| Detection engine | **pySigma** | Parses vendored SigmaHQ ruleset + custom rules |
+| Detection engine | **Audited rule compiler** | Parses the vendored community corpus and custom rules |
 | Log parsing | `python-evtx`, `scapy`, `pyyaml`, custom parsers | EVTX, PCAP, CSV, CEF, syslog, JSON/ECS, XML, etc. |
 | Containerization | **Docker Compose** | One `docker-compose.yml`, per-service Dockerfiles |
 | Language | **Python 3.12+** | Entire backend |
@@ -135,7 +135,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 │   │   └── soc_tools.py        #   runs all 3 detection layers concurrently
 │   ├── hunting/                # Hypothesis selection, query generation, HEARTH KB refresh
 │   ├── siem/                   # SIEM abstraction layer + connectors + log parsers
-│   ├── detection/               # Sigma engines (SigmaHQ + custom) + rule generators
+│   ├── detection/               # Detection-rule engines, corpora, and rule generators
 │   ├── knowledge/               # ChromaDB ingestion: HEARTH, MITRE, custom docs
 │   ├── reasoning/               # LLM prompt + Ollama client
 │   ├── reporting/               # Markdown report generation
@@ -166,7 +166,7 @@ refresh_hearth_kb → hypothesis → query_gen → siem_fetch → log_processing
 | `siem_fetch` | `services/siem/siem_fetch.py` → `siem_connector.py` | Executes the query against whichever SIEM backend is configured; returns raw records |
 | `log_processing` | `services/siem/log_processing.py` | Normalizes raw records into the platform's 8-field schema |
 | `soc_tools` | `services/mcp/soc_tools.py` | Runs **three detection layers concurrently** (see Section 6.5) against the normalized logs |
-| `reasoning` | `services/reasoning/reasoning.py` | Sends hypothesis + histogram + sample records + Sigma matches + RAG context to the LLM; LLM produces findings/recommendations and decides `need_more_logs` |
+| `reasoning` | `services/reasoning/reasoning.py` | Sends hypothesis + histogram + sample records + detection rule matches + RAG context to the LLM; LLM produces findings/recommendations and decides `need_more_logs` |
 | `report` | `services/reporting/report.py` | Writes the final Markdown report to `data/reports/` |
 
 **The loop:** if the LLM's reasoning output sets `need_more_logs = true`, the graph routes back to `siem_fetch` (using `follow_up_query`) instead of proceeding to `report`. This is capped by `max_iterations` (default 1 to minimize latency; callers may explicitly raise it to 5). The deterministic verifier still runs after the single default reasoning pass, so invalid citations fail closed instead of relying on extra model calls.
@@ -200,7 +200,7 @@ FastAPI service, port `8200` (internal only). Endpoints:
 
 ### 6.2 MCP Server (`services/api/server.py`)
 
-FastMCP-based tool registry, port `8100` (internal only), auth via `StaticTokenVerifier` (`MCP_AUTH_TOKEN`). This is where **every** capability THOS has is declared as an `@mcp.tool()` function — hypothesis lookup, MITRE mapping, Sigma/YARA generation, SIEM query execution, custom KB CRUD, caching, and report I/O. See Section 13.1 for how to add a new one.
+FastMCP-based tool registry, port `8100` (internal only), auth via `StaticTokenVerifier` (`MCP_AUTH_TOKEN`). This is where **every** capability THOS has is declared as an `@mcp.tool()` function — hypothesis lookup, MITRE mapping, detection rule/YARA generation, SIEM query execution, custom KB CRUD, caching, and report I/O. See Section 13.1 for how to add a new one.
 
 ### 6.3 MCP Client (`services/mcp/mcp_client.py`)
 
@@ -234,13 +234,13 @@ Results for `folder`/`logrhythm`/`splunk`/`qradar`/`wazuh` are cached in Redis, 
 
 Three **independent, concurrently-executed** matching layers feed into `soc_tools.py`:
 
-1. **SigmaHQ engine** (`sigmahq_engine.py`) — the real SigmaHQ community ruleset (~2,800+ rules; version pinned in `VERSION.txt`, supplied from reviewed files under `services/detection/sigma_rules_hq/` or Compose's persistent `sigmahq_rules` volume). Rules are parsed with **pySigma** (the same rule→query compiler the Sigma ecosystem itself uses), not a hand-rolled YAML parser — this is what gives correct handling of nested boolean conditions and field modifiers. A custom `DictMatchBackend` walks pySigma's parsed condition tree and evaluates it directly against Python dicts (no upstream backend does this, since pySigma normally targets query-string backends like Splunk/Elastic).
-2. **THOS custom engine** (`sigma_engine.py`) — ~16 hand-written, hand-tuned rules for this platform's 8-field normalized schema. A high-precision supplementary layer, not a replacement for #1.
+1. **Community detection-rule engine** — the reviewed community ruleset (~2,800+ rules, with its version pinned in `VERSION.txt`) is supplied from vendored files or a Compose persistent volume. Rules are parsed with the **audited rule compiler**, not a hand-rolled YAML parser; this provides correct nested boolean-condition and field-modifier handling. A custom `DictMatchBackend` walks the parsed condition tree and evaluates it directly against Python dictionaries.
+2. **THOS custom engine** — approximately 16 hand-written, tuned rules for this platform's eight-field normalized schema. It is a high-precision supplementary layer, not a replacement for the community layer.
 3. **LLM-derived indicators** (`indicator_deriver.py`) — for hypotheses/techniques neither static rule set covers, the LLM proposes candidate Event IDs + keywords, which are then substring-matched deterministically (not just trusted as free text).
 
-**Known, explicitly-documented limitation:** the normalized schema only has 8 generic fields (no structured `CommandLine`/`Image`/`ParentImage`/`GrantedAccess` extraction), so all three layers match against `event` + substring/regex search inside the raw `detail` blob rather than fully parsed structured fields. This is called out in both engines' module docstrings — read them before assuming a rule "isn't working," since some SigmaHQ rules simply can't be field-matched against this schema and are honestly skipped rather than fudged.
+**Known, explicitly-documented limitation:** the normalized schema only has eight generic fields (no structured `CommandLine`/`Image`/`ParentImage`/`GrantedAccess` extraction), so all three layers match against `event` plus substring/regex search inside the raw `detail` blob rather than fully parsed structured fields. Some community rules cannot be field-matched against this schema and are honestly skipped rather than approximated.
 
-`indicator_deriver.py`, `detection_rules.py` (Sigma/YARA skeleton generators) round out the module.
+`indicator_deriver.py` and the detection-rule/YARA skeleton generators round out the module.
 
 ### 6.6 Knowledge / RAG Layer (`services/knowledge/`)
 
@@ -281,7 +281,7 @@ exposing the bearer token or credentials to browser JavaScript.
 
 The same gateway owns the governed runtime control plane in
 `services/api/control_plane.py`: PBKDF2-hashed SME/Analyst users, per-feature
-permissions, Ollama model discovery/default selection, hypothesis and Sigma
+permissions, Ollama model discovery/default selection, hypothesis and detection rule
 schedules in `TZ`-configured local time, RAG document management, SIEM secrets
 and field mappings, and the floating MCP-backed model assistant. Runtime values
 are atomically persisted to `data/runtime/config.json`; all three runtime
@@ -291,7 +291,7 @@ shared read path. Never commit that generated JSON file.
 Final model reasoning is accepted only when it is non-empty, valid JSON, and
 contains the complete required report fields. The node makes at most three
 application-level attempts. If all three fail, THOS records every strike reason
-and produces a citation-safe deterministic evidence analysis from Sigma,
+and produces a citation-safe deterministic evidence analysis from detection rule,
 telemetry, coverage, and enrichment results. That report is explicitly marked
 as fallback analysis and requires human approval. Only a failure of both model
 reasoning and the deterministic fallback ends without a report.
@@ -309,7 +309,7 @@ A `TypedDict(total=False)` — the contract every graph node reads from and writ
 - **Set by `query_gen`:** `query`
 - **Set by `siem_fetch`:** `logs`, `record_count`, `files_scanned`, `total_parsed`, `used_fallback_unfiltered`
 - **Set by `log_processing`:** `processed_logs`
-- **Set by `soc_tools`:** `sigma_rule`, `sigma_matched_count`, `sigma_matched_refs`, `sigma_rule_matches`, `enrichment`
+- **Set by `soc_tools`:** the draft rule, matched-count, matched-reference, matched-rule, and enrichment fields
 - **Set by `reasoning`:** `reasoning_summary`, `findings`, `recommendations`, `need_more_logs`, `follow_up_query`
 - **Set by `report`:** `report_path`
 - **Bookkeeping:** `iteration`, `error`
@@ -454,7 +454,7 @@ pytest --cov=services --cov-report=term-missing
 ```
 
 Current test coverage (`tests/`):
-- `tests/detection/test_sigmahq_engine.py` — SigmaHQ rule parsing/evaluation
+- Detection-engine tests — community-rule parsing and deterministic evaluation
 - `tests/mcp/test_soc_tools.py` — the concurrent 3-layer detection node
 - `tests/siem/test_{logrhythm,qradar,splunk}_normalize.py` — connector response normalization
 
@@ -489,8 +489,8 @@ Documented extension points already called out in the codebase: a human-approval
 
 ### 13.4 Add custom detection rules
 
-- **SigmaHQ ruleset refresh:** run `services/detection/fetch_sigmahq_rules.py --ref <commit>` to re-vendor a reviewed community ruleset into `services/detection/sigma_rules_hq/` (updates `VERSION.txt`). If no vendored YAML is present, Compose's one-shot `sigmahq-rules-init` downloads the pinned `SIGMAHQ_REF` into the persistent `sigmahq_rules` volume. MCP and Orchestrator mount that same volume and refuse to start until the pinned version and `SIGMAHQ_MIN_RULES` count pass preflight.
-- **THOS custom rules:** add a new `.yml` file to `services/detection/sigma_rules/` following the existing rule format; `sigma_engine.py` loads the directory automatically.
+- **Community ruleset refresh:** use the repository's detection-corpus fetch utility with a reviewed commit reference. The operation updates `VERSION.txt`. If no vendored YAML is present, Compose's one-shot rule initializer downloads the pinned commit into the persistent rule volume. MCP and Orchestrator mount that same volume and refuse to start until the pinned version and configured minimum count pass preflight.
+- **THOS custom rules:** add a new `.yml` file to the local detection-rule directory following the existing rule format; the custom engine loads the directory automatically.
 
 ### 13.5 Tune LLM reasoning quality
 
@@ -512,12 +512,12 @@ Follow `hearth_fetch.py`'s pattern for a new external source, or extend `custom_
 4. **kb-ingest** — one-shot: seeds ChromaDB from `data/knowledge_base/`
 5. **postgres** — audit DB, schema auto-applied from `db/init_db.sql` on first init
 6. **redis** — cache/rate-limit store, password-protected
-7. **sigmahq-rules-init** — one-shot: copies reviewed vendored rules or downloads the pinned `SIGMAHQ_REF`; fails startup when fewer than `SIGMAHQ_MIN_RULES` are available
-8. **mcp** — tool server, depends on chromadb/redis/postgres (all healthy) + ollama-model-init and sigmahq-rules-init (completed)
+7. **Community-rule initializer** — one-shot: copies reviewed vendored rules or downloads the pinned commit; fails startup when fewer than the configured minimum are available
+8. **mcp** — tool server, depends on chromadb/redis/postgres (all healthy) plus completed model and community-rule initialization
 9. **orchestrator** — LangGraph engine, depends on mcp (started) + ollama (healthy) + ollama-model-init (completed) + postgres (healthy)
 10. **chat-ui** — the only service with a published host port (`7860:7860`)
 
-**Volumes** (`ollama_data`, `chroma_data`, `postgres_data`, `redis_data`, `sigmahq_rules`) persist across restarts; `docker compose down -v` wipes all of them — use deliberately, not habitually. Removing `sigmahq_rules` means the initializer must copy or download the corpus again.
+**Volumes** for models, ChromaDB, PostgreSQL, Redis, and community detection rules persist across restarts; `docker compose down -v` wipes all of them — use deliberately, not habitually. Removing the community-rule volume means the initializer must copy or download the corpus again.
 
 **Resource tuning:** every limit (`OLLAMA_CPU_LIMIT`, `OLLAMA_MEM_LIMIT`, `CHROMA_CPU_LIMIT`, etc.) is overridable in `.env` per deployment — the defaults assume a modest single-host deployment, not a production sizing recommendation.
 
@@ -527,7 +527,7 @@ Follow `hearth_fetch.py`'s pattern for a new external source, or extend `custom_
 
 These are explicitly acknowledged in the codebase's own comments/docstrings — worth knowing before you "rediscover" them:
 
-- **8-field normalized log schema.** No structured `CommandLine`/`Image`/`ParentImage`/`GrantedAccess` extraction. All detection layers substring/regex-match against the raw `detail` blob. Some SigmaHQ rules are honestly un-matchable against this schema rather than fudged — read `sigmahq_engine.py`'s docstring before assuming a missing detection is a bug.
+- **8-field normalized log schema.** No structured `CommandLine`/`Image`/`ParentImage`/`GrantedAccess` extraction. All detection layers substring/regex-match against the raw `detail` blob. Some community rules are honestly unmatchable against this schema rather than approximated.
 - **Single-model, likely single-GPU Ollama.** Realistically serves one inference request at a time on typical hardware — this is *why* the concurrency gate in `orchestration/main.py` exists. Don't remove it without addressing the underlying contention.
 - **ChromaDB has no auth of its own** in this stack — it relies entirely on not being reachable outside `thos-net`. Don't add a host port binding for "convenience" without adding auth in front of it.
 - **`chat-ui` doesn't share `services/observability/logging_config.py`** (single-file Docker build) — its JSON log formatter is a hand-duplicated equivalent in `app.py`. Keep them in sync manually if the log schema changes.
@@ -552,7 +552,7 @@ Per the project README, upcoming/planned work includes: Microsoft Sentinel, Elas
 | Add a new AI-callable tool | `services/api/server.py` |
 | Add/modify a SIEM integration | `services/siem/siem_connector.py` + new `services/siem/<vendor>.py` |
 | Change how the LLM reasons/writes findings | `services/reasoning/reasoning.py` |
-| Add/tune detection rules | `services/detection/sigma_rules/` (custom) or `fetch_sigmahq_rules.py` (community) |
+| Add/tune detection rules | Local detection-rule directory (custom) or the repository's corpus-fetch utility (community) |
 | Change report format/content | `services/reporting/report.py` |
 | Change analyst UI behavior | `services/ui/src/App.jsx`, `services/ui/src/Settings.jsx`, `services/ui/src/ChatPage.jsx`, `services/ui/src/app.css` |
 | Change UI auth/API proxy/PDF export | `services/api/ui_gateway.py` |

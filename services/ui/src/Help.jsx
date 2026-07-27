@@ -17,18 +17,18 @@ const SECTIONS = [
     id: "hunts", icon: DocumentMagnifyingGlassIcon, title: "Hypotheses and threat hunts", tags: "HEARTH gaps MITRE query Nmap evidence",
     content: [
       "The hypothesis catalog combines pinned HEARTH content with THOS gap hypotheses for ATT&CK techniques not adequately represented upstream.",
-      "A hunt generates a validated source-specific query, normalizes and deduplicates telemetry, runs Sigma and literal artifact correlation, enriches public IOCs, checks coverage, reasons over bounded evidence, verifies citations, and writes a report. Related Wazuh hunts reuse an ATT&CK-technique/time-window telemetry cache.",
-      "When Sigma, literal artifacts, local IOC matches, and deterministic behavioral signals are all zero, THOS skips expensive model reasoning. Missing or partial telemetry is still reported as inconclusive, never as a clean result.",
+      "A hunt generates a validated source-specific query, normalizes and deduplicates telemetry, runs detection-rule and literal artifact correlation, enriches public IOCs, checks coverage, reasons over bounded evidence, verifies citations, and writes a report. Related Wazuh hunts reuse an ATT&CK-technique/time-window telemetry cache.",
+      "When detection rules, literal artifacts, local IOC matches, and deterministic behavioral signals are all zero, THOS skips expensive model reasoning and does not create an empty report. Missing or partial telemetry remains visible in hunt history.",
       "Wazuh high-signal fields—including rule MITRE metadata, URL, user-agent, command line, process paths, and full_log—are preserved in an evidence summary. This allows artifacts such as Nmap NSE to remain visible even when the raw event is long.",
       "A clean result is meaningful only when the coverage section says the required ATT&CK data sources were available.",
     ],
   },
   {
-    id: "detections", icon: ShieldCheckIcon, title: "Sigma and YARA", tags: "rule detection scan batch compatible compile",
+    id: "detections", icon: ShieldCheckIcon, title: "Detection rules and YARA", tags: "rule detection scan batch compatible compile",
     content: [
-      "Sigma rules are compiled for the selected SIEM and validated against its discovered field schema. Incompatible rules remain visible but are never scheduled or executed.",
-      "During hypothesis hunts, compatible Wazuh Sigma queries use one OpenSearch multi-search request. If the deployment blocks multi-search, THOS automatically falls back to bounded individual read-only searches.",
-      "The recommended scheduled Wazuh Sigma rotation also executes each bounded rule batch as one multi-search request and resumes from a saved cursor. Splunk retains bounded individual searches until its connector exposes an equivalent safe batch API.",
+      "Detection rules are compiled for the selected SIEM and validated against its discovered field schema. Incompatible rules remain visible but are never scheduled or executed.",
+      "During hypothesis hunts, compatible Wazuh detection-rule queries use one OpenSearch multi-search request. If the deployment blocks multi-search, THOS automatically falls back to bounded individual read-only searches.",
+      "The recommended scheduled Wazuh detection-rule rotation also executes each bounded rule batch as one multi-search request and resumes from a saved cursor. Splunk retains bounded individual searches until its connector exposes an equivalent safe batch API.",
       "YARA files are compiler-validated and enabled rules are assembled into one reusable bundle. Schedule the enabled bundle once—not one scan per rule. After the first scan, only evidence modified since the previous completed run is scanned.",
       "Detection proposals in hunt reports are experimental drafts. THOS does not automatically deploy or contain; use your normal detection change-control process.",
     ],
@@ -47,21 +47,24 @@ const SECTIONS = [
     id: "connections", icon: CloudIcon, title: "External connections and firewall allowlist", tags: "network proxy firewall outbound port github feeds ollama internet",
     content: [
       "Core hunt execution can remain internal. Allow outbound HTTPS only for features you enable, and use a TLS-inspecting proxy only when its CA is trusted inside the containers.",
-      "Rule and knowledge refresh: github.com and codeload.github.com for THORCollective/HEARTH, SigmaHQ/sigma, and Yara-Rules/rules. Git operations may also use objects.githubusercontent.com and raw.githubusercontent.com.",
+      "Rule and knowledge refresh: github.com and codeload.github.com for THORCollective/HEARTH, the community detection-rule corpus, and Yara-Rules/rules. Git operations may also use objects.githubusercontent.com and raw.githubusercontent.com.",
       "Built-in IOC feeds: openphish.com, feodotracker.abuse.ch, check.torproject.org, feeds.dshield.org, and raw.githubusercontent.com. Custom feeds require the hostname configured in Settings.",
       "Model downloads, when performed, require Ollama's configured model registry (normally registry.ollama.ai). Inference itself uses the internal Ollama service and needs no Internet access.",
-      "Telemetry connections are deployment-specific and normally stay private: Wazuh Indexer HTTPS 9200, Splunk management HTTPS 8089, QRadar HTTPS 443, and LogRhythm Web Console/Search API HTTPS 8505. Allow the exact configured hosts, not whole networks.",
+      "Telemetry connections are deployment-specific and normally stay private: Wazuh Indexer or Elasticsearch HTTPS 9200, Splunk management HTTPS 8089, QRadar HTTPS 443, and LogRhythm Web Console/Search API HTTPS 8505. Allow the exact configured hosts, not whole networks.",
       "Also permit internal DNS and NTP. Optional API integrations require outbound HTTPS to only the endpoint entered for that connector. No unsolicited inbound Internet access is required; publish the UI through your authenticated reverse proxy if remote analysts need access.",
-      "For an air-gapped deployment, pre-stage model blobs, HEARTH, Sigma, YARA, IOC feeds, and CA certificates; disable refresh schedules that cannot reach an approved mirror.",
+      "For an air-gapped deployment, pre-stage model blobs, HEARTH, detection rules, YARA, IOC feeds, and CA certificates; disable refresh schedules that cannot reach an approved mirror.",
     ],
   },
   {
     id: "operations", icon: CircleStackIcon, title: "Data, cases, reports, and troubleshooting", tags: "case report audit storage error timeout",
     content: [
-      "Verification failures or degraded reasoning can create an analyst-review case. There is no separate approval workflow.",
+      "Verification failures or degraded reasoning can create an analyst-review case. There is no separate gated action workflow.",
+      "The Risks page is generated by the deterministic Risk Analysis Agent. It includes only verifier-supported hunt findings and detections with matched events, consolidates repeated entity/risk pairs, and links every item back to the originating report or detection.",
+      "Risk scores range from 0-100 and combine source severity, evidence strength, and event volume. Scores prioritize review; they do not authorize containment or prove malicious intent.",
       "Reports retain executed queries, ingestion diagnostics, citations, representative evidence, agent timing, coverage gaps, recommendations, and draft rules.",
+      "Use the Reports time-period controls to select all time or the last 1-31 days, 1-12 months, or 1-10 years.",
       "If evidence exists in the SIEM but not in a report, compare the executed query, total live matches, deduplicated count, coverage matrix, and Key Evidence Highlights. Confirm the source clock, lookback window, decoder fields, and discovered schema.",
-      "For repeated timeouts, lower the per-run hypothesis or Sigma batch size before increasing concurrency. More simultaneous model jobs usually increase latency and memory pressure on a single inference host.",
+      "For repeated timeouts, lower the per-run hypothesis or detection-rule batch size before increasing concurrency. More simultaneous model jobs usually increase latency and memory pressure on a single inference host.",
     ],
   },
   {
@@ -75,6 +78,54 @@ const SECTIONS = [
   },
 ];
 
+const FAQS = [
+  {
+    q: "What is the minimum hardware required to run THOS?",
+    a: "Use 8 x86-64 CPU cores, 16 GB RAM, and at least 50 GB of free SSD storage as the minimum supported starting point for a small deployment. A GPU is optional; CPU-only inference works but is slower. Retained telemetry, reports, model files, and forensic evidence require additional storage.",
+    tags: "minimum hardware cpu ram disk gpu requirements",
+  },
+  {
+    q: "What hardware is recommended for daily production use?",
+    a: "For concurrent daily operations, start with 12-16 CPU cores, 32 GB RAM, 100 GB or more of SSD storage, and a supported GPU with 8-12 GB VRAM for the reasoning worker. Separate the scheduled Ollama worker from the orchestrator when running many hunts. Adjust capacity to telemetry volume, evidence retention, model size, and maintenance-window targets.",
+    tags: "recommended production gpu vram capacity ollama",
+  },
+  {
+    q: "What are the main THOS capabilities?",
+    a: "THOS provides hypothesis-driven hunts, schema-aware SIEM retrieval, normalized evidence processing, deterministic detection-rule and YARA evaluation, IOC correlation, ATT&CK coverage analysis, forensic intake and timelines, evidence-cited reports, actionable risk correlation, scheduled operations, audit logs, and read-only AI-assisted investigation.",
+    tags: "features capabilities hunt forensic risk reports yara ioc attack",
+  },
+  {
+    q: "Which agents are included?",
+    a: "The core workflow includes Knowledge Refresh, Hypothesis, Hunt Memory, Supervisor, Query Generation, SIEM Fetch, Log Processing, Guardrail, SOC Tools, Coverage Gap, Adaptive Replanning, Threat Intelligence, Evidence Screening, Reasoning, Verifier, Detection Engineering, Communication, and Reporting agents. Separate agents cover detection analysis, risk analysis, schema discovery, scheduled detection, IOC management, forensic intake and examination, product knowledge, and Ask THOS specialist investigations.",
+    tags: "agents agent list workflow specialist",
+  },
+  {
+    q: "Which Internet domains should be allowed?",
+    a: "Allow only enabled features: github.com, codeload.github.com, objects.githubusercontent.com, and raw.githubusercontent.com for reviewed knowledge and rule refreshes; openphish.com, feodotracker.abuse.ch, check.torproject.org, feeds.dshield.org, and raw.githubusercontent.com for built-in IOC feeds; and registry.ollama.ai only for model downloads. Custom feeds and API integrations additionally require their explicitly configured hostnames.",
+    tags: "domains allowlist firewall internet github feeds registry",
+  },
+  {
+    q: "Which ports must THOS reach?",
+    a: "Outbound HTTPS normally uses TCP 443. Private telemetry defaults are Wazuh Indexer or Elasticsearch TCP 9200, Splunk management TCP 8089, QRadar TCP 443, and LogRhythm TCP 8505. Internal DNS and NTP are also required according to local infrastructure. Permit exact configured hosts only; THOS requires no unsolicited inbound Internet access.",
+    tags: "ports 443 9200 8089 8505 dns ntp firewall",
+  },
+  {
+    q: "Can THOS run without Internet access?",
+    a: "Yes. Pre-stage model blobs, the hypothesis and detection corpora, YARA files, IOC snapshots, and trusted CA certificates. Disable refresh schedules that cannot reach an approved internal mirror. Live SIEM and internal Ollama connections can remain entirely private.",
+    tags: "offline air gap internet mirror",
+  },
+  {
+    q: "What actions will THOS not perform automatically?",
+    a: "THOS does not isolate hosts, block network traffic, delete evidence, deploy a live detection, or assert compromise or attribution without evidence. It produces evidence-bounded analysis and recommendations for analyst-controlled response and normal change control.",
+    tags: "limitations containment blocking deploy safety",
+  },
+  {
+    q: "What happens when a hunt finds no evidence?",
+    a: "The deterministic evidence-screening gate stops the hunt before model reasoning, verification, communication, and report generation. Hunt history records the no-evidence outcome and any telemetry-coverage limitations; absence of evidence is not represented as proof of a clean environment.",
+    tags: "no evidence negative screening report reasoning",
+  },
+];
+
 export default function Help() {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -84,20 +135,31 @@ export default function Help() {
       `${section.title} ${section.tags} ${section.content.join(" ")}`.toLowerCase().includes(needle),
     );
   }, [query]);
+  const filteredFaqs = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return FAQS;
+    return FAQS.filter((item) =>
+      `${item.q} ${item.a} ${item.tags}`.toLowerCase().includes(needle),
+    );
+  }, [query]);
 
   return <div className="page-wrap help-page">
     <div className="page-heading help-heading">
       <div><span className="eyebrow">Product guide</span><h1>Help and documentation</h1><p>Search product features, operating guidance, network requirements, and troubleshooting.</p></div>
     </div>
-    <div className="help-search"><MagnifyingGlassIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schedules, Nmap, firewall, Sigma, reports…" /></div>
+    <div className="help-search"><MagnifyingGlassIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schedules, Nmap, firewall, detection rules, reports…" /></div>
     <div className="help-layout">
-      <aside>{SECTIONS.map((section) => <a key={section.id} href={`#help-${section.id}`}>{section.title}</a>)}</aside>
+      <aside>{SECTIONS.map((section) => <a key={section.id} href={`#help-${section.id}`}>{section.title}</a>)}<a href="#help-faq">Questions and answers</a></aside>
       <main>
         {filtered.map(({ id, icon: Icon, title, content }) => <section id={`help-${id}`} className="help-card" key={id}>
           <div className="help-card-title"><span><Icon /></span><h2>{title}</h2></div>
           <ul>{content.map((item) => <li key={item}>{item}</li>)}</ul>
         </section>)}
-        {!filtered.length && <div className="help-empty"><BookOpenIcon /><h2>No matching guide entry</h2><p>Try a broader term such as “schedule”, “connection”, “report”, or “rule”.</p></div>}
+        {!!filteredFaqs.length && <section id="help-faq" className="help-card">
+          <div className="help-card-title"><span><BookOpenIcon /></span><h2>Product questions and answers</h2></div>
+          <dl className="help-qa">{filteredFaqs.map((item) => <div key={item.q}><dt>{item.q}</dt><dd>{item.a}</dd></div>)}</dl>
+        </section>}
+        {!filtered.length && !filteredFaqs.length && <div className="help-empty"><BookOpenIcon /><h2>No matching guide entry</h2><p>Try a broader term such as “schedule”, “connection”, “report”, or “rule”.</p></div>}
       </main>
     </div>
   </div>;

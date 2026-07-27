@@ -41,7 +41,7 @@ FOLDER_SYSTEM_PROMPT = (
 FOLDER_SIEM_TYPES = {"folder", "local_folder", "file", "local"}
 
 WAZUH_SYSTEM_PROMPT = (
-    "You generate read-only OpenSearch Query DSL for Wazuh security events. "
+    "You generate read-only OpenSearch/Elasticsearch Query DSL for security events. "
     "Return ONLY one JSON object with exactly one top-level key named query. "
     "Use Wazuh fields such as @timestamp, agent.name, rule.id, "
     "rule.description, rule.groups, rule.mitre.id, decoder.name, location, "
@@ -90,7 +90,7 @@ def _fallback_query(hypothesis_text: str, siem_type: str) -> str:
             break
     if siem_type.lower() in FOLDER_SIEM_TYPES:
         return ", ".join(terms)
-    if siem_type.lower() == "wazuh":
+    if siem_type.lower() in {"wazuh", "elasticsearch"}:
         search = " ".join(terms) or "*"
         return json.dumps({
             "query": {
@@ -259,7 +259,7 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
             if candidate and normalized == _fallback_query(hypothesis_text, "folder") \
                     and candidate != normalized:
                 raise ValueError("folder query was not a compact keyword list")
-        elif dialect == "wazuh":
+        elif dialect in {"wazuh", "elasticsearch"}:
             normalized = _normalize_wazuh_query(candidate, hypothesis_text)
             if candidate and normalized == _fallback_query(hypothesis_text, "wazuh") \
                     and candidate != normalized:
@@ -275,7 +275,7 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
         # is a programming error and must never reach a live SIEM silently.
         if dialect in {"splunk", "qradar", "logrhythm"}:
             normalized = _validate_text_query(normalized, dialect)
-        elif dialect == "wazuh":
+        elif dialect in {"wazuh", "elasticsearch"}:
             json.loads(normalized)
     return {
         "query": normalized,
@@ -321,10 +321,10 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
             query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT, agent="query_gen")
         except Exception:
             query_text = ""
-    elif siem_type.lower() == "wazuh":
+    elif siem_type.lower() in {"wazuh", "elasticsearch"}:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
-            f"Wazuh field mapping: {field_map}\n\n"
+            f"{siem_type.title()} field mapping: {field_map}\n\n"
             "Generate the JSON Query DSL now."
         )
         try:

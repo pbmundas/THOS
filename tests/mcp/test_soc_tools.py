@@ -54,9 +54,9 @@ def test_merges_all_three_layers_and_tags_records(monkeypatch):
 
     result = asyncio.run(soc_tools.run_soc_tools_node(state))
 
-    # All three layers' hits are unioned.
-    assert result["sigma_matched_refs"] == [0, 1, 2]
-    assert result["sigma_matched_count"] == 3
+    # Detection-rule accounting must not include loose model-derived keywords.
+    assert result["sigma_matched_refs"] == [0, 1]
+    assert result["sigma_matched_count"] == 2
 
     # Per-record tags reflect exactly which layer(s) hit.
     assert processed_logs[0]["_sigma_match"] is True
@@ -75,6 +75,37 @@ def test_merges_all_three_layers_and_tags_records(monkeypatch):
     assert enrichment["thos_rules_evaluated"] == 16
     assert enrichment["sigma_rules_evaluated"] == 2843 + 16
     assert enrichment["llm_indicator_matched_records"] == 1
+
+
+def test_strict_behavioral_evidence_keeps_matching_rehearsal_records():
+    records = [
+        {
+            "event": "sca",
+            "detail": "CIS Benchmark compliance check without this technique",
+        },
+        {
+            "event": "Purple lab: web protocol command and control rehearsal",
+            "detail": "purple-lab-attack-technique=T1071.001",
+        },
+        {
+            "event": "Network connection",
+            "dst_ip": "203.0.113.25",
+            "detail": (
+                '{"destination.port": 443, '
+                '"rule": {"mitre": {"id": ["T1071.001"]}}}'
+            ),
+        },
+    ]
+
+    assert soc_tools._behavioral_evidence(records, "T1071.001") == [{
+        "record_index": 1,
+        "event": "Purple lab: web protocol command and control rehearsal",
+        "reason": "explicit ATT&CK mapping T1071.001",
+    }, {
+        "record_index": 2,
+        "event": "Network connection",
+        "reason": "explicit ATT&CK mapping T1071.001",
+    }]
 
 
 def test_empty_sigmahq_ruleset_still_works(monkeypatch):

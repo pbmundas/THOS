@@ -42,8 +42,8 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
         "services/integrations; services/siem/attribution.py; services/ui/src/Integrations.jsx",
     ),
     ProductTopic(
-        "PK-DETECTIONS", "Sigma detections and scheduled detection",
-        "THOS pins the SigmaHQ and Yara-Rules/rules community corpora to exact commits. Sigma rules are compiled into vendor queries and validated against discovered SIEM fields. YARA community files are isolated, compiler-validated, and assembled into one reusable catalog; incompatible legacy files remain visible as quarantined instead of disabling ready rules. Local and community YARA rules can be searched, severity-filtered, enabled, disabled, manually scanned against managed evidence, or scheduled with file-size, file-count, match-count, and timeout bounds. Scheduled detections store outcomes and may create deterministic triage cases. Draft detection rules are never promoted automatically; validate them through the organization's detection change-control process.",
+        "PK-DETECTIONS", "Detection rules and scheduled detection",
+        "THOS pins its community detection-rule and Yara-Rules/rules corpora to exact commits. Detection rules are compiled into vendor queries and validated against discovered SIEM fields. YARA community files are isolated, compiler-validated, and assembled into one reusable catalog; incompatible legacy files remain visible as quarantined instead of disabling ready rules. Local and community YARA rules can be searched, severity-filtered, enabled, disabled, manually scanned against managed evidence, or scheduled with file-size, file-count, match-count, and timeout bounds. Scheduled detections store outcomes and may create deterministic triage cases. Draft detection rules are never promoted automatically; validate them through the organization's detection change-control process.",
         ("yara", "rule", "detection", "schedule", "compile", "uncompilable", "promotion", "deduplicate", "malware"),
         "README.md schema-aware scheduled detection; services/detection",
     ),
@@ -67,13 +67,19 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-REPORTS", "Reports and audiences",
-        "The Reports page classifies and filters Hunt and Forensic reports separately. Hunt reports contain hypothesis and ATT&CK context, queries, ingestion diagnostics, evidence, detection-rule matches, reasoning, verification, gaps, and governance references. Forensic reports contain custody, hashes, methodology, artifact inventory, correlations, timeline, limitations, and legal-review requirements. Administrators can clear hunt-run audit history and remove reports from the active library; report deletion moves the file into a server-side recovery archive.",
+        "The Reports page classifies and filters Hunt and Forensic reports separately. Its dynamic time-period control supports the last 1-31 days, 1-12 months, 1-10 years, or all time. Hunt reports contain hypothesis and ATT&CK context, queries, ingestion diagnostics, evidence, detection-rule matches, reasoning, verification, gaps, and governance references. Forensic reports contain custody, hashes, methodology, artifact inventory, correlations, timeline, limitations, and legal-review requirements. Administrators can clear hunt-run audit history and remove reports from the active library; report deletion moves the file into a server-side recovery archive.",
         ("report", "executive", "soc analyst", "compliance", "findings", "evidence"),
         "services/reporting/report.py; services/forensics/report.py; services/api/ui_gateway.py",
     ),
     ProductTopic(
+        "PK-RISKS", "Actionable Risks page and Risk Analysis Agent",
+        "The Risk Analysis Agent deterministically correlates verifier-supported Security Findings from hunt reports with scheduled detections that matched events. It excludes unverified report claims, consolidates repeated risk/entity pairs, and assigns an explainable 0-100 score and critical, high, medium, or low severity without consuming a model worker. The Risks page shows what the risk is, why it matters, how it was discovered, the affected host, user, IP, technique, or telemetry source, its first-identified age, and a direct link to the originating report or detection. It does not perform containment or declare intent.",
+        ("risk", "risks", "score", "severity", "entity", "age", "impact", "risk analysis"),
+        "services/risk/risk_agent.py; services/ui/src/Risks.jsx",
+    ),
+    ProductTopic(
         "PK-FORENSICS", "Digital forensic examination",
-        "The Forensics menu accepts one or more evidence files. THOS stores originals under data/log_sources/forensic/<UTC date>/<date-serial-case>, hashes each file during intake, writes a chain-of-custody manifest, marks originals read-only where supported, and recomputes size and full SHA-256 before analysis. Named deterministic agents inventory and parse artifacts, evaluate pinned community and local Sigma rules, scan managed files with enabled YARA rules, correlate observed values with the shared IOC index, summarize ATT&CK techniques represented by matching rules, assess suspicious or corroborated malicious activity, reconstruct a referenced classification-aware timeline, and write a technical report with legal-review requirements. E01/Ex01 and raw-image metadata use installed ewf-tools and Sleuth Kit; unavailable or opaque decoders are reported as limitations, never treated as completed examination.",
+        "The Forensics menu accepts one or more evidence files. THOS stores originals under data/log_sources/forensic/<UTC date>/<date-serial-case>, hashes each file during intake, writes a chain-of-custody manifest, marks originals read-only where supported, and recomputes size and full SHA-256 before analysis. Named deterministic agents inventory and parse artifacts, evaluate pinned community and local detection rules, scan managed files with enabled YARA rules, correlate observed values with the shared IOC index, summarize ATT&CK techniques represented by matching rules, assess suspicious or corroborated malicious activity, reconstruct a referenced classification-aware timeline, and write a technical report with legal-review requirements. E01/Ex01 and raw-image metadata use installed ewf-tools and Sleuth Kit; unavailable or opaque decoders are reported as limitations, never treated as completed examination.",
         ("forensic", "forensics", "evidence intake", "chain of custody", "encase", "e01", "disk image", "hash", "timeline", "yara", "malicious activity"),
         "services/forensics; services/api/ui_gateway.py",
     ),
@@ -91,7 +97,7 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-RESOURCES", "Quality and resource controls",
-        "THOS reduces resource use with deterministic agents where a model is unnecessary, bounded SIEM result limits, SIEM-side Sigma pushdown, cached schemas and reasoning, parallel independent tools, one targeted follow-up by default, and three-strike local-model fallbacks. Quality is protected with schema validation, evidence citations, deterministic verification, fail-closed compilation, case tracking, audit records, and layered automated tests.",
+        "THOS reduces resource use with deterministic agents where a model is unnecessary, bounded SIEM result limits, SIEM-side detection-rule pushdown, cached schemas and reasoning, parallel independent tools, one targeted follow-up by default, and three-strike local-model fallbacks. Quality is protected with schema validation, evidence citations, deterministic verification, fail-closed compilation, case tracking, audit records, and layered automated tests.",
         ("resource", "performance", "quality", "cost", "cpu", "memory", "cache", "model strikes"),
         "services/orchestration; services/reasoning; services/detection",
     ),
@@ -116,7 +122,7 @@ _STOP_WORDS = {
 }
 _PRODUCT_MARKERS = {
     "thos", "agent", "platform", "product", "hunt", "hypothesis", "siem",
-    "sigma", "detection", "schedule", "report", "knowledge", "rag", "upload",
+    "detection", "schedule", "report", "knowledge", "rag", "upload",
     "setting", "configure", "review", "case", "role", "permission", "test",
     "docker", "telemetry", "schema", "ask", "forensic", "forensics", "evidence",
     "ioc", "indicator", "account", "avatar",

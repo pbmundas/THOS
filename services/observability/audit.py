@@ -434,11 +434,61 @@ async def log_sigma_detection(result: dict) -> dict | None:
 
 
 async def list_sigma_detections(limit: int = 100) -> list[dict]:
-    return await asyncio.to_thread(_fetch, """
+    rows = await asyncio.to_thread(_fetch, """
         SELECT * FROM scheduled_sigma_detections
         WHERE status = 'detected' AND events_matched > 0
         ORDER BY created_at DESC LIMIT %s
     """, (max(1, min(limit, 500)),))
+    return [_with_detection_uid(row) for row in rows]
+
+
+def _with_detection_uid(row: dict) -> dict:
+    result = dict(row)
+    result["detection_uid"] = f"DET-{str(result.get('run_id') or 'UNKNOWN').upper()}"
+    return result
+
+
+async def get_sigma_detection(run_id: str) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        SELECT * FROM scheduled_sigma_detections WHERE run_id = %s LIMIT 1
+    """, (run_id,))
+    return _with_detection_uid(rows[0]) if rows else None
+
+
+async def save_sigma_ai_analysis(run_id: str, analysis: dict) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        UPDATE scheduled_sigma_detections
+        SET analysis = COALESCE(analysis, '{}'::jsonb)
+            || jsonb_build_object('ai_analysis', %s::jsonb)
+        WHERE run_id = %s
+        RETURNING *
+    """, (json.dumps(analysis, default=str), run_id))
+    return _with_detection_uid(rows[0]) if rows else None
+
+
+async def risk_source_hunts(limit: int = 5000) -> list[dict]:
+    """Return completed report-bearing hunts for bounded risk correlation."""
+    return await asyncio.to_thread(_fetch, """
+        SELECT h.hunt_id, h.hypothesis_id, h.hypothesis_text, h.status,
+               h.outcome, h.created_at, h.updated_at,
+               r.file_path AS report_path, r.summary
+        FROM hunts h
+        JOIN LATERAL (
+            SELECT file_path, summary FROM reports
+            WHERE hunt_id = h.hunt_id ORDER BY created_at DESC LIMIT 1
+        ) r ON true
+        WHERE h.status = 'completed'
+        ORDER BY h.created_at DESC LIMIT %s
+    """, (max(1, min(int(limit), 10_000)),))
+
+
+async def risk_source_detections(limit: int = 5000) -> list[dict]:
+    """Return positive scheduled detections for bounded risk correlation."""
+    return await asyncio.to_thread(_fetch, """
+        SELECT * FROM scheduled_sigma_detections
+        WHERE events_matched > 0
+        ORDER BY created_at DESC LIMIT %s
+    """, (max(1, min(int(limit), 10_000)),))
 
 
 async def hunt_metrics(hunt_id: str) -> list[dict]:

@@ -350,13 +350,23 @@ SIEM_SCHEMAS = {
         ("QRADAR_API_VERSION", "API version", "text", False),
         ("QRADAR_LOOKBACK_MINUTES", "Lookback minutes", "number", False),
     ],
+    "elasticsearch": [
+        ("ELASTICSEARCH_URL", "Elasticsearch URL", "url", True),
+        ("ELASTICSEARCH_INDEX_PATTERN", "Scoped index pattern", "text", True),
+        ("ELASTICSEARCH_API_KEY", "API key", "password", False),
+        ("ELASTICSEARCH_USERNAME", "Username (alternative to API key)", "text", False),
+        ("ELASTICSEARCH_PASSWORD", "Password", "password", False),
+        ("ELASTICSEARCH_VERIFY_SSL", "Verify TLS (1/0)", "text", False),
+        ("ELASTICSEARCH_CA_BUNDLE", "CA bundle path", "text", False),
+        ("ELASTICSEARCH_LOOKBACK_MINUTES", "Lookback minutes", "number", False),
+    ],
     "folder": [("LOG_SOURCE_DIR", "Server log folder", "text", True)],
     "mock": [],
 }
 SECRET_FIELDS = {name for fields in SIEM_SCHEMAS.values() for name, _label, kind, _required in fields if kind == "password"}
 TELEMETRY_LABELS = {
     "folder": "Local folder", "wazuh": "Wazuh", "logrhythm": "LogRhythm",
-    "splunk": "Splunk", "qradar": "QRadar",
+    "splunk": "Splunk", "qradar": "QRadar", "elasticsearch": "Elasticsearch",
 }
 
 
@@ -369,7 +379,7 @@ def telemetry_sources(config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = config or read_config()
     folder = {"id": "folder", "label": TELEMETRY_LABELS["folder"], "tested_at": "built-in"}
     live_items = []
-    for siem_type in ("wazuh", "logrhythm", "splunk", "qradar"):
+    for siem_type in ("wazuh", "logrhythm", "splunk", "qradar", "elasticsearch"):
         entry = config.get("siem", {}).get(siem_type, {})
         if entry.get("connection_status") == "connected":
             live_items.append({
@@ -765,7 +775,7 @@ async def siem_status(request: Request):
         "active": siem_type in active,
         "status": "connected" if siem_type in active else config.get("siem", {}).get(siem_type, {}).get("connection_status", "not tested"),
         "tested_at": config.get("siem", {}).get(siem_type, {}).get("connection_tested_at", ""),
-    } for siem_type in ("folder", "wazuh", "logrhythm", "splunk", "qradar")]
+    } for siem_type in ("folder", "wazuh", "logrhythm", "splunk", "qradar", "elasticsearch")]
 
 
 @router.get("/settings/siem/{siem_type}")
@@ -927,7 +937,7 @@ async def _discover_and_compile_siem(siem_type: str) -> dict:
 @router.post("/settings/siem/{siem_type}/discover")
 async def discover_siem_fields_now(siem_type: str, request: Request):
     require_feature(request, "settings", sme_only=True)
-    if siem_type not in {"wazuh", "splunk", "qradar", "logrhythm"}:
+    if siem_type not in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}:
         raise HTTPException(status_code=404, detail="Automatic discovery requires a live SIEM")
     if not is_active_telemetry_source(siem_type):
         raise HTTPException(status_code=422, detail="Test and activate the SIEM connection first")
@@ -1301,17 +1311,17 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
             if payload.siem_type not in {"wazuh", "splunk"}:
                 raise HTTPException(
                     status_code=422,
-                    detail="All-compatible Sigma schedules require Wazuh or Splunk",
+                    detail="All-compatible detection-rule schedules require Wazuh or Splunk",
                 )
             item.update({
                 "schedule_scope": "catalog",
-                "title": payload.title or "All schema-compatible Sigma rules",
+                "title": payload.title or "All schema-compatible detection rules",
                 "severity": "all",
             })
         else:
             rule = next((candidate for candidate in _sigma_catalog() if candidate.get("id") == payload.target_id), None)
             if not rule:
-                raise HTTPException(status_code=404, detail="Sigma rule not found")
+                raise HTTPException(status_code=404, detail="Detection rule not found")
             item["severity"] = rule.get("severity", "medium")
     else:
         if not payload.log_source_path:
@@ -1332,6 +1342,57 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
                 raise HTTPException(status_code=409, detail="YARA rule must be enabled before scheduling")
             item["severity"] = rule.get("severity", "medium")
     _schedule_collection(config, kind).append(item)
+    write_config(config)
+    return item
+
+
+@router.put("/settings/schedules/{kind}/{schedule_id}")
+async def update_schedule(
+    kind: str, schedule_id: str, payload: ScheduleRequest, request: Request
+):
+    """Edit operational schedule fields without resetting run history/cursors."""
+    require_feature(request, "settings", sme_only=True)
+    if kind not in {"hypothesis", "sigma", "yara"}:
+        raise HTTPException(status_code=404, detail="Unknown schedule type")
+    if not is_active_telemetry_source(payload.siem_type):
+        raise HTTPException(
+            status_code=422,
+            detail="Schedules require an active, successfully tested telemetry source",
+        )
+    if any(day < 0 or day > 6 for day in payload.days):
+        raise HTTPException(status_code=422, detail="days must use 0=Monday through 6=Sunday")
+    if payload.frequency in {"hourly", "daily"} and payload.interval > 24:
+        raise HTTPException(status_code=422, detail="Schedule interval must be between 1 and 24")
+    config = read_config()
+    item = next(
+        (
+            candidate
+            for candidate in _schedule_collection(config, kind)
+            if candidate.get("id") == schedule_id
+        ),
+        None,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if kind == "yara" and not payload.log_source_path:
+        raise HTTPException(
+            status_code=422, detail="YARA schedules require a managed evidence path"
+        )
+    if kind == "sigma" and item.get("target_id") == "__all_compatible__" \
+            and payload.siem_type not in {"wazuh", "splunk"}:
+        raise HTTPException(
+            status_code=422,
+            detail="All-compatible detection-rule schedules require Wazuh or Splunk",
+        )
+    item.update({
+        "time": payload.time,
+        "frequency": payload.frequency,
+        "interval": payload.interval,
+        "days": sorted(set(payload.days)),
+        "enabled": payload.enabled,
+        "siem_type": payload.siem_type,
+        "log_source_path": payload.log_source_path,
+    })
     write_config(config)
     return item
 
@@ -1432,7 +1493,7 @@ async def apply_recommended_schedules(request: Request):
             "kind": "sigma",
             "target_id": "__all_compatible__",
             "target_ids": [],
-            "title": "All schema-compatible Sigma rules (rotating batch)",
+            "title": "All schema-compatible detection rules (rotating batch)",
             "schedule_scope": "catalog",
             "severity": "all",
             "time": "23:00",
@@ -1763,6 +1824,12 @@ async def scheduled_detections(request: Request, limit: int = 100):
     return await _upstream("GET", "/sigma/detections", params={"limit": max(1, min(limit, 500))})
 
 
+@router.post("/detections/{run_id}/analysis")
+async def scheduled_detection_analysis(run_id: str, request: Request):
+    require_feature(request, "reports")
+    return await _upstream("POST", f"/sigma/detections/{run_id}/analysis")
+
+
 @router.get("/knowledge/documents")
 async def kb_documents(request: Request):
     require_feature(request, "knowledge")
@@ -2074,7 +2141,7 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
                 )
                 rule_ids = list(catalog.get("rule_ids") or [])
                 cursor = min(int(item.get("next_target_index", 0)), len(rule_ids))
-                budget = max(1, int(os.environ.get("THOS_SIGMA_RULES_PER_BATCH", "200")))
+                budget = max(1, int(os.environ.get("THOS_SIGMA_RULES_PER_BATCH", "8")))
                 selected = rule_ids[cursor:cursor + budget]
                 completed, detected, failures, matched = 0, 0, [], 0
                 execution_mode = "individual_search"
@@ -2368,7 +2435,7 @@ async def _execute_schedule(item: dict[str, Any]) -> None:
     """Run scheduled work in resource-appropriate bounded lanes.
 
     Hypotheses must serialize because the Orchestrator intentionally admits
-    one hunt at a time. Sigma permits a small amount of SIEM I/O parallelism.
+    one hunt at a time. Detection rules permit a small amount of SIEM I/O parallelism.
     YARA remains single-file-lane because every job maps the shared compiled
     corpus and can otherwise multiply memory pressure.
     """
@@ -2432,7 +2499,7 @@ def _schema_refresh_is_due(config: dict[str, Any], now: datetime) -> bool:
         return False
     live = [
         item for item in telemetry_sources(config)["items"]
-        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm"}
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}
     ]
     if not live:
         return False
@@ -2462,7 +2529,7 @@ async def _run_schema_refresh() -> None:
     config = read_config()
     sources = [
         item["id"] for item in telemetry_sources(config)["items"]
-        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm"}
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}
     ]
     for siem_type in sources:
         try:

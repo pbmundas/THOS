@@ -9,6 +9,7 @@ import datetime
 
 from services.guardrails.sentinel import guardrail_node
 from services.orchestration.supervisor import plan_hunt_node
+from services.orchestration.graph import route_after_negative_screening
 from services.verification.verifier import verify_findings_node
 from services.reporting.report import (
     _render_cover,
@@ -27,6 +28,11 @@ def test_supervisor_selects_optional_read_only_branches():
     assert "coverage_gap" in result["plan"]
     assert "adaptive_replan" in result["plan"]
     assert result["plan"][-1] == "report"
+
+
+def test_negative_screening_gate_routes_empty_evidence_directly_to_end():
+    assert route_after_negative_screening({"reasoning_skipped": True}) == "no_evidence"
+    assert route_after_negative_screening({"reasoning_skipped": False}) == "reasoning"
 
 
 def test_guardrail_flags_untrusted_instruction_text():
@@ -159,6 +165,18 @@ def test_write_report_node_with_lifecycle_fields():
         assert kwargs["hunt_started_at"] == "2026-07-26T09:00:00+05:30"
         assert kwargs["hunt_completed_at"]
         assert result["hunt_completed_at"] == kwargs["hunt_completed_at"]
+
+
+def test_write_report_node_refuses_no_evidence_hunt():
+    with patch("services.reporting.report.write_report") as mock_write_report:
+        result = asyncio.run(write_report_node({
+            "reasoning_skipped": True,
+            "report_status": "not_generated_no_evidence",
+        }))
+
+    assert result["report_path"] is None
+    assert result["report_status"] == "not_generated_no_evidence"
+    mock_write_report.assert_not_called()
 
 
 def test_hunt_report_contains_local_audit_timestamps(tmp_path):

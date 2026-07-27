@@ -3,6 +3,10 @@
 *.py[cod]
 node_modules/
 services/ui/dist/
+.pnpm-store/
+work/pytest-*/
+work/pywin32-runtime/
+work/test-deps/
 
 # Contains password hashes, SIEM credentials, schedules, and runtime choices.
 data/runtime/config.json

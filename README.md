@@ -34,7 +34,7 @@ THOS is designed to operate **entirely on-premises**, ensuring sensitive securit
 - 📄 Automated Markdown hunting reports
 - ⚡ FastAPI backend services
 - 🖥️ Responsive React analyst workspace with hypothesis tiles and report library
-- ⚙️ Governed Settings control plane for models, iterations, Sigma, SIEM schemas, schedules, RAG, and local users
+- ⚙️ Governed Settings control plane for models, iterations, detection rule, SIEM schemas, schedules, RAG, and local users
 - 💬 Floating on-prem model assistant with minimize/maximize controls and an audited read-only MCP tool allowlist
 - 🐳 One-command Docker deployment
 - 🔒 Fully on-premises architecture
@@ -232,13 +232,13 @@ The report library renders that Markdown directly and provides both the original
 returns a complete, schema-valid result. An empty, malformed, or truncated model
 response is retried up to three total attempts. If all three fail, THOS records
 the strike reasons and completes a clearly marked deterministic evidence report
-that requires human approval; an unfinished model response is never published.
+that requires analyst review; an unfinished model response is never published.
 
 ## Settings and local roles
 
 The first configured UI account is seeded as the **SME administrator**. SMEs can
 select any model already available in Ollama, choose the default hunt iteration
-count, enable/disable and schedule Sigma rules, schedule hypotheses in system
+count, enable/disable and schedule detection rules, schedule hypotheses in system
 local time, configure SIEM credentials and normalized vendor fields, manage the
 RAG knowledge base, and create local users. Analyst accounts see only the
 features assigned by an SME (`hunts`, `reports`, `chat`, and/or `knowledge`).
@@ -266,16 +266,14 @@ THOS is built for security-conscious environments.
 - Local report storage
 - Suitable for regulated and air-gapped environments
 
-SigmaHQ rules are loaded from a persistent `sigmahq_rules` volume. On
-startup, Compose first copies a reviewed corpus from
-`services/detection/sigma_rules_hq/`. If the repository contains only the
-version marker, the one-shot `sigmahq-rules-init` service downloads the exact
-commit configured by `SIGMAHQ_REF` and verifies at least
-`SIGMAHQ_MIN_RULES` rules before MCP or the Orchestrator can start. Both
-services mount the same read-only corpus and run a fail-fast preflight, so SOC
-tools cannot silently fall back to `0 SigmaHQ rules`. For air-gapped deployment,
-run `python services/detection/fetch_sigmahq_rules.py --ref <commit>` on a
-connected review machine and commit the resulting directory.
+Community detection rules are loaded from a dedicated persistent volume. At
+startup, Compose first copies the reviewed vendored corpus. If only the version
+marker is present, a one-shot initializer downloads the exact configured commit
+and verifies the configured minimum rule count before MCP or the Orchestrator
+can start. Both services mount the same read-only corpus and run a fail-fast
+preflight, so SOC tools cannot silently continue with an empty community
+ruleset. For air-gapped deployment, fetch and review the pinned corpus on a
+connected review machine, then transfer the resulting directory.
 
 YARA follows the same governed corpus lifecycle. The one-shot
 `yararules-init` service populates a persistent volume from the exact
@@ -297,7 +295,7 @@ an analyst reloads or navigates away. Every run is retained in PostgreSQL with
 its last stage, terminal status, report path, and failure reason. The Reports
 page exposes this run history. Reasoning still validates up to three model
 responses; if all fail, a citation-safe deterministic evidence analysis creates
-the report and requires human approval instead of silently losing the hunt.
+the report and marks it for analyst review instead of silently losing the hunt.
 
 ---
 
@@ -309,7 +307,7 @@ Upcoming enhancements include:
 - Elastic Security Connector
 - Google Chronicle Connector
 - Cortex XSIAM Connector
-- Sigma Rule Generation
+- detection rule Rule Generation
 - IOC Enrichment
 - Threat Intelligence Integration
 - SOAR Playbooks
@@ -321,15 +319,14 @@ Upcoming enhancements include:
 
 ---
 
-# Agentic Phase 2 APIs
+# Agentic workflow APIs
 
-The orchestrator now exposes authenticated case, approval, and analyst-feedback APIs:
+The orchestrator exposes authenticated case and analyst-feedback APIs:
 
 - `GET` / `POST /cases`, `PATCH /cases/{case_id}`
-- `POST /approvals/{approval_id}/decision` (`approved` or `rejected`)
 - `POST /feedback` (`up`, `down`, or `corrected`)
 
-Verifier failures automatically create a pending approval and high-priority case.
+Verifier failures automatically create a high-priority analyst-review case.
 For an existing Postgres volume, apply the migration once:
 
 ```bash
@@ -341,16 +338,16 @@ docker compose exec -T postgres psql -U thos -d thos_audit < db/migrations/002_a
 THOS remains fully on-premises and now extends its original hunt pipeline with:
 
 - **Supervisor and Hunt Memory:** uses a structured local-model plan, recalls comparable completed hunts, and can make one bounded query refinement from intermediate findings.
-- **Layered Guardrail, Verifier, and Human Review:** canonicalizes encoded telemetry, sends ambiguous content to a dedicated adversarial classifier, quarantines high-risk reasoning fields, verifies citations, and records approval/case workflows.
+- **Layered Guardrail, Verifier, and Human Review:** canonicalizes encoded telemetry, sends ambiguous content to a dedicated adversarial classifier, quarantines high-risk reasoning fields, verifies citations, and records case/audit workflows.
 - **ATT&CK Coverage, IOC, and Anomaly Agents:** map required ATT&CK data sources to observed device/event categories, match IOCs only against a local blocklist (`data/threat_intel/blocklist.json`), and surface rare event types.
-- **Detection Engineering:** creates experimental detection-rule proposals for verifier-passed coverage gaps; approval can stage them in `data/detection_rule_proposals/`, never directly in live rules.
+- **Detection Engineering:** creates experimental detection-rule proposals for verifier-passed coverage gaps inside reports; it never promotes them into live rules.
 - **Communication and Learning:** prepares audience-aware report summaries and captures analyst feedback. Export labelled examples with `GET /learning/feedback-export` for offline on-prem evaluation or fine-tuning.
 - **Performance Metrics:** `GET /hunts/{hunt_id}/metrics` reports per-node timings from the audit trail.
 
 ## Schema-aware scheduled detection pipeline
 
 THOS now uses one shared `discover -> cache -> compile -> run -> triage` path
-for continuous Sigma coverage:
+for continuous detection rule coverage:
 
 1. Every active live SIEM is sampled with a bounded read-only query. THOS
    inventories fields from the connector's retained raw vendor payload, infers
@@ -359,13 +356,13 @@ for continuous Sigma coverage:
 2. The new snapshot is diffed against the prior one. Added, removed, and
    type-changed fields remain visible as schema drift instead of being silently
    overwritten. A stale snapshot remains usable when the weekly refresh fails.
-3. Sigma rules are recompiled against the discovered schema. Splunk and Wazuh
-   use the audited pySigma backends bundled by this repository. QRadar and
+3. Detection rules are recompiled against the discovered schema. Splunk and Wazuh
+   use the audited rule-compiler backends bundled by this repository. QRadar and
    LogRhythm remain fail-closed until audited backends are added; rules with
    missing fields are reported as uncompilable rather than silently skipped.
 4. Scheduled rules execute their cached native queries without an LLM. Repeated
    hits are fingerprinted in Redis, so only new events create a formal detection
-   case. Triage is deterministic from Sigma and local MITRE metadata, preserving
+   case. Triage is deterministic from detection rules and local MITRE metadata, preserving
    GPU capacity for analyst reasoning.
 
 The gateway runs schema discovery and compilation every seven days for
@@ -374,7 +371,7 @@ from **Integrations > SIEM > Available SIEM log fields**. Manual one-column CSV
 inventories remain available for air-gapped or least-privilege deployments that
 do not allow sample queries.
 
-All agentic write paths are approval-gated or confined to staging. The live detection ruleset is never modified automatically.
+All agentic outputs are read-only recommendations or confined to evidence/report storage. The live detection ruleset is never modified automatically.
 
 ## Testing all agents and Ask THOS product knowledge
 
@@ -451,7 +448,7 @@ selected technique's ATT&CK data-source requirements.
 ## Governed cybersecurity knowledge and model adaptation
 
 THOS uses a license-controlled cybersecurity corpus for MITRE ATT&CK, CISA KEV,
-NIST incident-response/framework/logging guidance, and the pinned SigmaHQ rule
+NIST incident-response/framework/logging guidance, and the pinned community detection-rule
 set. Each retrieved excerpt carries a `CYBER:*` citation and provenance.
 Ask THOS withholds uncited cybersecurity claims, and hunt reasoning treats
 external knowledge as context rather than proof of activity.
@@ -472,6 +469,75 @@ Rebuild after changing configuration:
 ```bash
 docker compose up -d --build
 ```
+
+# Product questions and answers
+
+### What is the minimum hardware required?
+
+Use 8 x86-64 CPU cores, 16 GB RAM, and at least 50 GB of free SSD storage as
+the minimum supported starting point for a small deployment. A GPU is optional;
+CPU-only inference works but takes longer. Models, retained telemetry, forensic
+evidence, and reports require additional storage.
+
+### What is recommended for daily production use?
+
+Start with 12-16 CPU cores, 32 GB RAM, 100 GB or more of SSD storage, and a
+supported GPU with 8-12 GB VRAM for the reasoning worker. Separate scheduled
+model inference from the orchestrator when running many hunts. Size the system
+against telemetry volume, retention, model size, and the maintenance window.
+
+### What can THOS do?
+
+THOS provides hypothesis-driven hunts, schema-aware SIEM retrieval, normalized
+evidence processing, deterministic detection-rule and YARA evaluation, IOC
+correlation, ATT&CK coverage analysis, forensic intake and timelines,
+evidence-cited reports, actionable risk correlation, scheduled operations,
+audit logs, and read-only AI-assisted investigations.
+
+### Which agents are included?
+
+The core hunt uses Knowledge Refresh, Hypothesis, Hunt Memory, Supervisor,
+Query Generation, SIEM Fetch, Log Processing, Guardrail, SOC Tools, Coverage
+Gap, Adaptive Replanning, Threat Intelligence, Evidence Screening, Reasoning,
+Verifier, Detection Engineering, Communication, and Reporting agents. Separate
+agents support detection analysis, risk analysis, schema discovery, scheduled
+detection, IOC management, forensic examination, product knowledge, and Ask
+THOS specialist investigations.
+
+### Which domains and ports must be allowed?
+
+- Reviewed corpus refresh: `github.com`, `codeload.github.com`,
+  `objects.githubusercontent.com`, and `raw.githubusercontent.com` over TCP 443.
+- Built-in IOC feeds: `openphish.com`, `feodotracker.abuse.ch`,
+  `check.torproject.org`, `feeds.dshield.org`, and
+  `raw.githubusercontent.com` over TCP 443.
+- Optional model download: `registry.ollama.ai` over TCP 443.
+- Private telemetry: Wazuh Indexer or Elasticsearch TCP 9200, Splunk
+  management TCP 8089, QRadar TCP 443, and LogRhythm TCP 8505.
+- Internal DNS and NTP must be reachable according to local infrastructure.
+  Custom feeds and API integrations require only their configured hostnames.
+
+Permit exact configured hosts instead of entire networks. THOS requires no
+unsolicited inbound Internet access.
+
+### Can THOS operate air-gapped?
+
+Yes. Pre-stage model blobs, the hypothesis and detection corpora, YARA files,
+IOC snapshots, and trusted CA certificates. Disable refresh schedules that
+cannot reach an approved internal mirror.
+
+### What will THOS not do automatically?
+
+THOS does not isolate hosts, block traffic, delete evidence, deploy a live
+detection, or claim compromise or attribution without evidence. It produces
+evidence-bounded analysis and recommendations for analyst-controlled response.
+
+### What happens when a hunt finds no evidence?
+
+The deterministic evidence-screening gate stops the workflow before model
+reasoning, verification, communication, and report generation. Hunt history
+retains the outcome and coverage limitations; absence of evidence is not
+reported as proof of a clean environment.
 
 # Contributing
 

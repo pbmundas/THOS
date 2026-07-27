@@ -17,6 +17,44 @@ def _table(rows: list[list[object]], headers: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _proven_facts(verified: dict, triage: dict, correlation: dict, timeline: list[dict]) -> list[str]:
+    inventory = triage.get("inventory", [])
+    facts = [
+        f"{len(inventory)} supplied evidence file(s) passed full-file size and SHA-256 verification against the case manifest.",
+        f"{correlation.get('records_analyzed', 0)} normalized record(s) were successfully parsed from the supplied evidence.",
+        f"{len(timeline)} record(s) contained a parseable timestamp and were placed in chronological order.",
+    ]
+    sigma_matches = correlation.get("sigmahq_rule_matches", []) + correlation.get("local_sigma_rule_matches", [])
+    if sigma_matches:
+        facts.append(
+            f"{len(sigma_matches)} configured detection rule(s) matched at least one supplied record; a rule match is evidence of matching conditions, not proof of intent."
+        )
+    yara_count = int(correlation.get("yara_scan", {}).get("match_count", 0) or 0)
+    if yara_count:
+        facts.append(f"Enabled YARA rules produced {yara_count} file/artifact match(es) against the verified evidence.")
+    ioc_count = len(correlation.get("ioc_matches", []))
+    if ioc_count:
+        facts.append(f"{ioc_count} observed indicator(s) matched the locally managed intelligence index.")
+    if not sigma_matches and not yara_count and not ioc_count:
+        facts.append("The configured detection-rule, YARA, and managed-IOC checks produced no deterministic match in the supplied, successfully parsed evidence.")
+    return facts
+
+
+def _unresolved_anomalies(triage: dict, timeline: list[dict]) -> list[str]:
+    items = [str(item) for item in triage.get("warnings", []) if str(item).strip()]
+    if not timeline:
+        items.append("No parseable timestamps were recovered, so event ordering and temporal gaps could not be determined.")
+    else:
+        items.append("The reconstructed timeline proves only the order of recovered timestamps; missing intervals cannot establish continuous logging.")
+    items.append(
+        "Whether relevant logs were deleted, overwritten by retention, or removed with anti-forensic tooling cannot be determined unless corroborating journal, sequence, gap, or storage evidence was supplied."
+    )
+    items.append(
+        "Activity outside the supplied sources, collection window, supported decoders, and configured detection/intelligence coverage remains undetermined."
+    )
+    return list(dict.fromkeys(items))
+
+
 def write_forensic_report(verified: dict, triage: dict, correlation: dict, timeline: list[dict]) -> dict:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
@@ -66,7 +104,8 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
         [
             item["timestamp"], item["evidence_ref"], item.get("host"), item.get("user"),
             item.get("event"), item.get("source_file"), item.get("classification"),
-            item.get("confidence"), item.get("activity_basis"), item.get("detail"),
+            item.get("confidence"), ", ".join(item.get("mitre_techniques", [])),
+            item.get("activity_basis"), item.get("detail"),
         ]
         for item in timeline[:500]
     ]
@@ -91,6 +130,8 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
     )
     yara_match_count = int(correlation.get("yara_scan", {}).get("match_count", 0) or 0)
     ioc_match_count = len(correlation.get("ioc_matches", []))
+    proven_facts = _proven_facts(verified, triage, correlation, timeline)
+    unresolved_anomalies = _unresolved_anomalies(triage, timeline)
     if malicious_count or suspicious_count:
         conclusion = (
             f"The automated examination identified {malicious_count} malicious and "
@@ -116,7 +157,7 @@ def write_forensic_report(verified: dict, triage: dict, correlation: dict, timel
 
 THOS verified {len(triage['inventory'])} original evidence file(s) by SHA-256 and analyzed
 {correlation['records_analyzed']} normalized artifact/log records and reconstructed
-{len(timeline)} timeline entries. The examination produced {sigma_match_count} Sigma rule
+{len(timeline)} timeline entries. The examination produced {sigma_match_count} detection rule
 match(es), {yara_match_count} YARA match(es), {ioc_match_count} managed-intelligence IOC
 match(es), {malicious_count} malicious assessment(s), and {suspicious_count} suspicious
 assessment(s). Automated results are triage leads, not a substitute for examiner validation.
@@ -125,6 +166,19 @@ No finding below is treated as proof of attribution or intent without corroborat
 ## Scope and examination request
 
 {verified.get('notes') or 'No additional examination notes were supplied.'}
+
+## Proven Facts
+
+The following statements are limited to outcomes directly demonstrated by the verified
+evidence and deterministic examination:
+
+{chr(10).join(f'- {item}' for item in proven_facts)}
+
+## Unresolved Anomalies
+
+The examination could not resolve the following gaps or alternative explanations:
+
+{chr(10).join(f'- {item}' for item in unresolved_anomalies)}
 
 ## Chain of custody and integrity
 
@@ -143,13 +197,13 @@ No finding below is treated as proof of attribution or intent without corroborat
 3. Identify artifacts by extension and magic, parse supported log/evidence formats, inventory
    archives without unsafe extraction, and run available disk-image metadata tools.
 4. Normalize records using the same schema used for active-SIEM hunting.
-5. Evaluate the pinned SigmaHQ and local THOS rules, scan files with the enabled YARA
+5. Evaluate the pinned community and local THOS detection rules, scan files with the enabled YARA
    catalog, correlate observed indicators with the managed threat-intelligence index,
    map matched detection knowledge to ATT&CK, score rare events, and construct a
    timestamp-ordered timeline.
 6. Preserve references back to evidence ID and normalized record.
 
-Tooling is local to THOS. Sigma matches, keywords, strings, and anomaly scores are screening
+Tooling is local to THOS. Detection-rule matches, keywords, strings, and anomaly scores are screening
 mechanisms and require human validation.
 
 ## Evidence-format coverage and limitations
@@ -180,12 +234,12 @@ an opaque container was fully examined.
 
 ## Detection correlation
 
-- SigmaHQ rules evaluated: {correlation['sigmahq_rules_evaluated']}
+- Community detection rules evaluated: {correlation['sigmahq_rules_evaluated']}
 - Local THOS rules evaluated: {correlation['local_sigma_rules_evaluated']}
 - Matched record references: {', '.join(correlation['sigma_matched_record_refs'][:500]) or 'None'}
 - ATT&CK techniques represented by matched rules: {', '.join(correlation.get('attack_techniques', [])) or 'None mapped'}
 
-{_table(sigma_matches, ['Rule ID', 'Title', 'Level', 'Matches']) if sigma_matches else '_No Sigma rule matched._'}
+{_table(sigma_matches, ['Rule ID', 'Title', 'Level', 'Matches']) if sigma_matches else '_No detection rule matched._'}
 
 ## YARA file and artifact correlation
 
@@ -220,7 +274,7 @@ review and is not treated as proof of intent or attribution.
 
 ## Reconstructed timeline
 
-{_table(timeline_rows, ['Timestamp', 'Evidence ref', 'Host', 'User', 'Event', 'Source', 'Classification', 'Confidence', 'Assessment basis', 'Detail']) if timeline_rows else '_No parseable timestamps were recovered._'}
+{_table(timeline_rows, ['Timestamp', 'Evidence ref', 'Host', 'User', 'Event', 'Source', 'Classification', 'Confidence', 'MITRE ATT&CK', 'Assessment basis', 'Detail']) if timeline_rows else '_No parseable timestamps were recovered._'}
 
 ## Legal and evidentiary considerations
 

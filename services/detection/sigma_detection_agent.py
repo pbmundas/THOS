@@ -29,8 +29,8 @@ def _selected_local_rule(rule_id: str):
         return "THOS", local
     community = next((rule for rule in sigmahq_engine.load_rules() if rule.rule_id == rule_id), None)
     if community is not None:
-        return "SigmaHQ", community
-    raise LookupError(f"enabled Sigma rule {rule_id} was not found in the active corpus")
+        return "Community", community
+    raise LookupError(f"enabled detection rule {rule_id} was not found in the active corpus")
 
 
 def _metadata(source: str, rule) -> dict:
@@ -54,7 +54,7 @@ def _analysis(events: list[dict], query_count: int, method: str) -> dict:
     event_types = Counter(str(item.get("event")) for item in events if item.get("event"))
     timestamps = sorted(str(item.get("timestamp")) for item in events if item.get("timestamp"))
     return {
-        "summary": f"{len(events)} matching event(s) were returned by {query_count} targeted Sigma query execution(s).",
+        "summary": f"{len(events)} matching event(s) were returned by {query_count} targeted detection-rule query execution(s).",
         "distinct_hosts": len(hosts), "distinct_users": len(users),
         "top_hosts": [{"value": v, "count": c} for v, c in hosts.most_common(10)],
         "top_users": [{"value": v, "count": c} for v, c in users.most_common(10)],
@@ -204,7 +204,7 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
             if label not in rules:
                 rules.append(label)
             record["_sigma_match"] = True
-            record["_sigmahq_match"] = entry["rule_source"] == "SigmaHQ"
+            record["_sigmahq_match"] = entry["rule_source"] == "Community"
         if result.get("logs"):
             rule_matches.append({
                 "rule_id": entry["rule_id"], "title": entry["title"], "level": entry["level"],
@@ -244,13 +244,13 @@ async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_
             "log_source_path": log_source_path or "",
         })
         if result.get("error"):
-            raise RuntimeError(f"{siem_type} scheduled Sigma fetch failed: {result['error']}")
+            raise RuntimeError(f"{siem_type} scheduled detection-rule fetch failed: {result['error']}")
         processed = (await process_logs_node({"logs": result.get("logs", [])})).get("processed_logs", [])
         evaluation = (sigma_engine.evaluate_all(processed, rules=[rule]) if source == "THOS"
                       else sigmahq_engine.evaluate_all(processed, rules=[rule]))
         indices = evaluation.get("matched_record_indices", [])
         events = [_event_view(processed[index], index) for index in indices if 0 <= index < len(processed)]
-        method = "local folder Sigma evaluation (no SIEM query engine available)"
+        method = "local folder detection-rule evaluation (no SIEM query engine available)"
         query = None
     else:
         entry = find_rule(rule_id, siem_type.lower())
@@ -261,7 +261,7 @@ async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_
         _, result = await _execute(entry, siem_type.lower(), 200)
         processed = (await process_logs_node({"logs": result.get("logs", [])})).get("processed_logs", [])
         events = [_event_view(record, index) for index, record in enumerate(processed)]
-        method = "precompiled Sigma query executed in the SIEM"
+        method = "precompiled detection-rule query executed in the SIEM"
         query = entry["query"]
     raw_events = events
     events, deduplication = deduplicate_recurring_hits(
@@ -286,17 +286,48 @@ async def run_scheduled_sigma_detection(*, schedule_id: str, rule_id: str, siem_
 async def run_scheduled_sigma_batch(
     *, schedule_id: str, rule_ids: list[str], siem_type: str
 ) -> list[dict]:
-    """Run one scheduled Wazuh rule batch through a single ``_msearch``."""
+    """Run a scheduled Wazuh batch, reducing batch size on transport pressure."""
     if siem_type.lower() != "wazuh":
-        raise ValueError("scheduled Sigma multi-search is currently supported for Wazuh")
+        raise ValueError("scheduled detection-rule multi-search is currently supported for Wazuh")
     entries = [find_rule(rule_id, "wazuh") for rule_id in rule_ids]
     started_at = time.perf_counter()
-    responses = await asyncio.to_thread(
-        wazuh_connector.fetch_multi_logs,
-        [{"rule_id": entry["rule_id"], "query": entry["query"]} for entry in entries],
-        200,
+    requests = [
+        {"rule_id": entry["rule_id"], "query": entry["query"]}
+        for entry in entries
+    ]
+    max_batch_size = max(
+        1, int(os.environ.get("THOS_WAZUH_MSEARCH_BATCH_SIZE", "8"))
     )
+    per_rule_limit = max(
+        1, int(os.environ.get("THOS_WAZUH_MSEARCH_RULE_LIMIT", "10"))
+    )
+
+    def fetch_with_backpressure(items: list[dict]) -> tuple[list[dict], int]:
+        """Halve an overloaded request while preserving result order."""
+        try:
+            return wazuh_connector.fetch_multi_logs(items, per_rule_limit), 1
+        except Exception as exc:  # noqa: BLE001 - convert isolated failures to results
+            if len(items) == 1:
+                return [{"error": str(exc)}], 1
+            midpoint = max(1, len(items) // 2)
+            left, left_calls = fetch_with_backpressure(items[:midpoint])
+            right, right_calls = fetch_with_backpressure(items[midpoint:])
+            return left + right, 1 + left_calls + right_calls
+
+    responses: list[dict] = []
+    request_count = 0
+    for start in range(0, len(requests), max_batch_size):
+        chunk_responses, chunk_calls = await asyncio.to_thread(
+            fetch_with_backpressure, requests[start:start + max_batch_size]
+        )
+        responses.extend(chunk_responses)
+        request_count += chunk_calls
     shared_duration_ms = int((time.perf_counter() - started_at) * 1000)
+    method = (
+        "single Wazuh scheduled multi-search batch"
+        if request_count == 1
+        else f"adaptive Wazuh scheduled multi-search ({request_count} requests)"
+    )
     results: list[dict] = []
     for entry, response in zip(entries, responses):
         source = entry["rule_source"]
@@ -318,8 +349,9 @@ async def run_scheduled_sigma_batch(
                 "compiled_query": entry["query"],
                 "query_backend": "wazuh",
                 "analysis": {
-                    "method": "single Wazuh scheduled _msearch batch",
+                    "method": method,
                     "duration_ms": shared_duration_ms,
+                    "multi_search_requests": request_count,
                 },
                 "error": str(response["error"]),
             })
@@ -348,10 +380,12 @@ async def run_scheduled_sigma_batch(
             "query_backend": "wazuh",
             "analysis": {
                 **_analysis(
-                    events, 1, "single Wazuh scheduled _msearch batch"
+                    events, request_count, method
                 ),
+                "total_hits": int(response.get("total_hits") or len(raw_events)),
                 "deduplication": deduplication,
                 "duration_ms": shared_duration_ms,
+                "multi_search_requests": request_count,
             },
         }
         result["analysis"]["triage"] = triage_detection(result)

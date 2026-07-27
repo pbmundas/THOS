@@ -22,7 +22,7 @@ Full-fledged version — fixes and additions over the Phase-1 version:
     Defaults to "1" if not specified.
   - NEW: a "MITRE ATT&CK Coverage" section rendered from the full
     233-technique table (services/knowledge/mitre.py) instead of nothing.
-  - NEW: a "Sigma Detections" section listing which real Sigma rules
+  - NEW: a "Detection Rule Matches" section listing which static rules
     fired (id/title/level/match count) instead of the old cosmetic
     LLM-drafted rule text.
 
@@ -97,7 +97,7 @@ def _short_title(hypothesis_id: str, technique_id: str, technique_name: str,
 
 
 COVER_EXECUTIVE_TEMPLATE = """\
-> ## 📋 Executive Summary Cover
+> ## Executive Summary Cover
 >
 > **What was investigated:** {technique_name_or_na} activity ({tactic_or_na}),
 > initiated {hunt_started_at}.
@@ -114,7 +114,7 @@ COVER_EXECUTIVE_TEMPLATE = """\
 """
 
 COVER_ANALYST_TEMPLATE = """\
-> ## 🛡️ SOC Analyst Cover Panel
+> ## SOC Analyst Cover Panel
 >
 > | Field | Value |
 > |---|---|
@@ -123,8 +123,8 @@ COVER_ANALYST_TEMPLATE = """\
 > | MITRE ATT&CK | {technique_id_or_na} — {technique_name_or_na} ({tactic_or_na}) |
 > | Log source | {log_source} |
 > | Records analyzed | {records_analyzed} |
-> | Sigma rules matched | {sigma_rules_matched} |
-> | Sigma-flagged records | {sigma_matched_records} |
+> | Detection rules matched | {sigma_rules_matched} |
+> | Detection-rule records | {sigma_matched_records} |
 > | Hunt started | {hunt_started_at} |
 > | Hunt completed | {hunt_completed_at} |
 > | Report generated | {report_generated_at} |
@@ -259,18 +259,18 @@ def _render_mitre_section(technique_id: str) -> str:
 def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_analyzed: int) -> str:
     if not sigma_rule_matches:
         return (
-            f"No static Sigma rule matched any of the {records_analyzed} analyzed record(s) "
+            f"No static detection rule matched any of the {records_analyzed} analyzed record(s) "
             f"for this hunt. (See Queries Executed / Sample Log Evidence below for what was "
             f"actually searched.)"
         )
     lines = [
         f"**{sigma_matched_count} of {records_analyzed} analyzed record(s) matched at least one "
-        f"Sigma rule:**",
+        f"detection rule:**",
         "",
         "| Source | Rule ID | Title | Level | Records matched |",
         "|---|---|---|---|---|",
     ]
-    source_label = {"sigmahq": "SigmaHQ", "thos": "THOS"}
+    source_label = {"sigmahq": "Community", "thos": "THOS"}
     for rm in sigma_rule_matches:
         label = source_label.get(rm.get("source", ""), "—")
         lines.append(
@@ -306,7 +306,7 @@ _Timestamps include the local UTC offset and timezone. Hunt completion marks the
 
 ---
 
-## 🧭 Phase 1: Planning & Hypothesis Formulation
+## Phase 1: Planning & Hypothesis Formulation
 This phase establishes the hunt's objective, intelligence grounding, and execution path.
 
 - **Hypothesis ID:** {hypothesis_id}
@@ -314,61 +314,61 @@ This phase establishes the hunt's objective, intelligence grounding, and executi
 - **MITRE ATT&CK Technique:** {technique_name} ({technique_id})
 - **Hunt Scope & Details:** {hypothesis}
 
-### 🧠 MITRE ATT&CK Coverage
+### MITRE ATT&CK Coverage
 {mitre_section}
 
-### 🧬 Prior Hunt Memory
+### Prior Hunt Memory
 {hunt_memory_section}
 
-### 📋 Hunt Execution Plan
+### Hunt Execution Plan
 {hunt_plan_section}
 
 ---
 
-## 📥 Phase 2: Ingestion & Normalization
+## Phase 2: Ingestion & Normalization
 This phase validates the collection, parsing, and filtering of telemetry data.
 
 - **Telemetry Source:** {log_source}
 - **Ingestion Status & Diagnostics:**
 {ingestion_diagnostics}
 
-### 🔍 SIEM Queries Executed
+### SIEM Queries Executed
 ```
 {queries}
 ```
 
-### 🛡️ Guardrail Sentinel Scan
+### Guardrail Sentinel Scan
 {guardrail_section}
 
 ---
 
-## 🔌 Phase 3: Automated Detection & Enrichment
+## Phase 3: Automated Detection & Enrichment
 This phase applies deterministic detection rules and correlates threat intelligence.
 
-### 🎯 Sigma Detections
+### Detection Rule Matches
 {sigma_section}
 
-### 📡 Threat Intelligence Enrichment
+### Threat Intelligence Enrichment
 {threat_intel_section}
 
-### ⚠️ Telemetry Coverage Gaps
+### Telemetry Coverage Gaps
 {coverage_gaps_section}
 
 ---
 
-## 🔎 Phase 4: Investigation & Deep Reasoning
+## Phase 4: Investigation & Deep Reasoning
 This phase represents the core analytical assessment and evidence verification.
 
-### ⚙️ Analysis Reliability
+### Analysis Reliability
 {reasoning_reliability_section}
 
-### 📝 Security Findings
+### Security Findings
 {findings}
 
-### 🧐 Verifier / Critic Validation
+### Verifier / Critic Validation
 {verifier_section}
 
-### 📊 Representative Evidence Sample (bounded)
+### Representative Evidence Sample (bounded)
 The sample prioritizes matcher hits and event diversity, and truncates raw detail fields to keep review practical.
 ```json
 {log_sample}
@@ -376,32 +376,31 @@ The sample prioritizes matcher hits and event diversity, and truncates raw detai
 
 ---
 
-## 🚀 Phase 5: Mitigation & Actionable Recommendations
+## Phase 5: Mitigation & Actionable Recommendations
 This phase outlines response briefs, remediation steps, and proactive defense rules.
 
-### 📢 Audience-Tailored Brief
+### Audience-Tailored Brief
 > {summary}
 
-### 🛠️ Actionable Recommendations
+### Actionable Recommendations
 {recommendations}
 
-### 📐 Proposed Detection Rule
+### Proposed Detection Rule
 {proposed_detection_rule}
 
 ---
 
-## 🔄 Phase 6: Lifecycle Case Management & Feedback
+## Phase 6: Lifecycle Case Management & Feedback
 This phase tracks the operational lifecycle of the hunt and feeds findings back into the platform.
 
-### 🎟️ Case & Investigation Tracking
+### Case & Investigation Tracking
 {case_section}
 
-### 📈 Continuous Learning & Feedback
+### Continuous Learning & Feedback
 {feedback_section}
 
 ---
-*Generated by THOS (On-Prem AI Threat Hunting Operating System) — Ollama + LangGraph + FastMCP + RAG.*
-*This report was produced by an AI reasoning pipeline built by Prasannakumar B Mundas. A human analyst should validate findings before action.*
+*Generated by THOS (On-Prem AI Threat Hunting Operating System). A human analyst should validate findings before action.*
 """
 
 
@@ -470,15 +469,15 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     sigma_section = _render_sigma_section(sigma_rule_matches or [], sigma_matched_count, records_analyzed)
     if reasoning_degraded:
         reasoning_reliability_section = (
-            "⚠️ **Deterministic evidence fallback used.** The reasoning model did not produce a "
+            "**Deterministic evidence fallback used.** The reasoning model did not produce a "
             f"valid response after {reasoning_attempts or 3} attempts. THOS still generated this "
-            "report from Sigma matches, normalized telemetry, coverage analysis, and verified "
+            "report from detection-rule matches, normalized telemetry, coverage analysis, and verified "
             "record citations. Analyst review is recommended before action.\n\n"
             f"- **Recorded strike reasons:** `{reasoning_error or 'No valid model response'}`"
         )
     else:
         reasoning_reliability_section = (
-            f"✅ **Model reasoning completed and validated.** Mode: `{reasoning_mode or 'model'}`; "
+            f"**Model reasoning completed and validated.** Mode: `{reasoning_mode or 'model'}`; "
             f"attempts: `{reasoning_attempts or 1}`."
         )
 
@@ -514,7 +513,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
             "siem_fetch": "Retrieve Log Telemetry",
             "log_processing": "Parse & Normalize Logs",
             "guardrail": "Sentinel Injection Screening",
-            "soc_tools": "Run Sigma and Indicator Matchers",
+            "soc_tools": "Run Detection and Indicator Matchers",
             "coverage_gap_check": "Verify Log Telemetry Health",
             "threat_intel_enrichment": "Enrich IOCs with Threat Intel",
             "reasoning": "AI Security Reasoning",
@@ -534,16 +533,16 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     gr_scanned = gr.get("scanned_records", 0)
     gr_hits = gr.get("hits") or []
     if gr_status == "clean":
-        guardrail_section = f"✅ **Clean:** No prompt injection markers or malicious instructions detected in untrusted log telemetry. (Scanned {gr_scanned} records)"
+        guardrail_section = f"**Clean:** No prompt injection markers or malicious instructions detected in untrusted log telemetry. (Scanned {gr_scanned} records)"
     else:
-        guardrail_section = f"⚠️ **Flagged:** Detected {len(gr_hits)} record(s) containing instruction-like signatures in untrusted telemetry:\n\n"
+        guardrail_section = f"**Flagged:** Detected {len(gr_hits)} record(s) containing instruction-like signatures in untrusted telemetry:\n\n"
         guardrail_section += "| Record Index | Log Field | Reason |\n|---|---|---|\n"
         for hit in gr_hits:
             guardrail_section += f"| {hit.get('record_index')} | `{hit.get('field')}` | {hit.get('reason')} |\n"
 
     # Format Threat Intel section
     if not enrichment_hits:
-        threat_intel_section = "✅ No observable IOCs (IPs, domains, file hashes) matched the local threat intelligence blocklist."
+        threat_intel_section = "No observable IOCs (IPs, domains, file hashes) matched the local threat intelligence blocklist."
     else:
         threat_intel_section = f"Correlated {len(enrichment_hits)} observable indicator(s) against the local blocklist:\n\n"
         threat_intel_section += "| Indicator / IOC | Log Record Index | Source | Threat Metadata |\n|---|---|---|---|\n"
@@ -576,9 +575,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
             + "`\n"
         )
     elif not coverage_gaps:
-        coverage_gaps_section = "✅ **Telemetry Health Passed:** No critical coverage gaps or ingestion errors detected during execution."
+        coverage_gaps_section = "**Telemetry Health Passed:** No critical coverage gaps or ingestion errors detected during execution."
     if coverage_gaps:
-        coverage_gaps_section += "\n\n⚠️ **Coverage gaps and health alerts:**\n\n"
+        coverage_gaps_section += "\n\n**Coverage gaps and health alerts:**\n\n"
         for gap in coverage_gaps:
             coverage_gaps_section += f"- {gap}\n"
 
@@ -589,18 +588,18 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     vr_invalid = vr.get("invalid_references") or []
     vr_reason = vr.get("reason", "")
     if vr_status == "passed":
-        verifier_section = f"✅ **Passed:** All cited references validated successfully. The verifier confirmed that all `{vr_checked}` evidence citations (`ref: N`) point to valid records in the processed logs."
+        verifier_section = f"**Passed:** All cited references validated successfully. The verifier confirmed that all `{vr_checked}` evidence citations (`ref: N`) point to valid records in the processed logs."
     else:
-        verifier_section = f"❌ **Failed:** Evidence verification failed due to: *{vr_reason}*.\n\n"
+        verifier_section = f"**Failed:** Evidence verification failed due to: *{vr_reason}*.\n\n"
         if vr_invalid:
             verifier_section += f"- **Invalid References:** {', '.join(str(r) for r in vr_invalid)}\n"
-        verifier_section += "- ⚠️ **Review Required:** Resolve citation discrepancies in the linked case before acting on the affected finding."
+        verifier_section += "- **Review Required:** Resolve citation discrepancies in the linked case before acting on the affected finding."
 
     # Format Case section
     if case_id:
-        prio = "High 🚨" if vr_status != "passed" else "Medium ⚠️"
+        prio = "High" if vr_status != "passed" else "Medium"
         case_section = (
-            f"📂 **Active Case Created:**\n"
+            f"**Active Case Created:**\n"
             f"- **Case ID:** `{case_id}`\n"
             f"- **Status:** `Open` / `Pending Analyst Review`\n"
             f"- **Priority:** {prio}\n\n"
@@ -619,7 +618,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         )
     else:
         evidence_highlights_section = (
-            "No technique-specific literal artifact was identified. Review the Sigma results, "
+            "No technique-specific literal artifact was identified. Review the detection-rule results, "
             "findings, and coverage assessment below; absence of a highlight is not proof of absence."
         )
     summary_validation_status = (
@@ -708,6 +707,12 @@ async def write_report_node(state: dict) -> dict:
             f"- Records analyzed after dedup: {len(logs)}\n"
         )
 
+    if state.get("reasoning_skipped"):
+        return {
+            "report_path": None,
+            "report_status": "not_generated_no_evidence",
+            "error": None,
+        }
     if state.get("reasoning_failed"):
         return {
             "report_path": None,

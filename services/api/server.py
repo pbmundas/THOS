@@ -150,7 +150,7 @@ def mitre_map_technique(technique_id: str) -> dict:
 @mcp.tool()
 def generate_sigma_rule(title: str, log_category: str, selection_field: str,
                          selection_value: str, level: str = "medium") -> str:
-    """Generate a draft SIGMA detection rule skeleton for a given log category and selection criteria."""
+    """Generate a draft detection-rule skeleton for a given log category and selection criteria."""
     return detection_rules.generate_sigma_skeleton(title, log_category, selection_field, selection_value, level)
 
 
@@ -234,14 +234,14 @@ def alert_on_schema_drift(siem_type: str) -> dict:
 
 @mcp.tool()
 def compile_sigma_rule_to_query(rule_id: str, siem_type: str) -> dict:
-    """Compile one Sigma rule against the cached live SIEM schema."""
+    """Compile one detection rule against the cached live SIEM schema."""
     from services.detection.sigma_query_catalog import compile_sigma_rule_to_query as compile_rule
     return compile_rule(rule_id, siem_type)
 
 
 @mcp.tool()
 def compile_sigma_rules_for_siem(siem_type: str) -> dict:
-    """Run the resource-bounded weekly Sigma compilation pass for one SIEM."""
+    """Run the resource-bounded weekly detection-rule compilation pass for one SIEM."""
     from services.detection.sigma_query_catalog import compile_sigma_rules_for_siem as compile_rules
     return compile_rules(siem_type)
 

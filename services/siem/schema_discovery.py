@@ -37,6 +37,7 @@ _SAMPLE_QUERIES = {
     "splunk": "search * | head 50",
     "qradar": "SELECT * FROM events LAST 5 MINUTES",
     "logrhythm": "*",
+    "elasticsearch": '{"query":{"match_all":{}}}',
 }
 
 
@@ -249,14 +250,15 @@ def discover_siem_fields(
     fields = inventory_from_logs(list(result.get("logs") or []))
     discovery_method = "recent_event_sample"
     discovery_warning = ""
-    if key == "wazuh":
+    if key in {"wazuh", "elasticsearch"}:
         # The sample can be homogeneous (for example, only ossec health
         # records), which previously made every process/network rule appear
         # unsupported. Merge the read-only Indexer schema so compilation sees
         # all searchable fields while samples remain bounded.
-        from services.siem import wazuh
+        from services.siem import elasticsearch, wazuh
         try:
-            fields = _merge_field_inventories(wazuh.discover_fields(), fields)
+            connector = wazuh if key == "wazuh" else elasticsearch
+            fields = _merge_field_inventories(connector.discover_fields(), fields)
             discovery_method = "index_field_capabilities_and_recent_event_sample"
         except Exception as exc:  # noqa: BLE001 - retain the verified bounded sample
             discovery_warning = f"Indexer field capabilities unavailable: {exc}"
