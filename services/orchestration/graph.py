@@ -2,7 +2,7 @@
 LangGraph state machine implementing:
 
   refresh_hearth_kb -> hypothesis -> supervisor -> query_gen -> siem_fetch
-    -> log_processing -> guardrail -> soc_tools -> reasoning
+    -> log_processing -> guardrail -> soc_tools -> evidence gate -> reasoning
     -> [need_more_logs? -> siem_fetch (loop) : verifier -> report -> END]
 
 refresh_hearth_kb pulls the latest hypotheses from the live HEARTH GitHub
@@ -53,7 +53,7 @@ def route_after_reasoning(state: HuntState) -> str:
 
 
 def route_after_adaptive_replan(state: HuntState) -> str:
-    return "siem_fetch" if state.get("replan_action") == "refine_query" else "threat_intel"
+    return "siem_fetch" if state.get("replan_action") == "refine_query" else "reasoning"
 
 
 def route_after_negative_screening(state: HuntState) -> str:
@@ -92,17 +92,17 @@ def build_graph():
     graph.add_edge("log_processing", "guardrail")
     graph.add_edge("guardrail", "soc_tools")
     graph.add_edge("soc_tools", "coverage_gap")
-    graph.add_edge("coverage_gap", "adaptive_replan")
-    graph.add_conditional_edges("adaptive_replan", route_after_adaptive_replan, {
-        "siem_fetch": "siem_fetch",
-        "threat_intel": "threat_intel",
-    })
+    graph.add_edge("coverage_gap", "threat_intel")
     graph.add_edge("threat_intel", "negative_screening_gate")
     graph.add_conditional_edges(
         "negative_screening_gate",
         route_after_negative_screening,
-        {"reasoning": "reasoning", "no_evidence": END},
+        {"reasoning": "adaptive_replan", "no_evidence": END},
     )
+    graph.add_conditional_edges("adaptive_replan", route_after_adaptive_replan, {
+        "siem_fetch": "siem_fetch",
+        "reasoning": "reasoning",
+    })
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
         "siem_fetch": "siem_fetch",
         "verifier": "verifier",

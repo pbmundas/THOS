@@ -69,7 +69,7 @@ async def _shared_wazuh_technique_telemetry(state: HuntState, limit: int) -> tup
 
 
 async def fetch_logs_node(state: HuntState) -> dict:
-    siem_type = state.get("siem_type", "mock")
+    siem_type = state.get("siem_type", "folder")
     requested_query = state.get("follow_up_query") or state.get("query", "")
     validation = validate_and_normalize_query(
         requested_query, state.get("hypothesis_text", "") or "", siem_type,

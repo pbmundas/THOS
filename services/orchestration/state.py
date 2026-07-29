@@ -101,6 +101,7 @@ class HuntState(TypedDict, total=False):
     reasoning_attempts: int
     reasoning_error: Optional[str]
     reasoning_skipped: bool
+    reasoning_skip_reason: Optional[str]
     negative_screening_passed: bool
     negative_screening_counts: Dict[str, int]
     need_more_logs: bool

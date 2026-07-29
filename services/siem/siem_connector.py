@@ -48,8 +48,15 @@ from services.runtime_config import env_or_runtime
 # Fallback default if a call doesn't specify siem_type explicitly
 # (kept for backward compatibility with any code still relying on the
 # container-level env var).
-DEFAULT_SIEM_TYPE = os.environ.get("SIEM_TYPE", "mock")
+DEFAULT_SIEM_TYPE = os.environ.get("SIEM_TYPE", "folder")
 DEFAULT_LOG_SOURCE_DIR = os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
+
+
+def _synthetic_telemetry_allowed() -> bool:
+    """Return whether the deliberately test-only mock connector is enabled."""
+    return os.environ.get("ALLOW_SYNTHETIC_TELEMETRY", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _cache_payload(siem_type: str, query: str, limit: int,
@@ -128,17 +135,28 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
     """
     Execute a SIEM query and return matching log records.
 
-    - siem_type == "mock": generates synthetic but structurally
-      realistic records so downstream nodes (log processing, SOC tools,
-      reasoning) can be developed/tested without a live SIEM connection.
+    - siem_type == "mock": isolated development tests only; it fails closed
+      unless ALLOW_SYNTHETIC_TELEMETRY=1 is explicitly configured.
     - siem_type == "folder": parses every supported log file under
       `log_source_path` (or LOG_SOURCE_DIR) and returns records matching
       the query.
     - anything else: not yet implemented (Phase 2 real connectors).
     """
-    siem_type = (siem_type or DEFAULT_SIEM_TYPE or "mock").lower()
+    siem_type = (siem_type or DEFAULT_SIEM_TYPE or "folder").lower()
 
     if siem_type == "mock":
+        if not _synthetic_telemetry_allowed():
+            return {
+                "siem_type": "mock",
+                "query": query,
+                "record_count": 0,
+                "logs": [],
+                "error": (
+                    "Synthetic telemetry is disabled. Configure a live SIEM or "
+                    "folder evidence source. Set ALLOW_SYNTHETIC_TELEMETRY=1 "
+                    "only in an isolated development/test environment."
+                ),
+            }
         return _cached_fetch("mock", query, limit, lambda: {
                 "siem_type": "mock",
                 "query": query,

@@ -21,7 +21,7 @@ import uuid
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from reportlab.lib import colors
@@ -112,6 +112,27 @@ if not SESSION_SECRET:
     logger.warning("CHATUI_SESSION_SECRET is unset; deriving a local session key from configured secrets")
 app = FastAPI(title="THOS SOCmate UI", version="1.0.0", docs_url=None, redoc_url=None)
 
+_SPA_STATIC_ROUTES = {
+    "/", "/overview", "/risks", "/detections", "/hunt-board",
+    "/forensic", "/forensic/evidence", "/forensic/yara",
+    "/threat-intelligence", "/reports", "/integrations", "/configuration",
+    "/help", "/hypotheses/new", "/workspace",
+}
+_SPA_DYNAMIC_ROUTES = (
+    re.compile(r"^/detections/[A-Za-z0-9._:-]{1,128}$"),
+    re.compile(r"^/hunt-board/[0-9a-fA-F-]{36}$"),
+    re.compile(r"^/forensic/(?:evidence|yara)/[0-9a-fA-F-]{36}$"),
+    re.compile(r"^/reports/[A-Za-z0-9._-]{1,255}$"),
+    re.compile(r"^/configuration/[a-z][a-z-]{0,31}$"),
+)
+
+
+def _is_spa_route(path: str) -> bool:
+    normalized = path.rstrip("/") or "/"
+    return normalized in _SPA_STATIC_ROUTES or any(
+        pattern.fullmatch(normalized) for pattern in _SPA_DYNAMIC_ROUTES
+    )
+
 
 async def _record_audit_event(payload: dict) -> None:
     try:
@@ -165,6 +186,7 @@ async def require_ui_auth(request: Request, call_next):
     public_path = (
         request.url.path in {"/", "/index.html", "/health", "/api/auth/login", "/api/auth/logout"}
         or request.url.path.startswith("/assets/")
+        or _is_spa_route(request.url.path)
     )
     if public_path:
         return await call_next(request)
@@ -555,6 +577,17 @@ def _clean_report_presentation(markdown: str) -> str:
         "pending analyst reviews",
         cleaned,
     )
+    # Historical model output occasionally labelled an absence claim as hard
+    # evidence. Preserve the finding text, but correct the evidence class in
+    # previews and downloads; absence is circumstantial unless a deterministic
+    # coverage proof establishes it.
+    cleaned = re.sub(
+        r"(?im)^(\s*-\s*)\[\s*hard-evidence\s*\]"
+        r"(?=[^\n]*(?:no evidence|not observed|not present|"
+        r"no [^.\n]{0,80} (?:found|detected|identified)|absence of))",
+        r"\1[circumstantial]",
+        cleaned,
+    )
     cleaned = re.sub(
         "["
         "\U0001F1E0-\U0001F1FF"
@@ -624,6 +657,194 @@ async def _new_forensic_case_dir(label: str) -> Path:
             except FileExistsError:
                 continue
     raise HTTPException(status_code=507, detail="daily forensic case serial space is exhausted")
+
+
+def _yara_scan_summary(payload: dict) -> dict:
+    scan = payload.get("scan_result") or {}
+    return {
+        "scan_id": payload.get("scan_id", ""),
+        "scan_title": payload.get("scan_title", ""),
+        "artifact_type": payload.get("artifact_type", ""),
+        "original_name": payload.get("original_name", ""),
+        "size_bytes": payload.get("size_bytes", 0),
+        "sha256": payload.get("sha256", ""),
+        "examiner": payload.get("examiner", ""),
+        "received_at": payload.get("received_at", ""),
+        "completed_at": payload.get("completed_at", ""),
+        "status": payload.get("status", "unknown"),
+        "match_count": scan.get("match_count", 0),
+        "duration_ms": scan.get("duration_ms", 0),
+        "error": payload.get("error", ""),
+    }
+
+
+def _yara_scan_manifests() -> list[tuple[float, Path, dict]]:
+    root = FORENSIC_ROOT.resolve()
+    if not root.is_dir():
+        return []
+    manifests = []
+    for path in root.rglob("_thos_yara_scan.json"):
+        try:
+            resolved = path.resolve()
+            if root not in resolved.parents:
+                continue
+            payload = json.loads(resolved.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or not payload.get("scan_id"):
+                continue
+            manifests.append((resolved.stat().st_mtime, resolved, payload))
+        except (OSError, ValueError, TypeError):
+            logger.warning("could not read forensic YARA scan manifest", extra={"path": str(path)})
+    return sorted(manifests, key=lambda item: item[0], reverse=True)
+
+
+@app.post("/api/forensics/yara-scans")
+async def create_yara_forensic_scan(
+    request: Request,
+    sample: UploadFile = File(...),
+    scan_title: str = Form(...),
+    artifact_type: str = Form("suspicious_file"),
+    acquired_from: str = Form(""),
+    notes: str = Form(""),
+):
+    control_plane.require_feature(request, "forensics")
+    title = scan_title.strip()
+    if not title or len(title) > 300:
+        raise HTTPException(status_code=422, detail="scan title must contain 1-300 characters")
+    if artifact_type not in {"memory_dump", "process_dump", "suspicious_file"}:
+        raise HTTPException(
+            status_code=422,
+            detail="artifact type must be memory_dump, process_dump, or suspicious_file",
+        )
+
+    scan_id = str(uuid.uuid4())
+    case_dir = await _new_forensic_case_dir(f"yara-{title}")
+    original_name = _safe_evidence_name(sample.filename or "", "suspicious-artifact.bin")
+    target = (case_dir / f"Y0001_{original_name}").resolve()
+    if target.parent != case_dir:
+        raise HTTPException(status_code=422, detail="invalid dump filename")
+
+    digest = hashlib.sha256()
+    size = 0
+    received_at = datetime.now(timezone.utc).isoformat()
+    manifest_path = case_dir / "_thos_yara_scan.json"
+    base_manifest = {
+        "scan_id": scan_id,
+        "scan_title": title,
+        "artifact_type": artifact_type,
+        "original_name": original_name,
+        "stored_name": target.name,
+        "examiner": request.state.analyst,
+        "received_at": received_at,
+        "acquired_from": acquired_from.strip()[:1000],
+        "notes": notes.strip()[:10000],
+        "agent": {
+            "agent_id": "file_memory_rule_analysis",
+            "agent_name": "File and Memory Rule Analysis Agent",
+            "activity": "Runs the enabled actionable YARA rule bundle against the preserved suspicious file, memory image, or process dump.",
+        },
+    }
+    try:
+        with target.open("xb") as handle:
+            while chunk := await sample.read(1024 * 1024):
+                size += len(chunk)
+                if size > FORENSIC_MAX_FILE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{original_name} exceeds the forensic artifact upload limit",
+                    )
+                digest.update(chunk)
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            target.chmod(0o440)
+        except OSError:
+            logger.warning("could not mark memory dump read-only", extra={"scan_id": scan_id})
+
+        sha256 = digest.hexdigest()
+        pending = {
+            **base_manifest,
+            "size_bytes": size,
+            "sha256": sha256,
+            "status": "scanning",
+        }
+        manifest_path.write_text(json.dumps(pending, indent=2), encoding="utf-8")
+        result = await _upstream_json(
+            "POST",
+            "/yara/scan",
+            json={
+                "path": str(target),
+                "recursive": False,
+                "analysis_profile": (
+                    "memory"
+                    if artifact_type in {"memory_dump", "process_dump"}
+                    else "evidence"
+                ),
+            },
+            timeout=1200.0,
+        )
+        file_result = (result.get("results") or [{}])[0]
+        status = (
+            "failed"
+            if result.get("errors") or file_result.get("status") == "skipped"
+            else "matched" if result.get("match_count") else "clean"
+        )
+        completed = {
+            **pending,
+            "status": status,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "scan_result": result,
+        }
+        manifest_path.write_text(json.dumps(completed, indent=2, default=str), encoding="utf-8")
+        logger.info(
+            "forensic file and memory rule scan completed",
+            extra={
+                "scan_id": scan_id,
+                "artifact_type": artifact_type,
+                "size_bytes": size,
+                "match_count": result.get("match_count", 0),
+                "status": status,
+            },
+        )
+        return completed
+    except Exception as exc:
+        failed = {
+            **base_manifest,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(exc),
+        }
+        try:
+            manifest_path.write_text(json.dumps(failed, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        logger.exception("forensic file and memory rule scan failed", extra={"scan_id": scan_id})
+        raise
+    finally:
+        await sample.close()
+
+
+@app.get("/api/forensics/yara-scans")
+async def list_yara_forensic_scans(request: Request, limit: int = 100):
+    control_plane.require_feature(request, "forensics")
+    bounded = max(1, min(limit, 500))
+    return [
+        _yara_scan_summary(payload)
+        for _, _, payload in _yara_scan_manifests()[:bounded]
+    ]
+
+
+@app.get("/api/forensics/yara-scans/{scan_id}")
+async def read_yara_forensic_scan(scan_id: str, request: Request):
+    control_plane.require_feature(request, "forensics")
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", scan_id):
+        raise HTTPException(status_code=422, detail="invalid forensic scan identifier")
+    for _, _, payload in _yara_scan_manifests():
+        if payload.get("scan_id") == scan_id:
+            return payload
+    raise HTTPException(status_code=404, detail="forensic YARA scan not found")
 
 
 @app.post("/api/forensics/cases", status_code=202)
@@ -730,6 +951,8 @@ async def list_forensic_cases(request: Request, limit: int = 100):
 @app.get("/api/forensics/{case_id}")
 async def read_forensic_case(case_id: str, request: Request):
     control_plane.require_feature(request, "forensics")
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", case_id):
+        raise HTTPException(status_code=422, detail="invalid forensic case identifier")
     return await _upstream_json("GET", f"/forensics/{case_id}")
 
 
@@ -963,4 +1186,16 @@ app.include_router(control_plane.router)
 if not STATIC_DIR.is_dir():
     logger.warning("UI static directory is missing: %s", STATIC_DIR)
 else:
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="ui-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_ui_route(full_path: str):
+        path = f"/{full_path}".rstrip("/") or "/"
+        if not _is_spa_route(path) and path != "/index.html":
+            raise HTTPException(status_code=404, detail="page not found")
+        return FileResponse(
+            STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-store"},
+        )

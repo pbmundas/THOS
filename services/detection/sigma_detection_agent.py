@@ -302,13 +302,50 @@ async def run_scheduled_sigma_batch(
         1, int(os.environ.get("THOS_WAZUH_MSEARCH_RULE_LIMIT", "10"))
     )
 
+    heap_soft_limit = max(
+        1, min(98, int(os.environ.get("THOS_WAZUH_HEAP_SOFT_LIMIT_PERCENT", "60")))
+    )
+    heap_hard_limit = max(
+        heap_soft_limit + 1,
+        min(99, int(os.environ.get("THOS_WAZUH_HEAP_HARD_LIMIT_PERCENT", "80"))),
+    )
+    queue_limit = max(
+        1, int(os.environ.get("THOS_WAZUH_SEARCH_QUEUE_LIMIT", "50"))
+    )
+
+    def batch_width(remaining: int) -> tuple[int, dict]:
+        """Choose request width from live Indexer memory and queue pressure."""
+        pressure = wazuh_connector.resource_pressure()
+        if not pressure.get("available"):
+            # An unavailable probe often means the Indexer is restarting or
+            # saturated. A single search is the safest useful fallback.
+            return 1, pressure
+        heap = int(pressure.get("heap_used_percent") or 0)
+        queue = int(pressure.get("search_queue") or 0)
+        if heap >= heap_hard_limit or queue >= queue_limit:
+            return 0, pressure
+        if heap >= heap_soft_limit or queue:
+            return 1, pressure
+        return min(max_batch_size, remaining), pressure
+
     def fetch_with_backpressure(items: list[dict]) -> tuple[list[dict], int]:
-        """Halve an overloaded request while preserving result order."""
+        """Split only while the Indexer is healthy enough to accept retries."""
         try:
             return wazuh_connector.fetch_multi_logs(items, per_rule_limit), 1
         except Exception as exc:  # noqa: BLE001 - convert isolated failures to results
             if len(items) == 1:
-                return [{"error": str(exc)}], 1
+                return [{"error": str(exc), "resource_pressure": wazuh_connector.resource_pressure()}], 1
+            pressure = wazuh_connector.resource_pressure()
+            if not pressure.get("available") or int(
+                pressure.get("heap_used_percent") or 0
+            ) >= heap_hard_limit:
+                return [
+                    {
+                        "error": str(exc),
+                        "resource_pressure": pressure,
+                    }
+                    for _item in items
+                ], 1
             midpoint = max(1, len(items) // 2)
             left, left_calls = fetch_with_backpressure(items[:midpoint])
             right, right_calls = fetch_with_backpressure(items[midpoint:])
@@ -316,12 +353,25 @@ async def run_scheduled_sigma_batch(
 
     responses: list[dict] = []
     request_count = 0
-    for start in range(0, len(requests), max_batch_size):
+    pressure_history: list[dict] = []
+    start = 0
+    while start < len(requests):
+        width, pressure = await asyncio.to_thread(
+            batch_width, len(requests) - start
+        )
+        pressure_history.append(pressure)
+        if width <= 0:
+            raise RuntimeError(
+                "Wazuh Indexer is under resource pressure; scheduled detection "
+                f"batch deferred (heap={pressure.get('heap_used_percent')}%, "
+                f"search_queue={pressure.get('search_queue')})."
+            )
         chunk_responses, chunk_calls = await asyncio.to_thread(
-            fetch_with_backpressure, requests[start:start + max_batch_size]
+            fetch_with_backpressure, requests[start:start + width]
         )
         responses.extend(chunk_responses)
         request_count += chunk_calls
+        start += width
     shared_duration_ms = int((time.perf_counter() - started_at) * 1000)
     method = (
         "single Wazuh scheduled multi-search batch"
@@ -352,6 +402,7 @@ async def run_scheduled_sigma_batch(
                     "method": method,
                     "duration_ms": shared_duration_ms,
                     "multi_search_requests": request_count,
+                    "resource_pressure": pressure_history,
                 },
                 "error": str(response["error"]),
             })
@@ -386,6 +437,7 @@ async def run_scheduled_sigma_batch(
                 "deduplication": deduplication,
                 "duration_ms": shared_duration_ms,
                 "multi_search_requests": request_count,
+                "resource_pressure": pressure_history,
             },
         }
         result["analysis"]["triage"] = triage_detection(result)

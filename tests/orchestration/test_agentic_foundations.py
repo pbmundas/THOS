@@ -9,7 +9,10 @@ import datetime
 
 from services.guardrails.sentinel import guardrail_node
 from services.orchestration.supervisor import plan_hunt_node
-from services.orchestration.graph import route_after_negative_screening
+from services.orchestration.graph import (
+    route_after_adaptive_replan,
+    route_after_negative_screening,
+)
 from services.verification.verifier import verify_findings_node
 from services.reporting.report import (
     _render_cover,
@@ -28,11 +31,17 @@ def test_supervisor_selects_optional_read_only_branches():
     assert "coverage_gap" in result["plan"]
     assert "adaptive_replan" in result["plan"]
     assert result["plan"][-1] == "report"
+    assert result["planner_mode"] == "deterministic_graph"
 
 
 def test_negative_screening_gate_routes_empty_evidence_directly_to_end():
     assert route_after_negative_screening({"reasoning_skipped": True}) == "no_evidence"
     assert route_after_negative_screening({"reasoning_skipped": False}) == "reasoning"
+
+
+def test_adaptive_replan_continues_to_reasoning_only_after_evidence_gate():
+    assert route_after_adaptive_replan({"replan_action": "continue"}) == "reasoning"
+    assert route_after_adaptive_replan({"replan_action": "refine_query"}) == "siem_fetch"
 
 
 def test_guardrail_flags_untrusted_instruction_text():

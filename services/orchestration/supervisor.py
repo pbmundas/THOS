@@ -1,4 +1,4 @@
-"""Structured model-driven planning with bounded evidence-based replanning."""
+"""Truthful deterministic planning with bounded evidence-based replanning."""
 from __future__ import annotations
 
 import json
@@ -10,28 +10,16 @@ from services.reasoning.ollama_client import generate
 logger = logging.getLogger(__name__)
 ALLOWED_NODES = {
     "query_gen", "siem_fetch", "log_processing", "guardrail", "soc_tools",
-    "coverage_gap", "adaptive_replan", "threat_intel", "reasoning", "verifier",
-    "detection_engineering", "communication", "report",
+    "coverage_gap", "threat_intel", "negative_screening_gate",
+    "adaptive_replan", "reasoning", "verifier", "detection_engineering",
+    "communication", "report",
 }
 REQUIRED_ORDER = [
     "query_gen", "siem_fetch", "log_processing", "guardrail", "soc_tools",
-    "coverage_gap", "adaptive_replan", "threat_intel", "reasoning", "verifier",
-    "detection_engineering", "communication", "report",
+    "coverage_gap", "threat_intel", "negative_screening_gate",
+    "adaptive_replan", "reasoning", "verifier", "detection_engineering",
+    "communication", "report",
 ]
-PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "plan": {
-            "type": "array",
-            "items": {"type": "string", "enum": sorted(ALLOWED_NODES)},
-            "minItems": 6,
-            "maxItems": 12,
-        },
-        "rationale": {"type": "string"},
-        "risk_focus": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-    },
-    "required": ["plan", "rationale", "risk_focus"],
-}
 REPLAN_SCHEMA = {
     "type": "object",
     "properties": {
@@ -41,11 +29,6 @@ REPLAN_SCHEMA = {
     },
     "required": ["action", "follow_up_query", "reason"],
 }
-SYSTEM = """You are THOS's read-only threat-hunt planning supervisor. Produce a
-bounded plan from the allowed nodes. Never omit guardrail, coverage, reasoning,
-verification, communication, or report. You may order only according to the
-normal evidence flow. Do not request containment, deletion, configuration
-changes, or any tool outside the schema. Return only valid JSON."""
 REPLAN_SYSTEM = """You are THOS's bounded replanning supervisor. Decide whether
 one additional read-only query is justified by intermediate telemetry. Refine
 only when the current query returned weak or clearly incomplete evidence and a
@@ -58,49 +41,20 @@ def _fallback_plan(state: HuntState) -> list[str]:
     return list(REQUIRED_ORDER)
 
 
-def _normalize_plan(value) -> list[str]:
-    requested = [str(item) for item in (value or []) if str(item) in ALLOWED_NODES]
-    # The graph enforces this safe evidence order. Model selection remains
-    # visible as intent, while mandatory safety stages can never be removed.
-    return [node for node in REQUIRED_ORDER if node in requested or node in {
-        "query_gen", "siem_fetch", "log_processing", "guardrail", "soc_tools",
-        "coverage_gap", "adaptive_replan", "threat_intel", "reasoning",
-        "verifier", "communication", "report",
-    }]
-
-
 async def plan_hunt_node(state: HuntState) -> dict:
-    prompt = json.dumps({
-        "hypothesis": state.get("hypothesis_text", ""),
-        "technique_id": state.get("technique_id", ""),
-        "tactic": state.get("tactic", ""),
-        "telemetry_source": state.get("siem_type", ""),
-        "prior_hunt_count": len(state.get("hunt_memory") or []),
-        "allowed_nodes": sorted(ALLOWED_NODES),
-    }, ensure_ascii=False)
-    try:
-        raw = await generate(
-            prompt, system=SYSTEM, format=PLAN_SCHEMA,
-            agent="supervisor", transport_retries=1,
-        )
-        parsed = json.loads(raw)
-        plan = _normalize_plan(parsed.get("plan"))
-        if not plan:
-            raise ValueError("planner returned no valid nodes")
-        return {
-            "plan": plan,
-            "plan_rationale": str(parsed.get("rationale") or ""),
-            "plan_risk_focus": [str(item) for item in parsed.get("risk_focus", [])[:6]],
-            "planner_mode": "model",
-        }
-    except Exception as exc:  # noqa: BLE001 - safe deterministic fallback
-        logger.warning("supervisor model plan failed; using deterministic safety plan: %s", exc)
-        return {
-            "plan": _fallback_plan(state),
-            "plan_rationale": f"Deterministic safety plan used because model planning failed: {exc}",
-            "plan_risk_focus": [],
-            "planner_mode": "deterministic_fallback",
-        }
+    # LangGraph executes a governed, fixed safety order; a model-generated plan
+    # could not change that order and therefore consumed inference time without
+    # affecting execution. Report the actual graph plan directly.
+    return {
+        "plan": _fallback_plan(state),
+        "plan_rationale": (
+            "Governed read-only evidence flow for "
+            f"{state.get('siem_type') or 'the configured telemetry source'}; "
+            "empty evidence exits before adaptive or reasoning model work."
+        ),
+        "plan_risk_focus": [],
+        "planner_mode": "deterministic_graph",
+    }
 
 
 async def adaptive_replan_node(state: HuntState) -> dict:

@@ -19,3 +19,17 @@ Human approval is required before action.
     assert "## Phase 5" in cleaned
     assert "[circumstantial]" in cleaned
     assert "analyst review" in cleaned.lower()
+
+
+def test_historical_negative_claim_is_not_presented_as_hard_evidence():
+    source = (
+        "### Security Findings\n"
+        "- [hard-evidence] No evidence of unauthorized outbound traffic "
+        "(evidence: reviewed records; ref: 0-3)\n"
+        "- [hard-evidence] Nmap execution observed (evidence: command; ref: 4)\n"
+    )
+
+    cleaned = _clean_report_presentation(source)
+
+    assert "- [circumstantial] No evidence of unauthorized outbound traffic" in cleaned
+    assert "- [hard-evidence] Nmap execution observed" in cleaned

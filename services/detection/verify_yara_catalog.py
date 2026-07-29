@@ -25,7 +25,9 @@ def verify() -> tuple[int, int]:
             f"community YARA catalog has {ready} ready rules; {minimum_ready} required"
         )
     import yara
-    yara.load(str(Path(os.getenv("YARA_CATALOG_DIR", "/data/yara-catalog")) / "community.compiled"))
+    catalog_dir = Path(os.getenv("YARA_CATALOG_DIR", "/data/yara-catalog"))
+    yara.load(str(catalog_dir / "community.compiled"))
+    yara.load(str(catalog_dir / "community-actionable.compiled"))
     return files, ready
 
 

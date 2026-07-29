@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Measure THOS hunt, agent, Sigma, and YARA capacity.
+"""Measure historical THOS hunt, agent, and file-scan capacity.
 
 Run inside the Orchestrator image so the benchmark uses the deployed
 dependencies, rule volumes, runtime configuration, and audit database:
 
   python scripts/benchmark-thos.py --output-dir /repo/work/benchmarks \
       --yara-sample /data/log_sources/forensic/<case>/<sample>
+
+The legacy synthetic rule microbenchmark is disabled by default. Use
+scripts/enterprise-regression.py for operational capacity measurements
+against live telemetry.
 """
 from __future__ import annotations
 
@@ -327,6 +331,11 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--baseline-minutes", type=float, default=20.0)
     parser.add_argument("--yara-sample", type=Path)
+    parser.add_argument(
+        "--include-synthetic-rule-microbenchmark",
+        action="store_true",
+        help="Run the isolated developer-only 14-record rule microbenchmark.",
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -334,7 +343,21 @@ def main() -> int:
     hypotheses, hypothesis_summary = _hypothesis_estimates(
         historical, int(args.baseline_minutes * 60_000)
     )
-    sigma_rows, sigma_summary = _sigma_timings()
+    if args.include_synthetic_rule_microbenchmark:
+        sigma_rows, sigma_summary = _sigma_timings()
+        sigma_summary["synthetic_microbenchmark"] = True
+        sigma_summary["operational_capacity_evidence"] = False
+    else:
+        sigma_rows = []
+        sigma_summary = {
+            "skipped": True,
+            "synthetic_microbenchmark": False,
+            "operational_capacity_evidence": False,
+            "note": (
+                "Synthetic microbenchmark disabled. Use enterprise-regression.py "
+                "with live telemetry for operational measurements."
+            ),
+        }
     yara_rows, yara_summary = _yara_timings(args.yara_sample)
 
     _write_csv(args.output_dir / "historical_hunt_timings.csv", historical)

@@ -184,7 +184,7 @@ def siem_field_mapping(siem_type: str) -> dict:
 # Query generation (LLM-assisted, grounded in SIEM-KB)
 # ---------------------------------------------------------------
 @mcp.tool()
-async def generate_siem_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
+async def generate_siem_query(hypothesis_text: str, siem_type: str = "folder") -> dict:
     """Generate a concrete SIEM query for the given hypothesis text and target SIEM type."""
     return await generate_query(hypothesis_text, siem_type)
 

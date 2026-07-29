@@ -35,6 +35,8 @@ def test_plain_text_follow_up_uses_safe_simple_query_string():
         "nmap reconnaissance linux-victim"
     assert clause["simple_query_string"]["default_operator"] == "and"
     assert "data.*" not in clause["simple_query_string"]["fields"]
+    assert "data.command^3" in clause["simple_query_string"]["fields"]
+    assert "data.user_agent^3" in clause["simple_query_string"]["fields"]
 
 
 def test_heterogeneous_wildcard_field_is_removed_from_text_search():

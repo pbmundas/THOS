@@ -215,6 +215,7 @@ def test_hypothesis_agent_uses_local_mitre_mapping(monkeypatch):
 
 
 def test_hearth_refresh_agent_respects_fresh_cache(monkeypatch):
+    monkeypatch.setenv("HEARTH_REFRESH_DURING_HUNT", "1")
     call_tool = AsyncMock(return_value={"hit": True})
     monkeypatch.setattr(kb_refresh, "call_tool", call_tool)
 
@@ -223,6 +224,15 @@ def test_hearth_refresh_agent_respects_fresh_cache(monkeypatch):
         "cache_lookup",
         {"namespace": "hearth_kb_refresh", "payload": "last_refresh"},
     )
+
+
+def test_hearth_refresh_agent_is_outside_hunt_path_by_default(monkeypatch):
+    monkeypatch.delenv("HEARTH_REFRESH_DURING_HUNT", raising=False)
+    call_tool = AsyncMock()
+    monkeypatch.setattr(kb_refresh, "call_tool", call_tool)
+
+    assert asyncio.run(kb_refresh.refresh_hearth_kb_node({})) == {}
+    call_tool.assert_not_awaited()
 
 
 def test_hunt_memory_is_technique_scoped(monkeypatch):

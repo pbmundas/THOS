@@ -92,6 +92,7 @@ async def require_api_key(authorization: str = Header(default="")):
     if not authorization or not secrets.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="Missing or invalid API key")
 
+
 # The rate limiter (services/observability/cache.rate_limit_check) was fully
 # implemented but never called anywhere — /hunt had zero protection against
 # a burst of requests. Bucketed per hunter_name so one noisy caller can't
@@ -201,7 +202,7 @@ class HuntRequest(BaseModel):
     hypothesis_text: str | None = None
     hypothesis_tactic: str = ""
     hypothesis_technique: str = ""
-    siem_type: str = "mock"
+    siem_type: str = "folder"
     # Only used when siem_type == "folder": local directory containing
     # log artifacts (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) to
     # hunt against instead of a live SIEM API.
@@ -288,6 +289,9 @@ class YaraScanRequest(BaseModel):
     recursive: bool = True
     rule_id: str | None = Field(default=None, max_length=256)
     modified_since: str | None = None
+    analysis_profile: str = Field(
+        default="evidence", pattern="^(evidence|memory)$",
+    )
 
 
 class ScheduledYaraRequest(YaraScanRequest):
@@ -688,11 +692,22 @@ async def run_yara_scan(request: YaraScanRequest):
     targets = _managed_yara_targets(
         request.path, request.recursive, request.modified_since,
     )
+    memory_profile = request.analysis_profile == "memory"
+    max_file_bytes = int(os.environ.get(
+        "YARA_MEMORY_MAX_FILE_BYTES" if memory_profile else "YARA_MAX_FILE_BYTES",
+        str(20 * 1024 * 1024 * 1024) if memory_profile else str(256 * 1024 * 1024),
+    ))
+    timeout_seconds = int(os.environ.get(
+        "YARA_MEMORY_SCAN_TIMEOUT_SECONDS" if memory_profile else "YARA_SCAN_TIMEOUT_SECONDS",
+        "600" if memory_profile else "30",
+    ))
     started_at = time.perf_counter()
     result = await asyncio.to_thread(
         scan_paths,
         targets,
         {request.rule_id} if request.rule_id else None,
+        max_file_bytes=max_file_bytes,
+        timeout_seconds=timeout_seconds,
     )
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     return {
@@ -700,6 +715,9 @@ async def run_yara_scan(request: YaraScanRequest):
         "duration_ms": duration_ms,
         "files_scanned": len(targets),
         "modified_since": request.modified_since,
+        "analysis_profile": request.analysis_profile,
+        "scan_limit_bytes": max_file_bytes,
+        "scan_timeout_seconds": timeout_seconds,
         "files_per_second": round(
             len(targets) / max(duration_ms / 1000, 0.001), 3
         ),
@@ -722,8 +740,10 @@ _NEXT_PIPELINE_NODE = {
     "hunt_memory": "supervisor", "supervisor": "query_gen",
     "query_gen": "siem_fetch", "siem_fetch": "log_processing",
     "log_processing": "guardrail", "guardrail": "soc_tools",
-    "soc_tools": "coverage_gap", "coverage_gap": "adaptive_replan",
-    "threat_intel": "reasoning", "verifier": "detection_engineering",
+    "soc_tools": "coverage_gap", "coverage_gap": "threat_intel",
+    "threat_intel": "negative_screening_gate",
+    "negative_screening_gate": "adaptive_replan",
+    "adaptive_replan": "reasoning", "verifier": "detection_engineering",
     "detection_engineering": "communication", "communication": "report",
 }
 
@@ -732,6 +752,10 @@ def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
     if completed_node == "adaptive_replan":
         from services.orchestration.graph import route_after_adaptive_replan
         return route_after_adaptive_replan(state)
+    if completed_node == "negative_screening_gate":
+        from services.orchestration.graph import route_after_negative_screening
+        route = route_after_negative_screening(state)
+        return None if route == "no_evidence" else "adaptive_replan"
     if completed_node == "reasoning":
         from services.orchestration.graph import route_after_reasoning
         route = route_after_reasoning(state)
@@ -990,6 +1014,7 @@ def _audit_outcome(state: dict) -> dict:
         "reasoning_degraded": bool(state.get("reasoning_degraded")),
         "reasoning_attempts": state.get("reasoning_attempts", 0),
         "reasoning_error": state.get("reasoning_error"),
+        "reasoning_skip_reason": state.get("reasoning_skip_reason"),
         "sigmahq_rules_evaluated": enrichment.get("sigmahq_rules_evaluated", 0),
         "sigma_rules_evaluated": enrichment.get("sigma_rules_evaluated", 0),
         "records_analyzed": len(state.get("processed_logs") or []),

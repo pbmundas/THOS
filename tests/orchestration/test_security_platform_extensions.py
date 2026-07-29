@@ -172,6 +172,57 @@ def test_yara_catalog_merges_ready_and_quarantined_community_rules(tmp_path, mon
     yara_engine._community_payload.cache_clear()
 
 
+def test_yara_generic_category_is_opt_in(tmp_path, monkeypatch):
+    manifest = tmp_path / "catalog.json"
+    compiled_file = tmp_path / "community.compiled"
+    actionable_file = tmp_path / "community-actionable.compiled"
+    compiled_file.write_bytes(b"compiled-placeholder")
+    actionable_file.write_bytes(b"actionable-placeholder")
+    rule_id = "community:utils/domain.yar:domain"
+    manifest.write_text(json.dumps({
+        "ready_rules": 1,
+        "actionable_rules": 0,
+        "default_excluded_categories": ["utils"],
+        "entries": [{
+            "id": rule_id,
+            "rule_name": "domain",
+            "title": "Domain",
+            "severity": "medium",
+            "source": "Yara-Rules/rules",
+            "category": "utils",
+            "namespace": "community_utils",
+            "relative_path": "utils/domain.yar",
+            "compilation_status": "ready",
+        }],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(yara_engine, "RULES_DIR", tmp_path / "local")
+    monkeypatch.setattr(yara_engine, "COMMUNITY_MANIFEST", manifest)
+    monkeypatch.setattr(yara_engine, "COMMUNITY_COMPILED", compiled_file)
+    monkeypatch.setattr(
+        yara_engine,
+        "COMMUNITY_ACTIONABLE_COMPILED",
+        actionable_file,
+    )
+    monkeypatch.setattr(yara_engine, "COMMUNITY_RULES_DIR", tmp_path)
+    enabled_ids = set()
+
+    def config_value(_section, name, default=None):
+        if name == "enabled_rule_ids":
+            return list(enabled_ids)
+        return default
+
+    monkeypatch.setattr(yara_engine, "get_value", config_value)
+    yara_engine._community_payload.cache_clear()
+
+    assert yara_engine.catalog()[0]["enabled"] is False
+    assert yara_engine.catalog()[0]["default_excluded"] is True
+
+    enabled_ids.add(rule_id)
+    assert yara_engine.catalog()[0]["enabled"] is True
+    yara_engine._community_payload.cache_clear()
+
+
 def test_direct_integration_normalizes_vendor_context_and_result_paths():
     payload = {"data": {"events": [{
         "createdAt": "2026-07-27T10:00:00Z",

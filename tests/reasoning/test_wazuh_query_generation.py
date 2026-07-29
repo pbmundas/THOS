@@ -31,6 +31,19 @@ def test_wazuh_fallback_keeps_concrete_h111_indicator():
     assert "adversary" not in search.split()
 
 
+def test_wazuh_fallback_prioritizes_literal_artifact_over_generic_prose():
+    query = _fallback_query(
+        'AnyDesk remote monitoring tool not writing a file named "gcapi.dll"',
+        "wazuh",
+    )
+
+    search = json.loads(query)["query"]["simple_query_string"]["query"].split()
+
+    assert search[0] == "gcapi.dll"
+    assert "tool" not in search
+    assert "file" not in search
+
+
 def test_wazuh_normalizer_discards_model_control_of_size_and_sort():
     candidate = json.dumps({
         "size": 50000,

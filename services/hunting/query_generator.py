@@ -53,7 +53,9 @@ WAZUH_SYSTEM_PROMPT = (
 
 WAZUH_TEXT_SEARCH_FIELDS = [
     "full_log^3", "rule.description^2", "rule.groups", "rule.mitre.id",
-    "rule.mitre.technique", "agent.name", "decoder.name", "location",
+    "rule.mitre.technique", "data.command^3",
+    "data.win.eventdata.commandLine^3", "data.user_agent^3", "data.url^2",
+    "agent.name", "decoder.name", "location",
 ]
 
 _FALLBACK_STOP_WORDS = {
@@ -63,6 +65,9 @@ _FALLBACK_STOP_WORDS = {
     "such", "their", "tools", "using", "with", "often", "utilize",
     "powerful", "scripting", "language", "available", "windows", "system",
     "systems", "crucial", "detailed", "provide", "presence", "attempting",
+    "baseline", "behavior", "establish", "expected", "file", "legitimate",
+    "management", "monitoring", "named", "normal", "profile", "remote",
+    "tool", "version", "writing",
 }
 
 _EXPLICIT_EVENT_ID = re.compile(r"\b(?:event\s*id|eventid)[\s:_-]*(\d{1,6})\b", re.IGNORECASE)
@@ -80,6 +85,12 @@ def _fallback_query(hypothesis_text: str, siem_type: str) -> str:
     query and falsely implying that an LLM query was generated.
     """
     terms = []
+    # Literal artifacts are the highest-value degraded-mode search terms and
+    # must not be crowded out by prose appearing earlier in the hypothesis.
+    for artifact in _EXPLICIT_ARTIFACT.findall(hypothesis_text):
+        lowered = artifact.lower()
+        if lowered not in terms:
+            terms.append(lowered)
     for token in hypothesis_text.replace("/", " ").replace("-", " ").split():
         cleaned = "".join(char for char in token if char.isalnum() or char == ".")
         lowered = cleaned.lower()
@@ -248,7 +259,7 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
     generation and immediately before execution, so reasoning-generated
     follow-up queries cannot bypass the syntax/read-only checks.
     """
-    dialect = (siem_type or "mock").lower()
+    dialect = (siem_type or "folder").lower()
     candidate = (value or "").strip()
     error = None
     try:
@@ -284,7 +295,7 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
     }
 
 
-async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
+async def generate_query(hypothesis_text: str, siem_type: str = "folder") -> dict:
     # cache.py's own docstring calls this out as a target ("repeated SIEM
     # queries and LLM calls") but nothing called it — a hunter iterating on
     # the same hypothesis/SIEM combo redid the full LLM query-gen call
@@ -296,7 +307,9 @@ async def generate_query(hypothesis_text: str, siem_type: str = "mock") -> dict:
     # The uploaded field inventory changes valid query syntax, so it is part
     # of the cache key. A schema upload invalidates only affected query-gen
     # entries without flushing unrelated hypotheses.
-    cache_version = "v5"
+    # v6 prioritizes literal artifacts in fallback retrieval and expands the
+    # explicit safe text-field allowlist; do not reuse broader v5 queries.
+    cache_version = "v6"
     field_signature = json.dumps(field_map, sort_keys=True, separators=(",", ":"))
     query_model = target_for("query_gen").model
     cache_payload = f"{cache_version}|{query_model}|{siem_type}|{field_signature}|{hypothesis_text}"

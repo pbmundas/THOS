@@ -58,6 +58,13 @@ _SEARCH_FIELDS = [
     "rule.groups",
     "rule.mitre.id",
     "rule.mitre.technique",
+    # Decoder-owned fields that commonly carry the only literal artifact.
+    # These are explicit mappings rather than ``data.*`` so heterogeneous
+    # date/IP/numeric fields cannot turn a text token into a shard error.
+    "data.command^3",
+    "data.win.eventdata.commandLine^3",
+    "data.user_agent^3",
+    "data.url^2",
     "agent.name",
     "agent.ip",
     "decoder.name",
@@ -75,6 +82,17 @@ def _positive_int_env(name: str, default: int) -> int:
         raise WazuhConfigError(f"{name} must be an integer, got {raw!r}.") from exc
     if value <= 0:
         raise WazuhConfigError(f"{name} must be greater than zero.")
+    return value
+
+
+def _nonnegative_int_env(name: str, default: int) -> int:
+    raw = env_or_runtime(name, "wazuh", str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise WazuhConfigError(f"{name} must be an integer, got {raw!r}.") from exc
+    if value < 0:
+        raise WazuhConfigError(f"{name} must be zero or greater.")
     return value
 
 
@@ -416,6 +434,76 @@ def discover_fields() -> list[dict[str, Any]]:
     return fields
 
 
+def resource_pressure() -> dict[str, Any]:
+    """Return a small, read-only Indexer pressure snapshot.
+
+    Scheduled detection batches use this before increasing request width. The
+    probe deliberately has no retry loop: if a stressed or restarting Indexer
+    cannot answer promptly, callers must fail closed instead of adding more
+    work to it.
+    """
+    cfg = _get_config()
+    url = f"{cfg['base_url']}/_nodes/stats/jvm,thread_pool"
+    try:
+        with httpx.Client(
+            auth=(cfg["username"], cfg["password"]),
+            headers={"Accept": "application/json"},
+            timeout=min(float(cfg["timeout_seconds"]), 5.0),
+            verify=cfg["verify"],
+        ) as client:
+            response = client.get(
+                url,
+                params={
+                    "filter_path": (
+                        "nodes.*.jvm.mem.heap_used_percent,"
+                        "nodes.*.jvm.mem.heap_used_in_bytes,"
+                        "nodes.*.jvm.mem.heap_max_in_bytes,"
+                        "nodes.*.thread_pool.search.queue,"
+                        "nodes.*.thread_pool.search.rejected"
+                    )
+                },
+            )
+        if response.status_code >= 400:
+            return {
+                "available": False,
+                "error": f"Indexer pressure probe returned HTTP {response.status_code}",
+            }
+        payload = response.json()
+        nodes = payload.get("nodes") if isinstance(payload, dict) else {}
+        if not isinstance(nodes, dict) or not nodes:
+            return {"available": False, "error": "Indexer pressure probe returned no nodes"}
+        heap_values: list[int] = []
+        heap_used_bytes = 0
+        heap_max_bytes = 0
+        search_queue = 0
+        search_rejected = 0
+        for node in nodes.values():
+            if not isinstance(node, dict):
+                continue
+            memory = ((node.get("jvm") or {}).get("mem") or {})
+            thread_pool = ((node.get("thread_pool") or {}).get("search") or {})
+            if memory.get("heap_used_percent") is not None:
+                heap_values.append(int(memory["heap_used_percent"]))
+            heap_used_bytes += int(memory.get("heap_used_in_bytes") or 0)
+            heap_max_bytes += int(memory.get("heap_max_in_bytes") or 0)
+            search_queue += int(thread_pool.get("queue") or 0)
+            search_rejected += int(thread_pool.get("rejected") or 0)
+        return {
+            "available": bool(heap_values),
+            "heap_used_percent": max(heap_values) if heap_values else None,
+            "heap_used_bytes": heap_used_bytes,
+            "heap_max_bytes": heap_max_bytes,
+            "search_queue": search_queue,
+            "search_rejected": search_rejected,
+            "node_count": len(nodes),
+        }
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        return {
+            "available": False,
+            "error": f"Indexer pressure probe failed: {type(exc).__name__}: {exc}",
+        }
+
+
 def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_ignored) -> dict:
     """Execute a bounded read-only search against the Wazuh Indexer."""
     cfg = _get_config()
@@ -498,12 +586,17 @@ def fetch_multi_logs(requests: list[dict], limit: int = 100) -> list[dict]:
             "ignore_unavailable": True,
             "allow_no_indices": True,
         }, separators=(",", ":")))
-        lines.append(json.dumps(
-            _build_search_body(
-                query, cfg["lookback_minutes"], bounded_limit, trusted_sigma=True
-            ),
-            separators=(",", ":"),
-        ))
+        search_body = _build_search_body(
+            query, cfg["lookback_minutes"], bounded_limit, trusted_sigma=True
+        )
+        # Scheduled rules only need to know whether evidence exists and retain
+        # a bounded sample. Exact counts across a large enterprise index are
+        # not worth the heap cost of ``track_total_hits: true``.
+        search_body["track_total_hits"] = max(
+            bounded_limit,
+            _positive_int_env("WAZUH_MSEARCH_TRACK_TOTAL_HITS", 1000),
+        )
+        lines.append(json.dumps(search_body, separators=(",", ":")))
     body = "\n".join(lines) + "\n"
     url = f"{cfg['base_url']}/_msearch"
 
@@ -523,7 +616,12 @@ def fetch_multi_logs(requests: list[dict], limit: int = 100) -> list[dict]:
             return result
 
         response = sync_retry(
-            _post_multi_search, what="wazuh indexer multi-search"
+            _post_multi_search,
+            what="wazuh indexer multi-search",
+            # The batch scheduler owns resource-aware splitting. Replaying a
+            # memory-heavy request several times while the Indexer restarts can
+            # turn one rejected search into a crash loop.
+            retries=_nonnegative_int_env("WAZUH_MSEARCH_RETRIES", 0),
         )
 
     if response.status_code in (401, 403):

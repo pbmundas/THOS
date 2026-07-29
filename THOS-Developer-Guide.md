@@ -371,7 +371,7 @@ Analyst → [SOCmate login form → signed HTTP-only session cookie]
 git clone <repository-url>
 cd thos
 cp env.example .env
-# edit .env — at minimum, review SIEM_TYPE (defaults to "mock")
+# edit .env — at minimum, configure SIEM_TYPE (defaults to real folder evidence)
 docker compose up -d --build
 ```
 
@@ -421,7 +421,8 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `REDIS_PASSWORD` | `thos_change_me_redis` | Redis auth |
 | `OLLAMA_MODEL` | `qwen3:4b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
 | `POSTGRES_USER/PASSWORD/DB` | `thos` / `thos_change_me` / `thos_audit` | Audit DB credentials |
-| `SIEM_TYPE` | `mock` | `mock` \| `folder` \| `logrhythm` \| `splunk` \| `qradar` \| `wazuh` |
+| `SIEM_TYPE` | `folder` | `folder` \| `logrhythm` \| `splunk` \| `qradar` \| `wazuh` \| `elasticsearch`; `mock` is isolated-test-only and fails closed unless `ALLOW_SYNTHETIC_TELEMETRY=1` |
+| `ALLOW_SYNTHETIC_TELEMETRY` | `0` | Keep `0` outside isolated development tests; prevents mock records from entering hunts or reports |
 | `LOG_SOURCE_DIR` / `LOG_SOURCE_ALLOWED_ROOTS` | `/data/log_sources` | Folder-mode default + path-traversal allowlist |
 | `LOGRHYTHM_BASE_URL` / `LOGRHYTHM_API_TOKEN` | *(blank)* | Required for `SIEM_TYPE=logrhythm` |
 | `SPLUNK_BASE_URL` / `SPLUNK_TOKEN` | *(blank)* | Required for `SIEM_TYPE=splunk` |

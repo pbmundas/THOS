@@ -45,6 +45,87 @@ import Help from "./Help";
 import Overview from "./Overview";
 import Risks from "./Risks";
 
+const CONFIGURATION_TABS = new Set([
+  "account", "general", "rules", "yara", "ioc", "schedules",
+  "audit", "knowledge", "users",
+]);
+const SAFE_DYNAMIC_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const SAFE_REPORT_NAME = /^[A-Za-z0-9._-]{1,255}$/;
+const UUID_PATH_ID = /^[0-9a-fA-F-]{36}$/;
+
+function parseBrowserRoute(pathname = window.location.pathname) {
+  let segments;
+  try {
+    segments = pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+  } catch {
+    return { page: "overview", canonicalPath: "/overview", invalid: true };
+  }
+  if (!segments.length || segments[0] === "overview") return { page: "overview", canonicalPath: "/overview" };
+  if (segments.length === 1 && segments[0] === "risks") return { page: "risks", canonicalPath: "/risks" };
+  if (segments[0] === "detections" && segments.length <= 2 && (!segments[1] || SAFE_DYNAMIC_ID.test(segments[1]))) {
+    return { page: "detections", detectionId: segments[1] || "", canonicalPath: segments[1] ? `/detections/${encodeURIComponent(segments[1])}` : "/detections" };
+  }
+  if (segments[0] === "hunt-board" && segments.length <= 2 && (!segments[1] || UUID_PATH_ID.test(segments[1]))) {
+    return { page: "hunts", huntId: segments[1] || "", canonicalPath: segments[1] ? `/hunt-board/${segments[1]}` : "/hunt-board" };
+  }
+  if (segments[0] === "forensic" && segments.length <= 3) {
+    const forensicTab = ["evidence", "yara"].includes(segments[1]) ? segments[1] : "evidence";
+    const forensicId = segments[2] || "";
+    if ((!segments[2] || UUID_PATH_ID.test(forensicId)) && (!segments[1] || ["evidence", "yara"].includes(segments[1]))) {
+      return {
+        page: "forensics",
+        forensicTab,
+        forensicId,
+        canonicalPath: `/forensic/${forensicTab}${forensicId ? `/${forensicId}` : ""}`,
+      };
+    }
+  }
+  if (segments.length === 1 && segments[0] === "threat-intelligence") return { page: "threat-intel", canonicalPath: "/threat-intelligence" };
+  if (segments[0] === "reports" && segments.length <= 2 && (!segments[1] || SAFE_REPORT_NAME.test(segments[1]))) {
+    return { page: "reports", reportFilename: segments[1] || "", canonicalPath: segments[1] ? `/reports/${encodeURIComponent(segments[1])}` : "/reports" };
+  }
+  if (segments.length === 1 && segments[0] === "integrations") return { page: "integrations", canonicalPath: "/integrations" };
+  if (segments[0] === "configuration" && segments.length <= 2 && (!segments[1] || CONFIGURATION_TABS.has(segments[1]))) {
+    const settingsTab = segments[1] || "account";
+    return { page: "settings", settingsTab, canonicalPath: `/configuration/${settingsTab}` };
+  }
+  if (segments.length === 1 && segments[0] === "help") return { page: "help", canonicalPath: "/help" };
+  if (segments.length === 2 && segments[0] === "hypotheses" && segments[1] === "new") return { page: "create-hypothesis", canonicalPath: "/hypotheses/new" };
+  if (segments.length === 1 && segments[0] === "workspace") return { page: "home", canonicalPath: "/workspace" };
+  return { page: "overview", canonicalPath: "/overview", invalid: true };
+}
+
+function pagePath(target, detail = {}) {
+  const base = {
+    overview: "/overview",
+    risks: "/risks",
+    detections: "/detections",
+    hunts: "/hunt-board",
+    forensics: "/forensic/evidence",
+    "threat-intel": "/threat-intelligence",
+    reports: "/reports",
+    integrations: "/integrations",
+    settings: "/configuration/account",
+    help: "/help",
+    "create-hypothesis": "/hypotheses/new",
+    home: "/workspace",
+  }[target] || "/overview";
+  if (target === "settings" && CONFIGURATION_TABS.has(detail.tab)) return `/configuration/${detail.tab}`;
+  if (target === "detections" && SAFE_DYNAMIC_ID.test(detail.id || "")) return `/detections/${encodeURIComponent(detail.id)}`;
+  if (target === "hunts" && UUID_PATH_ID.test(detail.id || "")) return `/hunt-board/${detail.id}`;
+  if (target === "forensics") {
+    const tab = detail.tab === "yara" ? "yara" : "evidence";
+    return `/forensic/${tab}${UUID_PATH_ID.test(detail.id || "") ? `/${detail.id}` : ""}`;
+  }
+  if (target === "reports" && SAFE_REPORT_NAME.test(detail.filename || "")) return `/reports/${encodeURIComponent(detail.filename)}`;
+  return base;
+}
+
+function commitBrowserPath(path, replace = false) {
+  if (window.location.pathname === path) return;
+  window.history[replace ? "replaceState" : "pushState"]({}, "", path);
+}
+
 const NODE_LABELS = {
   refresh_hearth_kb: "Refreshing hypothesis knowledge",
   supervisor: "Planning adaptive hunt workflow",
@@ -172,7 +253,10 @@ async function api(path, options = {}) {
     let detail = `Request failed (${response.status})`;
     try {
       const payload = await response.json();
-      detail = payload.detail || payload.error || detail;
+      const rawDetail = payload.detail || payload.error;
+      detail = typeof rawDetail === "object"
+        ? rawDetail.message || JSON.stringify(rawDetail)
+        : rawDetail || detail;
     } catch {
       // Keep the status-based message when a proxy returns non-JSON.
     }
@@ -260,11 +344,12 @@ function LoginPage({ onAuthenticated, checking = false }) {
 }
 
 function App() {
+  const initialRoute = useMemo(() => parseBrowserRoute(), []);
   const [authStatus, setAuthStatus] = useState("checking");
   const [analyst, setAnalyst] = useState("");
   const [session, setSession] = useState({ display_name: "", role: "Expert", permissions: [] });
-  const [page, setPage] = useState("overview");
-  const [settingsTab, setSettingsTab] = useState("account");
+  const [page, setPage] = useState(initialRoute.page);
+  const [settingsTab, setSettingsTab] = useState(initialRoute.settingsTab || "account");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hypotheses, setHypotheses] = useState([]);
@@ -297,7 +382,12 @@ function App() {
   const [reportType, setReportType] = useState("all");
   const [reportAgeUnit, setReportAgeUnit] = useState("all");
   const [reportAgeValue, setReportAgeValue] = useState(7);
-  const [detectionFocus, setDetectionFocus] = useState("");
+  const [detectionFocus, setDetectionFocus] = useState(initialRoute.detectionId || "");
+  const [forensicFocus, setForensicFocus] = useState({
+    tab: initialRoute.forensicTab || "evidence",
+    id: initialRoute.forensicId || "",
+  });
+  const [routeReportFilename, setRouteReportFilename] = useState(initialRoute.reportFilename || "");
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState("");
@@ -395,6 +485,29 @@ function App() {
     return () => { active = false; window.removeEventListener("thos:unauthorized", unauthorized); };
   }, []);
   useEffect(() => {
+    const applyLocation = () => {
+      const route = parseBrowserRoute();
+      setPage(route.page);
+      setSettingsTab(route.settingsTab || "account");
+      setDetectionFocus(route.detectionId || "");
+      setForensicFocus({
+        tab: route.forensicTab || "evidence",
+        id: route.forensicId || "",
+      });
+      setRouteReportFilename(route.reportFilename || "");
+      if (!route.reportFilename) setSelectedReport(null);
+      if (route.invalid) commitBrowserPath(route.canonicalPath, true);
+    };
+    window.addEventListener("popstate", applyLocation);
+    if (initialRoute.invalid) commitBrowserPath(initialRoute.canonicalPath, true);
+    return () => window.removeEventListener("popstate", applyLocation);
+  }, [initialRoute]);
+  useEffect(() => {
+    if (authStatus === "authenticated" && window.location.pathname === "/") {
+      commitBrowserPath("/overview", true);
+    }
+  }, [authStatus]);
+  useEffect(() => {
     if (authStatus === "authenticated" && (["Admin", "SME"].includes(session.role) || session.permissions?.includes("hunts"))) {
       loadHypotheses();
       loadTelemetrySources();
@@ -410,9 +523,29 @@ function App() {
   useEffect(() => {
     if (authStatus !== "authenticated") return;
     const permissions = new Set(session.permissions || []);
-    if (["Admin", "SME"].includes(session.role)) return;
-    const allowed = { overview: true, risks: permissions.has("reports"), hunts: permissions.has("hunts"), forensics: permissions.has("forensics"), reports: permissions.has("reports"), detections: permissions.has("reports"), "threat-intel": permissions.has("threat_intel"), help: true, settings: true, home: permissions.has("chat") };
-    if (!allowed[page]) setPage("overview");
+    const privileged = ["Admin", "SME"].includes(session.role);
+    const roleAllows = (feature) => privileged || permissions.has(feature);
+    const allowed = {
+      overview: true,
+      risks: roleAllows("reports"),
+      hunts: roleAllows("hunts"),
+      forensics: roleAllows("forensics"),
+      reports: roleAllows("reports"),
+      detections: roleAllows("reports"),
+      "threat-intel": roleAllows("threat_intel"),
+      integrations: privileged,
+      "create-hypothesis": privileged,
+      help: true,
+      settings: true,
+      home: roleAllows("chat"),
+    };
+    if (!allowed[page]) {
+      setPage("overview");
+      setDetectionFocus("");
+      setForensicFocus({ tab: "evidence", id: "" });
+      setRouteReportFilename("");
+      commitBrowserPath("/overview", true);
+    }
   }, [authStatus, page, session]);
 
   const authenticated = (payload) => { setAnalyst(payload.analyst || payload.username || "analyst"); setSession(payload); setAuthStatus("authenticated"); };
@@ -421,6 +554,11 @@ function App() {
     setAnalyst("");
     setSession({ display_name: "", role: "Expert", permissions: [] });
     setAuthStatus("unauthenticated");
+    setPage("overview");
+    setDetectionFocus("");
+    setForensicFocus({ tab: "evidence", id: "" });
+    setRouteReportFilename("");
+    commitBrowserPath("/", true);
   };
 
   const tactics = useMemo(
@@ -552,8 +690,14 @@ function App() {
     }
   }, [coverStyle, folderPath, running, platformHuntActive, siemType, loadHuntStatus, loadHypotheses]);
 
-  const openReport = useCallback(async (filename) => {
+  const openReport = useCallback(async (filename, updateUrl = true) => {
+    if (!SAFE_REPORT_NAME.test(String(filename || ""))) {
+      setReportError("Invalid report identifier.");
+      return;
+    }
     setPage("reports");
+    setRouteReportFilename(filename);
+    if (updateUrl) commitBrowserPath(pagePath("reports", { filename }));
     setReportLoading(true);
     setReportError("");
     try {
@@ -565,6 +709,11 @@ function App() {
       setReportLoading(false);
     }
   }, []);
+  useEffect(() => {
+    if (authStatus === "authenticated" && routeReportFilename) {
+      openReport(routeReportFilename, false);
+    }
+  }, [authStatus, routeReportFilename, openReport]);
 
   const openLatestHuntReport = () => {
     const path = finalState?.report_path || "";
@@ -603,13 +752,24 @@ function App() {
   const huntLocked = running || platformHuntActive;
   const completedModules = new Set(progress.map((item) => item.node)).size;
   const workflowTimestamp = progress.at(-1)?.completedAt || formatLocalTimestamp(finalState?.hunt_started_at);
-  const navigate = (target, tab = "") => {
-    if (target === "settings" && tab) setSettingsTab(tab);
+  const navigate = (target, tab = "", detail = {}) => {
+    const routeDetail = { ...detail, tab: tab || detail.tab };
+    if (target === "settings") setSettingsTab(routeDetail.tab || "account");
+    if (target === "detections") setDetectionFocus(routeDetail.id || "");
+    if (target === "forensics") setForensicFocus({
+      tab: routeDetail.tab === "yara" ? "yara" : "evidence",
+      id: routeDetail.id || "",
+    });
+    if (target !== "reports" || !routeDetail.filename) {
+      setRouteReportFilename("");
+      setSelectedReport(null);
+    }
+    commitBrowserPath(pagePath(target, routeDetail));
     setPage(target);
     setSidebarOpen(false);
   };
   const openHuntProgress = () => {
-    navigate("hunts");
+    navigate("hunts", "", { id: huntId });
     window.requestAnimationFrame(() => {
       document.getElementById("hunt-progress-details")?.scrollIntoView({
         behavior: "smooth",
@@ -624,7 +784,7 @@ function App() {
     }
     if (risk.detection_run_id) {
       setDetectionFocus(risk.detection_run_id);
-      navigate("detections");
+      navigate("detections", "", { id: String(risk.detection_run_id) });
     }
   };
 
@@ -694,7 +854,7 @@ function App() {
                 <p>Prioritize hypotheses by severity, review the investigative scope, and launch a governed hunt workflow.</p>
               </div>
               <div className="page-heading-actions">
-                {["Admin", "SME"].includes(session.role) && <button className="primary-button" onClick={() => setPage("create-hypothesis")}><LightBulbIcon /> Create hunt hypothesis</button>}
+                {["Admin", "SME"].includes(session.role) && <button className="primary-button" onClick={() => navigate("create-hypothesis")}><LightBulbIcon /> Create hunt hypothesis</button>}
                 <button className="secondary-button" onClick={loadHypotheses} disabled={loadingHypotheses}>
                   <ArrowPathIcon className={loadingHypotheses ? "spinning" : ""} /> Refresh catalog
                 </button>
@@ -806,7 +966,15 @@ function App() {
               </section>
             )}
           </div>
-        ) : page === "threat-intel" ? <ThreatIntelligence /> : page === "forensics" ? <Forensics onOpenReport={openReport} /> : page === "reports" ? (
+        ) : page === "threat-intel" ? <ThreatIntelligence /> : page === "forensics" ? <Forensics
+          onOpenReport={openReport}
+          initialTab={forensicFocus.tab}
+          focusId={forensicFocus.id}
+          onRouteChange={(tab, id = "") => {
+            setForensicFocus({ tab, id });
+            commitBrowserPath(pagePath("forensics", { tab, id }));
+          }}
+        /> : page === "reports" ? (
           <div className="page-wrap reports-page">
             <section className="page-heading">
               <div><StatusPill tone="cyan"><DocumentTextIcon /> Evidence library</StatusPill><h1>Hunt and forensic reports</h1><p>Keep threat-hunting and technical digital-forensic reports clearly classified, searchable, and exportable.</p></div>
@@ -866,8 +1034,7 @@ function App() {
                       <div><span>Investigation report</span><strong>{selectedReport.filename}</strong></div>
                       <div>
                         {session.role === "Admin" && <button className="danger-button" onClick={deleteSelectedReport}><TrashIcon /> Delete</button>}
-                        <a className="secondary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/markdown`} download><ArrowDownTrayIcon /> Markdown</a>
-                        <a className="primary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/pdf`} download><ArrowDownTrayIcon /> Download PDF</a>
+                        <a className="secondary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/markdown`} download><ArrowDownTrayIcon /> Markdown</a><a className="primary-button" href={`/api/reports/${encodeURIComponent(selectedReport.filename)}/pdf`} download><ArrowDownTrayIcon /> Download PDF</a>
                       </div>
                     </div>
                     <article className="markdown-report">
@@ -878,7 +1045,7 @@ function App() {
               </section>
             </div>
           </div>
-        ) : page === "detections" ? <Detections focusId={detectionFocus} /> : page === "integrations" && ["Admin", "SME"].includes(session.role) ? <Integrations session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : page === "help" ? <Help /> : page === "create-hypothesis" && ["Admin", "SME"].includes(session.role) ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings initialTab={settingsTab} hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} onSessionChange={(profile) => { setSession((current) => ({ ...current, ...profile })); setAnalyst(profile.display_name || analyst); }} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and governed SOC tools." /></div>}
+        ) : page === "detections" ? <Detections focusId={detectionFocus} /> : page === "integrations" && ["Admin", "SME"].includes(session.role) ? <Integrations session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} /> : page === "help" ? <Help /> : page === "create-hypothesis" && ["Admin", "SME"].includes(session.role) ? <HypothesisCreate onCreated={loadHypotheses} /> : page === "settings" ? <Settings initialTab={settingsTab} onTabChange={(tab) => { setSettingsTab(tab); commitBrowserPath(pagePath("settings", { tab })); }} hypotheses={hypotheses} session={session} activeSources={activeSources} onTelemetryChange={loadTelemetrySources} onSessionChange={(profile) => { setSession((current) => ({ ...current, ...profile })); setAnalyst(profile.display_name || analyst); }} /> : <div className="page-wrap"><EmptyState icon={SparklesIcon} title="THOS assistant is ready" body="Use the Ask THOS button on the right to work with the local model and governed SOC tools." /></div>}
       </main>
       {readingHypothesis && <div className="hypothesis-reader-backdrop" role="presentation" onClick={() => setReadingHypothesis(null)}><section className="hypothesis-reader" role="dialog" aria-modal="true" aria-label={`Read hypothesis ${readingHypothesis.id}`} onClick={(event) => event.stopPropagation()}>
         <header><div><span className="status-pill status-indigo">{readingHypothesis.id}</span><span className="status-pill status-cyan">{readingHypothesis.technique || "Unmapped"}</span></div><button aria-label="Close hypothesis" onClick={() => setReadingHypothesis(null)}><XMarkIcon /></button></header>

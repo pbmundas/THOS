@@ -200,7 +200,6 @@ def require_feature(
     if feature not in request.state.permissions:
         raise HTTPException(status_code=403, detail=f"Your role does not permit {feature}")
 
-
 def _validated_email(value: str) -> str:
     email = value.strip().lower()
     if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
@@ -275,7 +274,7 @@ class ScheduleRequest(BaseModel):
     interval: int = Field(default=1, ge=1, le=59)
     days: list[int] = Field(default_factory=lambda: list(range(7)))
     enabled: bool = True
-    siem_type: str = Field(default="mock", min_length=1, max_length=128)
+    siem_type: str = Field(default="folder", min_length=1, max_length=128)
     log_source_path: str | None = None
 
 
@@ -1168,8 +1167,15 @@ async def toggle_yara(rule_id: str, payload: RuleToggle, request: Request):
         )
     config = read_config()
     disabled = set(config["yara"].get("disabled_rule_ids", []))
-    disabled.discard(rule_id) if payload.enabled else disabled.add(rule_id)
+    explicitly_enabled = set(config["yara"].get("enabled_rule_ids", []))
+    if payload.enabled:
+        disabled.discard(rule_id)
+        explicitly_enabled.add(rule_id)
+    else:
+        disabled.add(rule_id)
+        explicitly_enabled.discard(rule_id)
     config["yara"]["disabled_rule_ids"] = sorted(disabled)
+    config["yara"]["enabled_rule_ids"] = sorted(explicitly_enabled)
     write_config(config)
     return {"rule_id": rule_id, "enabled": payload.enabled}
 
@@ -1820,13 +1826,13 @@ async def list_threat_intelligence_iocs(
 
 @router.get("/detections")
 async def scheduled_detections(request: Request, limit: int = 100):
-    require_feature(request, "reports")
+    require_feature(request, "detections")
     return await _upstream("GET", "/sigma/detections", params={"limit": max(1, min(limit, 500))})
 
 
 @router.post("/detections/{run_id}/analysis")
 async def scheduled_detection_analysis(run_id: str, request: Request):
-    require_feature(request, "reports")
+    require_feature(request, "detections")
     return await _upstream("POST", f"/sigma/detections/{run_id}/analysis")
 
 
@@ -2125,7 +2131,7 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
     recent_siem = list(item.get("recent_siem_duration_ms") or [])
     try:
         if kind == "sigma":
-            siem_type = item.get("siem_type", "mock")
+            siem_type = item.get("siem_type", "folder")
             payload = {
                 "schedule_id": item["id"],
                 "rule_id": item["target_id"],
@@ -2258,7 +2264,7 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
             completed, failures = 0, []
             base_payload = {
                 "hunter_name": "scheduler",
-                "siem_type": item.get("siem_type", "mock"),
+                "siem_type": item.get("siem_type", "folder"),
                 "log_source_path": item.get("log_source_path"),
                 "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
                 "cover_style": "2",

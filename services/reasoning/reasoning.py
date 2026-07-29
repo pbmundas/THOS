@@ -611,6 +611,10 @@ def _negative_screening_update(state: HuntState, screened: dict) -> dict:
         "reasoning_attempts": 0,
         "reasoning_error": None,
         "reasoning_skipped": True,
+        "reasoning_skip_reason": (
+            "No deterministic detection-rule, artifact, IOC, or behavioral "
+            "evidence matched the retrieved telemetry."
+        ),
         "negative_screening_counts": screened["_screening_counts"],
         "report_status": "not_generated_no_evidence",
     }

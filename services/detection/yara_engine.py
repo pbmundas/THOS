@@ -24,6 +24,7 @@ COMMUNITY_RULES_DIR = Path(os.environ.get(
 CATALOG_DIR = Path(os.environ.get("YARA_CATALOG_DIR", "/data/yara-catalog"))
 COMMUNITY_MANIFEST = CATALOG_DIR / "catalog.json"
 COMMUNITY_COMPILED = CATALOG_DIR / "community.compiled"
+COMMUNITY_ACTIONABLE_COMPILED = CATALOG_DIR / "community-actionable.compiled"
 MAX_FILE_BYTES = int(os.environ.get("YARA_MAX_FILE_BYTES", str(256 * 1024 * 1024)))
 SCAN_TIMEOUT_SECONDS = int(os.environ.get("YARA_SCAN_TIMEOUT_SECONDS", "30"))
 MATCH_LIMIT = int(os.environ.get("YARA_MATCH_LIMIT", "200"))
@@ -130,6 +131,7 @@ def _community_payload() -> dict[str, Any]:
 
 def catalog_summary() -> dict[str, Any]:
     payload = _community_payload()
+    rules = catalog()
     return {
         "source": payload.get("source", "https://github.com/Yara-Rules/rules"),
         "source_version": payload.get("source_version", ""),
@@ -137,19 +139,49 @@ def catalog_summary() -> dict[str, Any]:
         "ready_files": int(payload.get("ready_files", 0)),
         "invalid_files": int(payload.get("invalid_files", 0)),
         "ready_rules": int(payload.get("ready_rules", 0)) + len(_local_catalog()),
+        "enabled_rules": sum(bool(item.get("enabled")) for item in rules),
+        "actionable_rules": int(payload.get("actionable_rules", 0)) + len(_local_catalog()),
         "invalid_rules": int(payload.get("invalid_rules", 0)),
+        "default_excluded_categories": list(
+            payload.get("default_excluded_categories")
+            or ["crypto", "deprecated", "utils"]
+        ),
         "compiled_at": payload.get("compiled_at", ""),
         "catalog_available": COMMUNITY_MANIFEST.is_file() and COMMUNITY_COMPILED.is_file(),
+        "actionable_catalog_available": COMMUNITY_ACTIONABLE_COMPILED.is_file(),
     }
 
 
 def catalog() -> list[dict[str, Any]]:
     disabled = set(get_value("yara", "disabled_rule_ids", default=[]) or [])
+    explicitly_enabled = set(
+        get_value("yara", "enabled_rule_ids", default=[]) or []
+    )
+    excluded_categories = {
+        str(item).strip().lower()
+        for item in (
+            _community_payload().get("default_excluded_categories")
+            or os.environ.get(
+                "YARA_DEFAULT_EXCLUDED_CATEGORIES",
+                "utils,crypto,deprecated",
+            ).split(",")
+        )
+        if str(item).strip()
+    }
     community = list(_community_payload().get("entries") or [])
     rules = [*_local_catalog(), *community]
     for item in rules:
         ready = item.get("compilation_status", "ready") == "ready"
-        item["enabled"] = ready and item["id"] not in disabled
+        default_excluded = (
+            str(item.get("category") or "").strip().lower()
+            in excluded_categories
+        )
+        item["default_excluded"] = default_excluded
+        item["enabled"] = (
+            ready
+            and item["id"] not in disabled
+            and (not default_excluded or item["id"] in explicitly_enabled)
+        )
         if item.get("relative_path") and not item.get("path"):
             item["path"] = str(COMMUNITY_RULES_DIR / item["relative_path"])
     return rules
@@ -208,9 +240,20 @@ def compile_enabled(rule_ids: set[str] | None = None) -> CompiledBundle | None:
     }
     rulesets: list[tuple[Any, bool]] = []
 
-    community_active = any(item.get("source") == "Yara-Rules/rules" for item in active)
+    community_rules = [
+        item for item in active if item.get("source") == "Yara-Rules/rules"
+    ]
+    community_active = bool(community_rules)
     if community_active and COMMUNITY_COMPILED.is_file():
-        rulesets.append((yara.load(str(COMMUNITY_COMPILED)), True))
+        requires_full_bundle = any(
+            bool(item.get("default_excluded")) for item in community_rules
+        )
+        selected_bundle = (
+            COMMUNITY_COMPILED
+            if requires_full_bundle or not COMMUNITY_ACTIONABLE_COMPILED.is_file()
+            else COMMUNITY_ACTIONABLE_COMPILED
+        )
+        rulesets.append((yara.load(str(selected_bundle)), True))
 
     local_active = [item for item in active if item.get("source") == "THOS local"]
     if local_active:
@@ -236,27 +279,35 @@ def _strings(match) -> list[dict]:
                     "offset": int(instance.offset),
                     "matched_data_hex": bytes(instance.matched_data)[:128].hex(),
                 })
+                if len(output) >= 200:
+                    return output
         elif isinstance(item, tuple) and len(item) >= 3:
             output.append({
                 "identifier": str(item[1]),
                 "offset": int(item[0]),
                 "matched_data_hex": bytes(item[2])[:128].hex(),
             })
+            if len(output) >= 200:
+                return output
     return output
 
 
 def _scan_file_with_bundle(
     path: str | Path,
     compiled: CompiledBundle | None,
+    *,
+    max_file_bytes: int = MAX_FILE_BYTES,
+    timeout_seconds: int = SCAN_TIMEOUT_SECONDS,
 ) -> dict:
     candidate = Path(path).resolve()
     if not candidate.is_file():
         raise ValueError("YARA scan target is not a file")
     size = candidate.stat().st_size
-    if size > MAX_FILE_BYTES:
+    if size > max_file_bytes:
         return {
             "path": str(candidate), "size_bytes": size, "sha256": "",
-            "status": "skipped", "error": f"file exceeds YARA limit ({MAX_FILE_BYTES} bytes)",
+            "status": "skipped",
+            "error": f"file exceeds configured scan limit ({max_file_bytes} bytes)",
             "matches": [],
         }
     digest = hashlib.sha256()
@@ -264,7 +315,7 @@ def _scan_file_with_bundle(
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     matches = [] if compiled is None else compiled.match(
-        filepath=str(candidate), timeout=SCAN_TIMEOUT_SECONDS,
+        filepath=str(candidate), timeout=max(1, timeout_seconds),
     )
     return {
         "path": str(candidate),
@@ -282,11 +333,28 @@ def _scan_file_with_bundle(
     }
 
 
-def scan_file(path: str | Path, rule_ids: set[str] | None = None) -> dict:
-    return _scan_file_with_bundle(path, compile_enabled(rule_ids))
+def scan_file(
+    path: str | Path,
+    rule_ids: set[str] | None = None,
+    *,
+    max_file_bytes: int = MAX_FILE_BYTES,
+    timeout_seconds: int = SCAN_TIMEOUT_SECONDS,
+) -> dict:
+    return _scan_file_with_bundle(
+        path,
+        compile_enabled(rule_ids),
+        max_file_bytes=max_file_bytes,
+        timeout_seconds=timeout_seconds,
+    )
 
 
-def scan_paths(paths: list[str | Path], rule_ids: set[str] | None = None) -> dict:
+def scan_paths(
+    paths: list[str | Path],
+    rule_ids: set[str] | None = None,
+    *,
+    max_file_bytes: int = MAX_FILE_BYTES,
+    timeout_seconds: int = SCAN_TIMEOUT_SECONDS,
+) -> dict:
     results, errors = [], []
     # Loading the 15+ MB managed database and compiling local rules happens
     # once per scan job, not once for every evidence file.
@@ -303,7 +371,12 @@ def scan_paths(paths: list[str | Path], rule_ids: set[str] | None = None) -> dic
         }
     for path in paths[:1_000]:
         try:
-            results.append(_scan_file_with_bundle(path, compiled))
+            results.append(_scan_file_with_bundle(
+                path,
+                compiled,
+                max_file_bytes=max_file_bytes,
+                timeout_seconds=timeout_seconds,
+            ))
         except Exception as exc:  # preserve per-file failure
             errors.append({"path": str(path), "error": str(exc)})
     return {

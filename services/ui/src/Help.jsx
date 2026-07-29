@@ -71,6 +71,7 @@ const SECTIONS = [
     id: "security", icon: BookOpenIcon, title: "Security model and operating boundaries", tags: "roles permissions secrets guardrails containment",
     content: [
       "Admin and SME roles manage connections, catalogs, schedules, and users. Expert access follows assigned feature permissions.",
+      "Every primary page has a stable browser URL. Direct and back/forward navigation remain behind the session gate: the page shell contains no case or telemetry data, `/api/session` must validate the signed HttpOnly session, and every protected API rechecks role and feature permissions.",
       "Store SIEM and connector secrets through Settings, rotate default service credentials, restrict Docker host access, and terminate TLS at a trusted internal proxy.",
       "Untrusted telemetry is screened and sanitized before model use while original evidence remains available to deterministic tools and audit. A verifier checks every reported record reference.",
       "THOS performs investigation and drafts recommendations; it does not autonomously isolate hosts, delete data, block traffic, or deploy a detection.",
@@ -123,6 +124,11 @@ const FAQS = [
     q: "What happens when a hunt finds no evidence?",
     a: "The deterministic evidence-screening gate stops the hunt before model reasoning, verification, communication, and report generation. Hunt history records the no-evidence outcome and any telemetry-coverage limitations; absence of evidence is not represented as proof of a clean environment.",
     tags: "no evidence negative screening report reasoning",
+  },
+  {
+    q: "Can I bookmark or share a THOS page URL?",
+    a: "Yes. Overview, Risks, Detections, Hunt Board, Forensic, Threat Intelligence, Reports, Integrations, Configuration, and Help use stable URLs. Validated detail URLs are available for reports, detections, forensic cases, YARA file or memory scans, configuration tabs, and active hunts. The recipient must sign in and have the required role or feature permission; the URL itself never bypasses authorization.",
+    tags: "url bookmark deep link session authentication authorization browser address",
   },
 ];
 

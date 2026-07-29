@@ -688,7 +688,7 @@ async def write_report_node(state: dict) -> dict:
     needs out of HuntState and returns the partial state update
     (report_path) for the graph to merge in."""
     logs = state.get("processed_logs") or state.get("logs") or []
-    siem_type = state.get("siem_type", "mock")
+    siem_type = state.get("siem_type", "folder")
     if siem_type in ("folder", "local_folder", "file", "local"):
         log_source = f"Local folder — {state.get('log_source_path') or '(default log source dir)'}"
         ingestion_diagnostics = (

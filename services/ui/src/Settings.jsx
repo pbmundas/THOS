@@ -9,7 +9,14 @@ import {
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || payload.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const detail = payload.detail || payload.error;
+    throw new Error(
+      typeof detail === "object"
+        ? detail.message || JSON.stringify(detail)
+        : detail || `Request failed (${response.status})`
+    );
+  }
   return payload;
 }
 
@@ -255,8 +262,8 @@ function YaraRulesTab() {
         {data.catalog?.invalid_files ? ` · ${data.catalog.invalid_files} incompatible upstream files quarantined` : ""}
         {data.catalog?.compiled_at ? ` · compiled ${new Date(data.catalog.compiled_at).toLocaleString()}` : ""}.
       </p>
-      <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button>{editingSchedule ? <><button className="primary-button" disabled={!path || !days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button>}</div>
-      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+    <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button>{editingSchedule ? <><button className="primary-button" disabled={!path || !days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button>}</div>
+    <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
     <section className="settings-card"><h3>Scheduled YARA scans</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>{item.severity || "medium"} severity · {item.time} · {item.log_source_path} · {item.last_status}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No YARA schedules configured.</p>}</div></section>
   </div>;
@@ -678,7 +685,7 @@ function UsersTab() {
   </div>;
 }
 
-export default function Settings({ initialTab = "account", hypotheses, session, activeSources, onTelemetryChange, onSessionChange }) {
+export default function Settings({ initialTab = "account", onTabChange, hypotheses, session, activeSources, onTelemetryChange, onSessionChange }) {
   const isAdmin = session.role === "Admin";
   const canConfigure = ["Admin", "SME"].includes(session.role);
   const canKnowledge = canConfigure || session.permissions?.includes("knowledge");
@@ -696,11 +703,20 @@ export default function Settings({ initialTab = "account", hypotheses, session, 
     ...(isAdmin ? [{ id: "users", label: "Users & roles", icon: UserGroupIcon }] : []),
   ], [canConfigure, canKnowledge, isAdmin]);
   const [tab, setTab] = useState("account");
-  useEffect(() => { if (tabs.some((item) => item.id === initialTab)) setTab(initialTab); }, [initialTab, tabs]);
+  useEffect(() => {
+    if (tabs.some((item) => item.id === initialTab)) {
+      setTab(initialTab);
+    } else {
+      setTab("account");
+      onTabChange?.("account");
+    }
+    // Route correction runs only when the requested tab or authorized tabs change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab, tabs]);
   useEffect(() => { if (!tabs.some((item) => item.id === tab)) setTab("account"); }, [tabs, tab]);
   return <div className="page-wrap settings-page">
     <section className="page-heading"><div><span className="status-pill status-indigo"><Cog6ToothIcon /> Governed administration</span><h1>Platform configuration</h1><p>Manage account details, intelligence sources, runtime behavior, schedules, telemetry, knowledge, and role-based access.</p></div></section>
-    <div className="settings-layout"><aside className="settings-tabs panel">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><item.icon />{item.label}</button>)}</aside><main className="settings-content">
+    <div className="settings-layout"><aside className="settings-tabs panel">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); onTabChange?.(item.id); }}><item.icon />{item.label}</button>)}</aside><main className="settings-content">
       {tab === "account" && <AccountTab session={session} onSessionChange={onSessionChange} />}
       {tab === "general" && <GeneralTab activeSources={activeSources} />}
       {tab === "rules" && <DetectionRulesTab activeSources={activeSources} />}

@@ -5,6 +5,7 @@ from services.siem import siem_fetch
 
 
 def test_mock_fetch_is_cached_for_repeated_query(monkeypatch):
+    monkeypatch.setenv("ALLOW_SYNTHETIC_TELEMETRY", "1")
     values = {}
     generated = 0
 
@@ -29,6 +30,16 @@ def test_mock_fetch_is_cached_for_repeated_query(monkeypatch):
 
     assert first == second
     assert generated == 1
+
+
+def test_mock_fetch_fails_closed_without_explicit_opt_in(monkeypatch):
+    monkeypatch.delenv("ALLOW_SYNTHETIC_TELEMETRY", raising=False)
+
+    result = siem_connector.fetch_logs("same query", 25, "mock")
+
+    assert result["record_count"] == 0
+    assert result["logs"] == []
+    assert "Synthetic telemetry is disabled" in result["error"]
 
 
 def test_cache_key_includes_source_configuration(monkeypatch):

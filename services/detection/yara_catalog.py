@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 RULES_DIR = Path(os.getenv("YARARULES_RULES_DIR", "/rules"))
 CATALOG_DIR = Path(os.getenv("YARA_CATALOG_DIR", "/catalog"))
 MIN_FILES = int(os.getenv("YARARULES_MIN_FILES", "500"))
@@ -26,6 +26,17 @@ RULE_HEADER = re.compile(
     r"(?m)^\s*(?P<modifiers>(?:(?:private|global)\s+)*)rule\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::[^{]+)?\{"
 )
+
+
+def _default_excluded_categories() -> set[str]:
+    return {
+        item.strip().lower()
+        for item in os.getenv(
+            "YARA_DEFAULT_EXCLUDED_CATEGORIES",
+            "utils,crypto,deprecated",
+        ).split(",")
+        if item.strip()
+    }
 
 
 def _yara():
@@ -149,7 +160,12 @@ def build_catalog() -> dict[str, Any]:
     source_hash = _source_hash(files)
     target_manifest = CATALOG_DIR / "catalog.json"
     target_compiled = CATALOG_DIR / "community.compiled"
-    if target_manifest.is_file() and target_compiled.is_file():
+    target_actionable = CATALOG_DIR / "community-actionable.compiled"
+    if (
+        target_manifest.is_file()
+        and target_compiled.is_file()
+        and target_actionable.is_file()
+    ):
         try:
             existing = json.loads(target_manifest.read_text(encoding="utf-8"))
             if (
@@ -166,6 +182,7 @@ def build_catalog() -> dict[str, Any]:
             pass
 
     ready_sources: dict[str, str] = {}
+    source_categories: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     aggregate_only = 0
@@ -186,6 +203,11 @@ def build_catalog() -> dict[str, Any]:
             yara.compile(source=text, externals=EXTERNALS)
             status, error = "ready", ""
             ready_sources[namespace] = text
+            source_categories[namespace] = (
+                relative.split("/", 1)[0].lower()
+                if "/" in relative
+                else "root"
+            )
         except Exception as exc:  # isolate incompatible community files
             initial_error = str(exc)[:1000]
             # A small set of upstream ELF signatures depends on the private
@@ -202,6 +224,11 @@ def build_catalog() -> dict[str, Any]:
                     yara.compile(source=source, externals=EXTERNALS)
                     status, error = "ready", ""
                     ready_sources[namespace] = source
+                    source_categories[namespace] = (
+                        relative.split("/", 1)[0].lower()
+                        if "/" in relative
+                        else "root"
+                    )
                 except Exception as fallback_exc:
                     status, error = "invalid", str(fallback_exc)[:1000]
             else:
@@ -223,6 +250,22 @@ def build_catalog() -> dict[str, Any]:
         temporary_compiled = Path(handle.name)
     compiled.save(str(temporary_compiled))
     temporary_compiled.replace(target_compiled)
+    excluded_categories = _default_excluded_categories()
+    actionable_sources = {
+        namespace: source
+        for namespace, source in ready_sources.items()
+        if source_categories.get(namespace, "root") not in excluded_categories
+    }
+    if not actionable_sources:
+        raise RuntimeError("default actionable YARA corpus is empty")
+    actionable_compiled = yara.compile(
+        sources=actionable_sources,
+        externals=EXTERNALS,
+    )
+    with tempfile.NamedTemporaryFile(dir=CATALOG_DIR, delete=False) as handle:
+        temporary_actionable = Path(handle.name)
+    actionable_compiled.save(str(temporary_actionable))
+    temporary_actionable.replace(target_actionable)
 
     version_text = ""
     try:
@@ -244,6 +287,12 @@ def build_catalog() -> dict[str, Any]:
         "ready_rules": sum(
             item["compilation_status"] == "ready" for item in public_entries
         ),
+        "actionable_rules": sum(
+            item["compilation_status"] == "ready"
+            and str(item.get("category", "")).lower() not in excluded_categories
+            for item in public_entries
+        ),
+        "default_excluded_categories": sorted(excluded_categories),
         "invalid_rules": sum(
             item["compilation_status"] != "ready" for item in public_entries
         ),
@@ -281,6 +330,7 @@ def main() -> int:
     payload = build_catalog() if args.command == "build" else load_catalog()
     if args.command == "verify":
         _yara().load(str(CATALOG_DIR / "community.compiled"))
+        _yara().load(str(CATALOG_DIR / "community-actionable.compiled"))
         print(
             f"[yara-catalog-init] verified {payload.get('ready_rules', 0)} "
             "compiled community rules"

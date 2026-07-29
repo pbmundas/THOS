@@ -5,7 +5,7 @@ from services.orchestration.state import HuntState
 async def generate_query_node(state: HuntState) -> dict:
     result = await call_tool(
         "generate_siem_query",
-        {"hypothesis_text": state.get("hypothesis_text", ""), "siem_type": state.get("siem_type", "mock")},
+        {"hypothesis_text": state.get("hypothesis_text", ""), "siem_type": state.get("siem_type", "folder")},
     )
     return {
         "query": result.get("query", ""),

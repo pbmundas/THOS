@@ -146,7 +146,7 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     technique_id = state.get("technique_id", "") or ""
     technique_name = state.get("technique_name", "") or ""
     tactic = state.get("tactic", "") or ""
-    siem_type = (state.get("siem_type", "mock") or "mock").lower()
+    siem_type = (state.get("siem_type", "folder") or "folder").lower()
 
     indicator_call = call_tool("derive_detection_indicators", {
         "hypothesis_text": hypothesis_text, "technique_id": technique_id,

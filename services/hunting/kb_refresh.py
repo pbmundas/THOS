@@ -17,6 +17,9 @@ from services.orchestration.state import HuntState
 logger = logging.getLogger(__name__)
 
 REFRESH_TTL_SECONDS = int(os.environ.get("HEARTH_REFRESH_TTL_SECONDS", "3600"))
+REFRESH_FAILURE_TTL_SECONDS = int(os.environ.get(
+    "HEARTH_REFRESH_FAILURE_TTL_SECONDS", "900"
+))
 _CACHE_NAMESPACE = "hearth_kb_refresh"
 _CACHE_KEY = "last_refresh"
 
@@ -24,22 +27,36 @@ _CACHE_KEY = "last_refresh"
 async def refresh_hearth_kb_node(state: HuntState) -> dict:
     """Best-effort: never fails the hunt if GitHub is unreachable or the
     refresh errors out — this is a freshness nicety, not a hard dependency."""
+    # Compose refreshes the governed catalog during startup and the product
+    # exposes an explicit refresh endpoint. Network refresh in every hunt's
+    # critical path adds no evidence and can cost a full outbound timeout in
+    # air-gapped deployments, so it is opt-in.
+    if os.environ.get("HEARTH_REFRESH_DURING_HUNT", "0") != "1":
+        return {}
     try:
         cached = await call_tool("cache_lookup", {"namespace": _CACHE_NAMESPACE, "payload": _CACHE_KEY})
         if cached and cached.get("hit"):
             return {}  # refreshed recently enough, skip
 
         result = await call_tool("refresh_hearth_hypotheses", {})
-        if result.get("refreshed"):
-            await call_tool(
-                "cache_store",
-                {
-                    "namespace": _CACHE_NAMESPACE,
-                    "payload": _CACHE_KEY,
-                    "value": {"count": result.get("count", 0)},
-                    "ttl_seconds": REFRESH_TTL_SECONDS,
+        refreshed = bool(result.get("refreshed"))
+        await call_tool(
+            "cache_store",
+            {
+                "namespace": _CACHE_NAMESPACE,
+                "payload": _CACHE_KEY,
+                "value": {
+                    "status": "refreshed" if refreshed else "unavailable",
+                    "count": result.get("count", 0),
+                    "error": str(result.get("error") or "")[:500],
                 },
-            )
+                "ttl_seconds": (
+                    REFRESH_TTL_SECONDS
+                    if refreshed
+                    else REFRESH_FAILURE_TTL_SECONDS
+                ),
+            },
+        )
     except Exception:  # noqa: BLE001 - never block a hunt on KB refresh issues
         logger.warning("refresh_hearth_kb_node skipped", exc_info=True)
 

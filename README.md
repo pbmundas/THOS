@@ -549,7 +549,20 @@ Whether you're adding new SIEM connectors, improving AI workflows, expanding kno
 
 # License
 
-This project is licensed under the **MIT License** (or your preferred license).
+THOS 1.0 is source-available under the **Business Source License 1.1
+(BUSL-1.1)**.
+
+You may use, copy, modify, and self-host THOS for your own internal purposes.
+You may not commercially exploit THOS or offer it, or a modified version, as a
+hosted or managed service to third parties without a separate commercial
+license from Prasannakumar B Mundas.
+
+Each THOS release changes to the **Apache License 2.0** four years after that
+release first becomes publicly available. See [LICENSE](LICENSE) for the
+controlling terms.
+
+This licensing applies to the original THOS work. Third-party components and
+datasets remain governed by their respective licenses.
 
 ---
 
