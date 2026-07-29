@@ -1,553 +1,442 @@
-# THOS – AI-Powered Threat Hunting Platform
+# THOS - Threat Hunting Operating System
+
+THOS is an on-premises security operations platform for hypothesis-driven
+threat hunting, detection monitoring, digital forensics, threat-intelligence
+correlation, risk analysis, and evidence-backed reporting.
+
+It combines deterministic security tooling with local model reasoning. Live
+telemetry and submitted evidence are collected and normalized first; model
+reasoning is used only when the evidence gate finds relevant events or other
+supported signals.
+
+## Product capabilities
+
+- Operations dashboard with selectable time periods, security-impact KPIs,
+  operational-efficiency statistics, workload health, and recent activity.
+- Actionable Risks page that consolidates verified detections and hunt findings,
+  scores them, records their age and affected entity, exports the result, and
+  links back to the source investigation.
+- Detection Monitoring with unique detection identifiers, source-event
+  evidence, and expandable AI analysis.
+- Searchable Hunt Board backed by HEARTH hypotheses, locally authored
+  hypotheses, ATT&CK mappings, prior-run metadata, and live timestamped agent
+  progress.
+- Deterministic evidence screening: a hunt with no detection-rule, artifact,
+  IOC, behavioral, or matching-event evidence stops before expensive
+  reasoning and does not create a report.
+- Evidence-file forensic examination with hashing, chain-of-custody metadata,
+  artifact analysis, event timelines, ATT&CK mappings, proven facts, and
+  unresolved anomalies.
+- File and memory analysis for suspicious files, executables, documents,
+  archives, full-memory images, process dumps, and other artifacts using the
+  managed YARA catalog.
+- Threat-intelligence source management and local IOC correlation.
+- Hunt and forensic report libraries with search, time-period selection,
+  Markdown download, and styled PDF export.
+- Editable hypothesis, detection-rule, YARA, and IOC-refresh schedules for
+  authorized administrators and SMEs.
+- Governed SIEM and direct-security-source integrations with connection tests,
+  schema discovery, and source attribution.
+- Timestamped audit logs for requests, authentication, hunts, detections,
+  forensic operations, configuration changes, and tool activity.
+- Searchable in-product Help, protected browser URLs, local users, roles, and
+  feature permissions.
+- Read-only Ask THOS assistance with specialist delegation for hunt and
+  forensic questions.
+
+## Architecture
 
 <p align="center">
-
-**AI-Powered • Hypothesis-Driven • Multi-SIEM • RAG • LangGraph • MCP • Fully On-Premises**
-
+  <img src="docs/images/thos-architecture.png" alt="THOS architecture showing the analyst workspace, protected UI gateway, LangGraph orchestrator, deterministic tools and knowledge, local Ollama inference, telemetry sources, and platform data stores." width="100%">
 </p>
 
----
+The primary request path is:
 
-## Overview
+1. An authenticated analyst uses the React workspace through the FastAPI UI
+   gateway.
+2. The gateway validates the signed session, role, feature permission, route,
+   and request before forwarding an operation.
+3. The LangGraph orchestrator coordinates deterministic agents, MCP tools,
+   telemetry retrieval, local knowledge, and Ollama model tiers.
+4. Connectors retrieve bounded evidence from the selected source. Evidence is
+   normalized, deduplicated, guarded, correlated, and checked for coverage.
+5. The evidence gate ends zero-signal hunts without model reasoning or report
+   generation.
+6. Evidence-bearing hunts continue through bounded reasoning, deterministic
+   citation verification, detection engineering, communication, and report
+   creation.
+7. PostgreSQL stores operational and audit state, Redis provides caching and
+   scheduling coordination, ChromaDB provides local semantic retrieval, and
+   managed directories retain evidence and reports.
 
-**THOS (Threat Hunting Operating System)** is an enterprise-grade, AI-powered threat hunting platform designed to help SOC Analysts, Threat Hunters, and Incident Responders investigate security events using natural language.
+### Runtime services
 
-Unlike traditional SIEM search interfaces, THOS enables analysts to perform **hypothesis-driven threat hunting** through an interactive chat interface. Behind the scenes, THOS orchestrates multiple AI agents using **LangGraph**, retrieves contextual knowledge through **Retrieval-Augmented Generation (RAG)**, integrates with multiple SIEM platforms, analyzes telemetry using local Large Language Models (LLMs), and automatically generates comprehensive threat hunting reports.
+| Service | Responsibility |
+|---|---|
+| `chat-ui` | React application, protected routes, session gateway, report rendering, and PDF export |
+| `orchestrator` | Authenticated APIs, LangGraph hunt execution, scheduling, risk analysis, forensics, and Ask THOS |
+| `mcp` | Governed security tools, knowledge operations, parsing, correlation, and report access |
+| `ollama` | Local model inference with configurable task tiers |
+| `chromadb` | Local vector storage for product, ATT&CK, HEARTH, SIEM, and private knowledge |
+| `postgres` | Hunt history, agent timings, cases, feedback, detections, and audit records |
+| `redis` | Query/telemetry cache, locks, rate limits, schema cache, and scheduler coordination |
+| corpus initializers | Pin, validate, and prepare detection-rule and YARA catalogs before dependent services start |
 
-THOS is designed to operate **entirely on-premises**, ensuring sensitive security data never leaves your environment.
+Only the analyst UI is published by default. Orchestrator, MCP, Ollama,
+ChromaDB, PostgreSQL, and Redis remain on the internal Docker network.
 
----
+## Application areas and URLs
 
-# Key Features
+Each primary area has a validated browser URL. Direct navigation and browser
+back/forward operations remain protected by the session and authorization
+checks.
 
-- 🤖 AI-powered hypothesis-based threat hunting
-- 💬 Interactive chat interface for SOC Analysts
-- 🧠 Local LLM inference using Ollama (offline capable)
-- 🔗 LangGraph multi-agent orchestration
-- 🧩 FastMCP modular tool execution
-- 📚 Retrieval-Augmented Generation (RAG)
-- 🗄️ ChromaDB vector knowledge base
-- 🛡️ Multi-SIEM integration
-- 📂 Folder-based log hunting
-- 🔍 Automatic log parsing and normalization
-- 📖 MITRE ATT&CK & HEARTH framework integration
-- 📄 Automated Markdown hunting reports
-- ⚡ FastAPI backend services
-- 🖥️ Responsive React analyst workspace with hypothesis tiles and report library
-- ⚙️ Governed Settings control plane for models, iterations, detection rule, SIEM schemas, schedules, RAG, and local users
-- 💬 Floating on-prem model assistant with minimize/maximize controls and an audited read-only MCP tool allowlist
-- 🐳 One-command Docker deployment
-- 🔒 Fully on-premises architecture
+| Area | URL | Purpose |
+|---|---|---|
+| Overview | `/overview` | Daily operational and security-impact dashboard |
+| Risks | `/risks` | Prioritized risks derived from verified operational evidence |
+| Detections | `/detections` | Detection Monitoring and expandable analysis |
+| Hunt Board | `/hunt-board` | Hypothesis selection and live hunt execution |
+| Forensic evidence | `/forensic/evidence` | Evidence intake and technical forensic reports |
+| File and memory analysis | `/forensic/yara` | YARA analysis of suspicious artifacts and dumps |
+| Threat Intelligence | `/threat-intelligence` | IOC catalog, freshness, and source status |
+| Reports | `/reports` | Hunt and forensic report library |
+| Integrations | `/integrations` | SIEM and direct-source connections |
+| Configuration | `/configuration/account` | Account, runtime, rules, schedules, audit, knowledge, and users |
+| Help | `/help` | Searchable feature and configuration guidance |
 
----
+Validated detail routes are also available for detections, hunts, forensic
+cases, file/memory scans, reports, and configuration tabs.
 
-# Architecture
+## Hunt workflow
 
-<img width="50%" alt="ChatGPT Image Jul 8, 2026, 11_17_41 PM" src="https://github.com/user-attachments/assets/39ecbf05-df8d-498a-9d2a-b3b22676def5" />
+The current hunt graph is:
 
+```text
+Knowledge refresh
+  -> Hypothesis selection
+  -> Hunt memory
+  -> Supervisor plan
+  -> Query generation
+  -> SIEM retrieval
+  -> Log processing and normalization
+  -> Guardrails
+  -> Deterministic SOC tools
+  -> ATT&CK coverage analysis
+  -> Threat-intelligence enrichment
+  -> Negative evidence screening
+      -> no supported evidence: stop; retain hunt outcome; create no report
+      -> supported evidence: bounded adaptive replan and local reasoning
+  -> Citation verification
+  -> Detection-engineering proposal
+  -> Audience-aware communication
+  -> Evidence-backed report
+```
 
+Only one hunt runs at a time. The active-hunt banner opens the timestamped
+progress view. Hunts continue on the server if the browser reloads or navigates
+away.
 
----
+Related Wazuh hunts can reuse telemetry by ATT&CK technique and time window.
+Detection Monitoring can use bounded multi-search batches where supported.
+Adaptive scheduling prioritizes overdue critical and high-severity work, uses
+recorded duration percentiles, and reduces batch pressure when resource or
+source-health thresholds are exceeded.
 
-# Core Components
+When relevant evidence exists but the reasoning model returns malformed output,
+THOS makes up to three bounded attempts. If they all fail, the current
+implementation can produce a clearly identified deterministic,
+evidence-restricted fallback rather than inventing model conclusions.
 
-| Component | Description |
-|------------|-------------|
-| **React UI** | Searchable hypothesis board, streamed hunt progress, and report library |
-| **FastAPI** | REST API backend |
-| **LangGraph** | AI workflow orchestration |
-| **FastMCP** | Tool execution framework |
-| **Ollama** | Local Large Language Models |
-| **ChromaDB** | Vector database for semantic retrieval |
-| **Knowledge Base** | MITRE ATT&CK & HEARTH frameworks |
-| **Parser Engine** | Multi-format log normalization |
-| **SIEM Connectors** | Unified interface for multiple SIEM platforms |
-| **Report Engine** | Automated Markdown report generation |
-| **PostgreSQL** | Metadata and audit storage |
-| **Redis** | Caching and task management |
+## Telemetry integrations
 
----
+### SIEM and log sources
 
-# Supported SIEM Platforms
+| Source | Retrieval path |
+|---|---|
+| Folder evidence | Recursive parsing under an allowlisted server directory |
+| Wazuh | Wazuh Indexer/OpenSearch search API |
+| Elasticsearch | Elasticsearch search API |
+| Splunk Enterprise or Cloud | REST search-job API |
+| IBM QRadar | Ariel Search API |
+| LogRhythm | Search API |
 
-THOS provides a modular SIEM abstraction layer, allowing the same AI hunting workflow to operate across different security platforms.
+Mock telemetry exists only for isolated tests and is rejected unless
+`ALLOW_SYNTHETIC_TELEMETRY=1` is explicitly set.
 
-| SIEM Platform | Status | Integration |
-|---------------|--------|-------------|
-| Folder Logs | ✅ Supported | Local Filesystem |
-| Mock Data | ✅ Supported | Built-in Simulator |
-| LogRhythm | ✅ Supported | Search API |
-| Splunk Enterprise | ✅ Supported | REST Search API |
-| Splunk Cloud | ✅ Supported | REST Search API |
-| IBM QRadar | ✅ Supported | Ariel Search API |
-| Wazuh | ✅ Supported | Wazuh Indexer / OpenSearch Search API |
+The integration catalog also covers governed direct sources across EDR/XDR,
+identity, cloud, email/SaaS, network/NDR, and generic JSON APIs. A live source
+must pass its connection test before it becomes available to hunts or
+schedules.
 
-Additional SIEM platforms can be integrated by implementing a new connector within the `services/siem` module.
+### Wazuh
 
----
-
-## Wazuh Indexer log source
-
-THOS queries security telemetry from the Wazuh Indexer API on port `9200`;
-it does not use the Wazuh manager API on port `55000`. For the accompanying
-Docker Desktop purple-team lab, configure `.env` with the Indexer credentials
-from that lab:
+THOS searches Wazuh security events through the Indexer API, normally on TCP
+`9200`; it does not use the Wazuh manager API on TCP `55000`.
 
 ```dotenv
 WAZUH_INDEXER_URL=https://host.docker.internal:9200
 WAZUH_INDEXER_USERNAME=<read-only-indexer-user>
 WAZUH_INDEXER_PASSWORD=<password>
 WAZUH_INDEX_SOURCE=both
-WAZUH_VERIFY_SSL=0
+WAZUH_VERIFY_SSL=1
+WAZUH_CA_BUNDLE=/path/to/wazuh-root-ca.pem
 ```
 
-`WAZUH_INDEX_SOURCE=both` searches `wazuh-alerts-*` and
-`wazuh-archives-*`. Disabling TLS verification is appropriate only for the
-isolated self-signed local lab. For other deployments, leave verification
-enabled and provide the Wazuh root CA through `WAZUH_CA_BUNDLE`. Rebuild the
-`mcp` service after changing its environment, then select `wazuh` in the
-Target SIEM dropdown.
+`WAZUH_INDEX_SOURCE=both` searches both `wazuh-alerts-*` and
+`wazuh-archives-*`. Disable TLS verification only in an isolated test
+environment that uses a self-signed certificate.
 
----
+### Folder formats
 
-# Supported Log Formats
+Folder-backed hunts support:
 
-THOS supports automatic parsing and normalization of multiple security log formats.
+| Logs and records | Packet captures |
+|---|---|
+| EVTX, CSV, CEF, JSON, ECS, JSONL, NDJSON, XML | PCAP and PCAPNG |
+| Syslog, `.log`, and plain text | Parsed into bounded normalized records |
 
-| Format | Support |
-|----------|----------|
-| EVTX | ✅ |
-| CSV | ✅ |
-| JSON | ✅ |
-| JSONL | ✅ |
-| NDJSON | ✅ |
-| XML | ✅ |
-| ECS JSON | ✅ |
-| Syslog | ✅ |
-| CEF | ✅ |
-| LOG | ✅ |
-| TXT | ✅ |
-| PCAP | ✅ |
-| PCAPNG | ✅ |
-
-Default ingestion directory:
+The default folder is:
 
 ```text
 data/log_sources/
 ```
 
----
+Caller-provided folders are resolved against `LOG_SOURCE_ALLOWED_ROOTS` to
+prevent arbitrary filesystem access.
 
-# Threat Hunting Workflow
+## Digital forensics
 
-```text
-Analyst Hypothesis
-        │
-        ▼
-Select Target SIEM
-        │
-        ▼
-Retrieve Security Events
-        │
-        ▼
-Normalize & Parse Logs
-        │
-        ▼
-RAG Knowledge Retrieval
-        │
-        ▼
-LLM Threat Analysis
-        │
-        ▼
-MITRE ATT&CK Mapping
-        │
-        ▼
-Generate Threat Hunting Report
-```
+The Forensic page has two analysis paths.
 
----
+### Evidence examination
 
-# Technology Stack
+- Accepts multiple logs, packet captures, archives, documents, disk images, and
+  other case evidence.
+- Streams uploads to managed case storage and records SHA-256, size, original
+  name, stored name, collector/tool, authority, and acquisition notes.
+- Verifies evidence integrity before analysis.
+- Parses supported logs, inventories unknown files, inspects archives, and
+  gathers bounded disk-image metadata where supported.
+- Correlates detection rules, YARA results, and local intelligence.
+- Produces an ordered timeline, ATT&CK mappings, proven facts, unresolved
+  anomalies, limitations, and chain-of-custody details.
+
+### File and memory analysis
+
+- Accepts PE/ELF executables, DLLs, scripts, documents, archives, raw/VM/LiME
+  memory images, core files, minidumps, and process dumps.
+- Hashes and preserves the original artifact before scanning.
+- Runs enabled actionable YARA rules deterministically without model reasoning.
+- Shows matched rule metadata, namespaces, tags, byte offsets, matched data,
+  scan duration, and integrity information.
+- Treats a no-match result as inconclusive rather than proof that an artifact
+  is benign.
+
+## Detection Monitoring and YARA
+
+THOS maintains governed, version-pinned detection-rule and YARA corpora.
+Initializer services validate minimum counts and compile reusable catalogs
+before MCP and the orchestrator become ready.
+
+Detection rules are discovered, compiled, and executed against compatible SIEM
+schemas without requiring a language model. Incompatible or unmapped rules
+remain visible and fail closed. Wazuh and Splunk support the current scheduled
+native-query pipeline; unsupported scheduled compiler paths are not
+approximated.
+
+YARA rules can be searched, filtered, enabled, disabled, scanned manually, and
+scheduled. Invalid or unsupported community files are cataloged with their
+compiler errors rather than silently treated as active.
+
+Detection entries receive stable identifiers. Authorized users can expand or
+collapse a concise AI-assisted explanation beside the detection name; the
+underlying event evidence remains the source of truth.
+
+## Reports, risks, and auditability
+
+Hunt reports begin with a concise summary and include executed queries,
+ingestion diagnostics, representative evidence, record references, findings,
+ATT&CK coverage, intelligence correlation, agent timings, limitations,
+recommendations, and draft detection improvements.
+
+Forensic reports additionally include chain of custody, proven facts,
+unresolved anomalies, technical timelines, and evidence integrity.
+
+The Reports page supports dynamic age filters from days to years. Report
+previews provide Markdown and PDF downloads without obscuring the preview
+controls.
+
+The deterministic Risk Analysis Agent consolidates verifier-supported findings
+and detections into entity-level risks. Each risk includes a score, severity,
+age, discovery explanation, evidence source, export support, and a link to its
+originating detection or report.
+
+Audit logs record timestamps, actor, action, outcome, request context, and
+workflow identifiers to support troubleshooting and reconstruction.
+
+## Security boundaries
+
+- Local Ollama inference; no cloud model API is required.
+- Signed HttpOnly sessions and server-side role/feature enforcement.
+- Validated stable routes and constrained dynamic identifiers.
+- API-key authentication between internal services.
+- Read-only SIEM and security-source operations.
+- Allowlisted evidence roots and bounded parsing.
+- Prompt-injection screening and telemetry guardrails.
+- Deterministic record-reference verification before findings are published.
+- No autonomous host isolation, traffic blocking, evidence deletion, live-rule
+  deployment, or attribution.
+- No reasoning or report generation when the deterministic evidence gate finds
+  no supported evidence.
+
+Secrets and password hashes are stored in the runtime configuration under
+`data/runtime/config.json`. Treat this file as a secret, restrict filesystem
+access, and back it up through an approved secure process.
+
+## Technology
 
 | Layer | Technology |
-|--------|------------|
-| Frontend | React + Vite |
-| Backend | FastAPI |
-| AI Workflow | LangGraph |
-| MCP Framework | FastMCP |
-| Local LLM | Ollama |
-| Default Model | Qwen3.4B |
-| Vector Database | ChromaDB |
-| Database | PostgreSQL |
-| Cache | Redis |
-| Knowledge Base | MITRE ATT&CK & HEARTH |
-| Containerization | Docker Compose |
-| Programming Language | Python 3.12+ |
+|---|---|
+| Analyst interface | React, Vite |
+| API gateway and services | FastAPI, Python 3.12+ |
+| Agent orchestration | LangGraph |
+| Governed tool interface | FastMCP |
+| Local inference | Ollama |
+| Semantic retrieval | ChromaDB |
+| Operational database | PostgreSQL |
+| Cache and coordination | Redis |
+| Deployment | Docker Compose |
+| Security knowledge | MITRE ATT&CK, HEARTH, managed private knowledge |
 
----
+## Requirements
 
-# Quick Start
+Minimum starting point for a small deployment:
+
+- 8 x86-64 CPU cores
+- 16 GB RAM
+- 50 GB free SSD space
+- Docker Engine with Docker Compose
+
+Recommended starting point for concurrent daily operations:
+
+- 12-16 CPU cores
+- 32 GB RAM
+- 100 GB or more SSD space
+- Supported GPU with 8-12 GB VRAM for the reasoning model
+
+Actual sizing depends on model size, telemetry volume, evidence retention,
+forensic artifacts, schedule density, and the available maintenance window.
+
+## Quick start
 
 ```bash
-# Clone the repository
 git clone <repository-url>
-
-cd thos
-
-# Configure environment
+cd AI-Threat-Hunting-Docker
 cp env.example .env
-
-# Start all services
 docker compose up -d --build
 ```
 
-Open your browser:
+Review and replace every placeholder credential in `.env` before exposing the
+service. Then open:
 
-```
+```text
 http://localhost:7860
 ```
 
----
-
-# Generated Reports
-
-Every investigation produces a structured Markdown report containing:
-
-- Executive Summary
-- Threat Findings
-- Evidence
-- MITRE ATT&CK Mapping
-- Indicators of Compromise (IOCs)
-- Recommendations
-- Analyst Notes
-
-Reports are automatically saved to:
-
-```text
-data/reports/
-```
-
-The report library renders that Markdown directly and provides both the original
-`.md` file and a styled PDF export. Reports are written only after reasoning
-returns a complete, schema-valid result. An empty, malformed, or truncated model
-response is retried up to three total attempts. If all three fail, THOS records
-the strike reasons and completes a clearly marked deterministic evidence report
-that requires analyst review; an unfinished model response is never published.
-
-## Settings and local roles
-
-The first configured UI account is seeded as the **SME administrator**. SMEs can
-select any model already available in Ollama, choose the default hunt iteration
-count, enable/disable and schedule detection rules, schedule hypotheses in system
-local time, configure SIEM credentials and normalized vendor fields, manage the
-RAG knowledge base, and create local users. Analyst accounts see only the
-features assigned by an SME (`hunts`, `reports`, `chat`, and/or `knowledge`).
-
-Each hypothesis tile includes a full Read view, a Run action, and its most
-recent run date when audit history is available. THOS permits one active hunt
-across the platform; all other Run actions remain disabled with a visible
-status notice until it completes. Only SME administrators can publish custom
-hypotheses from the dedicated **Create hypothesis** page.
-
-Settings are persisted in `data/runtime/config.json` and consumed dynamically by
-the UI gateway, Orchestrator, and MCP service. The file is deliberately ignored
-by Git because it can contain password hashes and SIEM secrets. Back it up as a
-secret and restrict filesystem access in production.
-
----
-
-# Security
-
-THOS is built for security-conscious environments.
-
-- Fully on-premises deployment
-- Local AI inference (no cloud model dependency)
-- Local vector database
-- Local report storage
-- Suitable for regulated and air-gapped environments
-
-Community detection rules are loaded from a dedicated persistent volume. At
-startup, Compose first copies the reviewed vendored corpus. If only the version
-marker is present, a one-shot initializer downloads the exact configured commit
-and verifies the configured minimum rule count before MCP or the Orchestrator
-can start. Both services mount the same read-only corpus and run a fail-fast
-preflight, so SOC tools cannot silently continue with an empty community
-ruleset. For air-gapped deployment, fetch and review the pinned corpus on a
-connected review machine, then transfer the resulting directory.
-
-YARA follows the same governed corpus lifecycle. The one-shot
-`yararules-init` service populates a persistent volume from the exact
-`YARARULES_REF` commit of
-[`Yara-Rules/rules`](https://github.com/Yara-Rules/rules), and
-`yara-catalog-init` validates each upstream file before building one reusable
-compiled database. Compatible files remain available even when a legacy rule
-uses an unsupported module field or has invalid syntax; incompatible files are
-quarantined with their compiler error in the Configuration catalog. MCP,
-Orchestrator, and the UI mount the same read-only corpus and compiled catalog.
-Rules can be searched, severity-filtered, enabled/disabled, manually scanned,
-or scheduled. `YARARULES_MIN_FILES` and `YARARULES_MIN_READY_RULES` are
-fail-fast startup invariants. For offline deployment, place a reviewed corpus
-and matching `VERSION.txt` under
-`services/detection/yara_rules_community/`.
-
-Hunts execute independently of the browser stream and therefore continue when
-an analyst reloads or navigates away. Every run is retained in PostgreSQL with
-its last stage, terminal status, report path, and failure reason. The Reports
-page exposes this run history. Reasoning still validates up to three model
-responses; if all fail, a citation-safe deterministic evidence analysis creates
-the report and marks it for analyst review instead of silently losing the hunt.
-
----
-
-# Roadmap
-
-Upcoming enhancements include:
-
-- Microsoft Sentinel Connector
-- Elastic Security Connector
-- Google Chronicle Connector
-- Cortex XSIAM Connector
-- detection rule Rule Generation
-- IOC Enrichment
-- Threat Intelligence Integration
-- SOAR Playbooks
-- Scheduled Hunts
-- Investigation Timeline
-- Case Management
-- Multi-user Collaboration
-- Autonomous AI Hunting Agents
-
----
-
-# Agentic workflow APIs
-
-The orchestrator exposes authenticated case and analyst-feedback APIs:
-
-- `GET` / `POST /cases`, `PATCH /cases/{case_id}`
-- `POST /feedback` (`up`, `down`, or `corrected`)
-
-Verifier failures automatically create a high-priority analyst-review case.
-For an existing Postgres volume, apply the migration once:
+Check service status:
 
 ```bash
-docker compose exec -T postgres psql -U thos -d thos_audit < db/migrations/002_agentic_cases.sql
+docker compose ps
+docker compose logs --tail=100 chat-ui orchestrator mcp
 ```
 
-# Agentic AI Capabilities
+The default production-safe telemetry mode is `folder`. Configure and
+successfully test a live source from Integrations before selecting it for hunts
+or schedules.
 
-THOS remains fully on-premises and now extends its original hunt pipeline with:
+## Configuration
 
-- **Supervisor and Hunt Memory:** uses a structured local-model plan, recalls comparable completed hunts, and can make one bounded query refinement from intermediate findings.
-- **Layered Guardrail, Verifier, and Human Review:** canonicalizes encoded telemetry, sends ambiguous content to a dedicated adversarial classifier, quarantines high-risk reasoning fields, verifies citations, and records case/audit workflows.
-- **ATT&CK Coverage, IOC, and Anomaly Agents:** map required ATT&CK data sources to observed device/event categories, match IOCs only against a local blocklist (`data/threat_intel/blocklist.json`), and surface rare event types.
-- **Detection Engineering:** creates experimental detection-rule proposals for verifier-passed coverage gaps inside reports; it never promotes them into live rules.
-- **Communication and Learning:** prepares audience-aware report summaries and captures analyst feedback. Export labelled examples with `GET /learning/feedback-export` for offline on-prem evaluation or fine-tuning.
-- **Performance Metrics:** `GET /hunts/{hunt_id}/metrics` reports per-node timings from the audit trail.
+`env.example` documents deploy-time settings. Operational settings are managed
+through the Configuration page:
 
-## Schema-aware scheduled detection pipeline
+- My account
+- General runtime and model settings
+- Detection rules
+- YARA rules
+- IOC sources
+- Hunt and rule schedules
+- Audit logs
+- Private knowledge
+- Users and roles
 
-THOS now uses one shared `discover -> cache -> compile -> run -> triage` path
-for continuous detection rule coverage:
+Admin and SME users can edit operational schedules. Admin users additionally
+control users, roles, and destructive administrative actions. Expert access is
+limited to explicitly assigned features.
 
-1. Every active live SIEM is sampled with a bounded read-only query. THOS
-   inventories fields from the connector's retained raw vendor payload, infers
-   types, redacts secret-like sample values, and stores a versioned snapshot in
-   Redis.
-2. The new snapshot is diffed against the prior one. Added, removed, and
-   type-changed fields remain visible as schema drift instead of being silently
-   overwritten. A stale snapshot remains usable when the weekly refresh fails.
-3. Detection rules are recompiled against the discovered schema. Splunk and Wazuh
-   use the audited rule-compiler backends bundled by this repository. QRadar and
-   LogRhythm remain fail-closed until audited backends are added; rules with
-   missing fields are reported as uncompilable rather than silently skipped.
-4. Scheduled rules execute their cached native queries without an LLM. Repeated
-   hits are fingerprinted in Redis, so only new events create a formal detection
-   case. Triage is deterministic from detection rules and local MITRE metadata, preserving
-   GPU capacity for analyst reasoning.
+## Network allowlist
 
-The gateway runs schema discovery and compilation every seven days for
-connection-tested live SIEMs. SMEs can also trigger the same governed operation
-from **Integrations > SIEM > Available SIEM log fields**. Manual one-column CSV
-inventories remain available for air-gapped or least-privilege deployments that
-do not allow sample queries.
+Allow only the services that are enabled:
 
-All agentic outputs are read-only recommendations or confined to evidence/report storage. The live detection ruleset is never modified automatically.
+| Purpose | Destination | Port |
+|---|---|---|
+| Analyst access | THOS host | TCP 7860 |
+| Reviewed corpus refresh | `github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com` | TCP 443 |
+| Built-in IOC feeds | `openphish.com`, `feodotracker.abuse.ch`, `check.torproject.org`, `feeds.dshield.org`, `raw.githubusercontent.com` | TCP 443 |
+| Optional Ollama model download | `registry.ollama.ai` | TCP 443 |
+| Wazuh or Elasticsearch | Configured private host | TCP 9200 by default |
+| Splunk | Configured private host | TCP 8089 by default |
+| QRadar | Configured private host | TCP 443 by default |
+| LogRhythm | Configured private host | TCP 8505 by default |
 
-## Testing all agents and Ask THOS product knowledge
+Internal DNS and NTP must also be available. Custom feeds and direct
+integrations require only their explicitly configured hostnames. THOS requires
+no unsolicited inbound Internet access.
 
-THOS now keeps every runtime agent in a canonical registry and validates the
-registry against its implementation, LangGraph node, and regression-test
-mapping. The first check has no service or model dependency:
+For air-gapped operation, pre-stage Ollama model blobs, ATT&CK/HEARTH content,
+the detection-rule and YARA corpora, IOC snapshots, and trusted CA
+certificates. Disable refresh schedules that cannot reach an approved internal
+mirror.
+
+## Testing
+
+Run the Python regression suite:
+
+```bash
+python -m pytest -q
+```
+
+Build the analyst UI:
+
+```bash
+cd services/ui
+pnpm install
+pnpm build
+```
+
+Agent-specific test modes:
 
 ```powershell
 .\scripts\test-agents.ps1 contracts
-```
-
-Run focused offline behavior and product-knowledge tests with:
-
-```powershell
 .\scripts\test-agents.ps1 offline
+.\scripts\test-agents.ps1 full
+.\scripts\test-agents.ps1 live
 ```
 
-Run the complete regression suite with `.\scripts\test-agents.ps1 full`. After
-the Docker stack is running, use `.\scripts\test-agents.ps1 live` and complete
-the evidence-driven acceptance scenarios in
-[`docs/AGENT-TESTING.md`](docs/AGENT-TESTING.md).
+Additional references:
 
-Ask THOS no longer depends on model memory for THOS product facts. It receives
-a versioned built-in product catalog on every product question, cites `PK-*`
-source identifiers, keeps uploaded organizational documents as a separate RAG
-source, and exposes the selected product sources in chat responses. Ask THOS is
-routed to the dedicated fast-tier local model so routine product and SOC
-questions do not consume the larger hunt-reasoning tier.
+- [Developer guide](THOS-Developer-Guide.md)
+- [Agent testing](docs/AGENT-TESTING.md)
+- [Enterprise regression results](docs/ENTERPRISE-REGRESSION-2026-07-28.md)
+- [Cybersecurity model adaptation](docs/CYBERSECURITY-MODEL-ADAPTATION.md)
 
-Ask THOS is also an authorized investigation-assistance agent. It can read
-persisted hunt and forensic state, agent stages, model metadata, and reports
-according to the signed-in user's role. Detailed evidence questions are
-delegated to the Hunt Investigation Specialist or Digital Forensic Specialist;
-the UI records the delegated agent, model tier/name, and duration.
+## Contributing
 
-## Digital forensic examination
+Contributions are welcome. Preserve the evidence-first security boundaries,
+fail-closed connector behavior, citation verification, and auditability when
+adding connectors, agents, parsers, or UI workflows.
 
-The **Forensics** menu accepts one or more logs, archives, documents, packet
-captures, disk images, or other evidence files. Original uploads are retained
-under `data/log_sources/forensic/<UTC date>/<date-serial-case>/`. Intake records
-the collector/tool, legal authority, original and stored names, size, and
-SHA-256 in a chain-of-custody manifest. Full-file size and hash are independently
-verified before analysis; any mismatch fails the case closed.
-
-The Forensic Intake, Artifact Analysis, Detection Correlation, Timeline, and
-Reporting agents run sequentially with persisted names, activities, durations,
-and model metadata. These integrity-sensitive stages are deterministic and do
-not use a language model. Known logs use the same normalized analysis path as
-active SIEM hunts; unknown files receive bounded artifact triage. The
-orchestrator image includes `ewf-tools` and Sleuth Kit for E01/Ex01 and raw-image
-metadata. Enabled local and pinned community YARA rules scan managed evidence
-from a precompiled catalog with file-size, file-count, match-count, and timeout
-limits. Reports include suspicious or corroborated malicious activity
-assessments and a classification-aware timeline. Missing or proprietary
-decoders are recorded as limitations.
-
-The **Reports** page separates Hunt and Forensic records. Administrators can
-remove either report from the active library; removal is recoverable from the
-server-side `.trash` archive.
-
-## Security integrations and mixed-source attribution
-
-The **Integrations** page is the single configuration surface for SIEM,
-EDR/XDR, identity, cloud, email/SaaS, network/NDR, and generic JSON security
-sources. Direct integrations use a bounded read-only connector with server-side
-Bearer, API-key, Basic, or OAuth2 client-credential handling. Only successfully
-tested sources become selectable for hunts and schedules.
-
-When a SIEM query returns heterogeneous records, THOS adds source vendor,
-product, device type, event category, confidence, and attribution basis to each
-normalized record. Coverage assessment uses those fields together with the
-selected technique's ATT&CK data-source requirements.
-
-## Governed cybersecurity knowledge and model adaptation
-
-THOS uses a license-controlled cybersecurity corpus for MITRE ATT&CK, CISA KEV,
-NIST incident-response/framework/logging guidance, and the pinned community detection-rule
-set. Each retrieved excerpt carries a `CYBER:*` citation and provenance.
-Ask THOS withholds uncited cybersecurity claims, and hunt reasoning treats
-external knowledge as context rather than proof of activity.
-
-The model-adaptation workflow intentionally keeps volatile intelligence in RAG
-and fine-tunes only stable behaviors after human verification and evaluation
-gates. See
-[`docs/CYBERSECURITY-MODEL-ADAPTATION.md`](docs/CYBERSECURITY-MODEL-ADAPTATION.md).
-
-## Agentic Configuration
-
-`env.example` includes model tiers, follow-up limits, and timeout settings. The
-default keeps one adaptive follow-up query. Final reasoning follows an
-application-level three-strike rule: exactly three complete-response attempts,
-then a clear `report not generated` failure rather than a degraded report.
-Rebuild after changing configuration:
-
-```bash
-docker compose up -d --build
-```
-
-# Product questions and answers
-
-### What is the minimum hardware required?
-
-Use 8 x86-64 CPU cores, 16 GB RAM, and at least 50 GB of free SSD storage as
-the minimum supported starting point for a small deployment. A GPU is optional;
-CPU-only inference works but takes longer. Models, retained telemetry, forensic
-evidence, and reports require additional storage.
-
-### What is recommended for daily production use?
-
-Start with 12-16 CPU cores, 32 GB RAM, 100 GB or more of SSD storage, and a
-supported GPU with 8-12 GB VRAM for the reasoning worker. Separate scheduled
-model inference from the orchestrator when running many hunts. Size the system
-against telemetry volume, retention, model size, and the maintenance window.
-
-### What can THOS do?
-
-THOS provides hypothesis-driven hunts, schema-aware SIEM retrieval, normalized
-evidence processing, deterministic detection-rule and YARA evaluation, IOC
-correlation, ATT&CK coverage analysis, forensic intake and timelines,
-evidence-cited reports, actionable risk correlation, scheduled operations,
-audit logs, and read-only AI-assisted investigations.
-
-### Which agents are included?
-
-The core hunt uses Knowledge Refresh, Hypothesis, Hunt Memory, Supervisor,
-Query Generation, SIEM Fetch, Log Processing, Guardrail, SOC Tools, Coverage
-Gap, Adaptive Replanning, Threat Intelligence, Evidence Screening, Reasoning,
-Verifier, Detection Engineering, Communication, and Reporting agents. Separate
-agents support detection analysis, risk analysis, schema discovery, scheduled
-detection, IOC management, forensic examination, product knowledge, and Ask
-THOS specialist investigations.
-
-### Which domains and ports must be allowed?
-
-- Reviewed corpus refresh: `github.com`, `codeload.github.com`,
-  `objects.githubusercontent.com`, and `raw.githubusercontent.com` over TCP 443.
-- Built-in IOC feeds: `openphish.com`, `feodotracker.abuse.ch`,
-  `check.torproject.org`, `feeds.dshield.org`, and
-  `raw.githubusercontent.com` over TCP 443.
-- Optional model download: `registry.ollama.ai` over TCP 443.
-- Private telemetry: Wazuh Indexer or Elasticsearch TCP 9200, Splunk
-  management TCP 8089, QRadar TCP 443, and LogRhythm TCP 8505.
-- Internal DNS and NTP must be reachable according to local infrastructure.
-  Custom feeds and API integrations require only their configured hostnames.
-
-Permit exact configured hosts instead of entire networks. THOS requires no
-unsolicited inbound Internet access.
-
-### Can THOS operate air-gapped?
-
-Yes. Pre-stage model blobs, the hypothesis and detection corpora, YARA files,
-IOC snapshots, and trusted CA certificates. Disable refresh schedules that
-cannot reach an approved internal mirror.
-
-### What will THOS not do automatically?
-
-THOS does not isolate hosts, block traffic, delete evidence, deploy a live
-detection, or claim compromise or attribution without evidence. It produces
-evidence-bounded analysis and recommendations for analyst-controlled response.
-
-### What happens when a hunt finds no evidence?
-
-The deterministic evidence-screening gate stops the workflow before model
-reasoning, verification, communication, and report generation. Hunt history
-retains the outcome and coverage limitations; absence of evidence is not
-reported as proof of a clean environment.
-
-# Contributing
-
-Contributions are welcome!
-
-Whether you're adding new SIEM connectors, improving AI workflows, expanding knowledge sources, or fixing bugs, feel free to submit a pull request.
-
----
-
-# License
+## License
 
 THOS 1.0 is source-available under the **Business Source License 1.1
 (BUSL-1.1)**.
@@ -564,27 +453,15 @@ controlling terms.
 This licensing applies to the original THOS work. Third-party components and
 datasets remain governed by their respective licenses.
 
----
+## Acknowledgements
 
-# Acknowledgements
+THOS builds on Ollama, LangGraph, FastMCP, ChromaDB, FastAPI, React, Vite,
+PostgreSQL, Redis, Docker, MITRE ATT&CK, HEARTH, and the respective
+community-maintained detection and YARA projects.
 
-THOS is built upon several outstanding open-source technologies:
+## Disclaimer
 
-- Ollama
-- LangGraph
-- FastMCP
-- ChromaDB
-- FastAPI
-- React
-- Vite
-- PostgreSQL
-- Redis
-- Docker
-- MITRE ATT&CK Framework
-- HEARTH Threat Hunting Framework
-
----
-
-# Disclaimer
-
-THOS is intended for authorized security monitoring, threat hunting, incident response, and cybersecurity research. Users are responsible for ensuring compliance with all applicable laws, regulations, and organizational policies before deploying or using this software.
+THOS is intended for authorized security monitoring, threat hunting, incident
+response, and cybersecurity research. Users are responsible for compliance
+with applicable law, organizational policy, evidence-handling requirements,
+and third-party licenses.
