@@ -64,6 +64,8 @@ function MemoryResult({ scan }) {
   const result = scan.scan_result || {};
   const fileResult = (result.results || [])[0] || {};
   const matches = fileResult.matches || [];
+  const staticAnalysis = scan.static_analysis || {};
+  const toolResults = staticAnalysis.results || [];
   return (
     <>
       <header>
@@ -72,7 +74,7 @@ function MemoryResult({ scan }) {
           <h2>{scan.scan_title}</h2>
           <code>{scan.scan_id}</code>
         </div>
-        <div className="memory-agent-badge"><CpuChipIcon /><span><strong>File and Memory Rule Analysis Agent</strong><small>Deterministic YARA scan · no model reasoning</small></span></div>
+        <div className="memory-agent-badge"><CpuChipIcon /><span><strong>File and Memory Static Analysis Agent</strong><small>Deterministic, non-executing triage · no model reasoning</small></span></div>
       </header>
 
       {scan.error && <div className="alert error-alert"><ExclamationTriangleIcon />{scan.error}</div>}
@@ -92,6 +94,31 @@ function MemoryResult({ scan }) {
       {(result.errors || []).map((error, index) => (
         <div className="alert error-alert" key={`${error.path}-${index}`}><ExclamationTriangleIcon />{error.error}</div>
       ))}
+
+      {toolResults.length > 0 && (
+        <div className="forensic-tool-results">
+          <div className="memory-section-heading">
+            <h3>Static forensic triage</h3>
+            <span>{Number(staticAnalysis.finding_count || 0)} deterministic finding{Number(staticAnalysis.finding_count || 0) === 1 ? "" : "s"}</span>
+          </div>
+          <div className="forensic-tool-result-grid">
+            {toolResults.map((tool, index) => (
+              <details key={`${tool.tool_id}-${index}`}>
+                <summary>
+                  <strong>{tool.tool_id}</strong>
+                  <span className={`tool-state tool-state-${tool.status}`}>{String(tool.status || "unknown").replaceAll("_", " ")}</span>
+                  <small>{elapsed(tool.duration_ms)}</small>
+                </summary>
+                {tool.note && <p>{tool.note}</p>}
+                {tool.error && <div className="alert error-alert"><ExclamationTriangleIcon />{tool.error}</div>}
+                {tool.data && <pre>{JSON.stringify(tool.data, null, 2)}</pre>}
+                {tool.output && <pre>{tool.output}</pre>}
+                {tool.truncated && <small>Output was truncated at the configured safety limit.</small>}
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
 
       {matches.length ? (
         <div className="memory-matches">
@@ -151,6 +178,7 @@ export default function Forensics({
   const [memorySubmitting, setMemorySubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [noticeError, setNoticeError] = useState(false);
+  const [forensicTools, setForensicTools] = useState(null);
   const fileInput = useRef(null);
   const memoryInput = useRef(null);
 
@@ -175,6 +203,19 @@ export default function Forensics({
       setNoticeError(true);
     }
   }, [selectedMemory?.scan_id]);
+
+  const loadTools = useCallback(async () => {
+    try {
+      setForensicTools(await api("/api/forensics/tools"));
+    } catch (error) {
+      setNotice(error.message);
+      setNoticeError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTools();
+  }, [loadTools]);
 
   useEffect(() => {
     const loader = activeTab === "evidence" ? loadEvidence : loadMemory;
@@ -261,7 +302,7 @@ export default function Forensics({
     try {
       const result = await api("/api/forensics/yara-scans", { method: "POST", body });
       setSelectedMemory(result);
-      setNotice(`YARA scan ${result.scan_id} completed with ${result.scan_result?.match_count || 0} rule matches.`);
+      setNotice(`Static analysis ${result.scan_id} completed with ${(result.scan_result?.match_count || 0) + (result.static_analysis?.finding_count || 0)} deterministic findings.`);
       setMemoryTitle("");
       setMemorySource("");
       setMemoryNotes("");
@@ -284,7 +325,7 @@ export default function Forensics({
         <div>
           <span className="status-pill status-indigo"><FingerPrintIcon /> Evidence examination</span>
           <h1>Digital Forensics</h1>
-          <p>Preserve evidence, examine artifacts, or scan suspicious files, executables, memory images, and process dumps with the managed actionable YARA catalog.</p>
+          <p>Preserve evidence and run content-routed, non-executing analysis across suspicious files, executables, documents, registry hives, disk images, memory images, and process dumps.</p>
         </div>
         <button className="secondary-button" onClick={refresh}><ArrowPathIcon /> Refresh {activeTab === "evidence" ? "cases" : "scans"}</button>
       </section>
@@ -293,6 +334,26 @@ export default function Forensics({
         <button role="tab" aria-selected={activeTab === "evidence"} className={activeTab === "evidence" ? "active" : ""} onClick={() => { setActiveTab("evidence"); onRouteChange?.("evidence"); }}><FolderArrowDownIcon /><span><strong>Evidence Analysis</strong><small>Evidence-based forensic reasoning</small></span></button>
         <button role="tab" aria-selected={activeTab === "memory"} className={activeTab === "memory" ? "active" : ""} onClick={() => { setActiveTab("memory"); onRouteChange?.("yara"); }}><CpuChipIcon /><span><strong>File &amp; Memory Analysis</strong><small>Suspicious files, executables, and dumps</small></span></button>
       </div>
+
+      {forensicTools?.tools?.length > 0 && (
+        <details className="forensic-tool-coverage panel">
+          <summary>
+            <span><ShieldCheckIcon /></span>
+            <div><strong>Ready forensic tools</strong><small>{forensicTools.tools.length} tools available for agent-selected analysis · samples are never executed</small></div>
+            <span>View tools</span>
+          </summary>
+          <div className="forensic-tool-grid">
+            {forensicTools.tools.map((tool) => (
+              <article key={tool.tool_id}>
+                <header><strong>{tool.name}</strong></header>
+                <p>{tool.purpose}</p>
+                <small>{(tool.capabilities || []).join(" · ")}</small>
+              </article>
+            ))}
+          </div>
+          <p className="forensic-safety-note">Timeout {forensicTools.safety?.timeout_seconds}s per tool · output capped at {bytes(forensicTools.safety?.output_byte_limit)} · submitted samples are never executed</p>
+        </details>
+      )}
 
       {notice && <div className={`alert ${noticeError ? "error-alert" : ""}`}>{noticeError ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}{notice}</div>}
 
@@ -359,7 +420,7 @@ export default function Forensics({
           <section className="forensic-intake memory-intake panel">
             <div className="settings-card-title">
               <span><CircleStackIcon /></span>
-              <div><h3>Submit a suspicious file, memory image, or process dump</h3><p>The artifact is streamed to managed forensic storage, hashed, made read-only, and scanned with the enabled actionable YARA bundle.</p></div>
+              <div><h3>Submit a suspicious file, memory image, or process dump</h3><p>The artifact is streamed to managed forensic storage, hashed, made read-only, classified by content, and routed through applicable static-analysis tools and YARA.</p></div>
             </div>
             <form onSubmit={submitMemory}>
               <div className="forensic-form-grid">
@@ -369,7 +430,7 @@ export default function Forensics({
                 <label className="forensic-files">File to analyze<input ref={memoryInput} type="file" onChange={(event) => setMemoryFile(event.target.files?.[0] || null)} required /><small>{memoryFile ? `${memoryFile.name} · ${bytes(memoryFile.size)}` : "Any file can be submitted, including PE/ELF executables, DLLs, scripts, documents, archives, raw/VM/LiME memory, core files, minidumps, and process dumps."}</small></label>
                 <label className="forensic-notes">Acquisition and investigation notes<textarea rows={4} value={memoryNotes} onChange={(event) => setMemoryNotes(event.target.value)} placeholder="Host, process, acquisition time, incident reference, and scope." /></label>
               </div>
-              <button className="primary-button" disabled={memorySubmitting || !memoryTitle.trim() || !memoryFile}>{memorySubmitting ? <ArrowPathIcon className="spinning" /> : <CpuChipIcon />} {memorySubmitting ? "Preserving and scanning…" : "Preserve and run YARA"}</button>
+              <button className="primary-button" disabled={memorySubmitting || !memoryTitle.trim() || !memoryFile}>{memorySubmitting ? <ArrowPathIcon className="spinning" /> : <CpuChipIcon />} {memorySubmitting ? "Preserving and analyzing…" : "Preserve and analyze"}</button>
             </form>
           </section>
 
@@ -380,7 +441,7 @@ export default function Forensics({
                 <button key={item.scan_id} className={selectedMemory?.scan_id === item.scan_id ? "active" : ""} onClick={() => openMemoryScan(item.scan_id)}>
                   <span className={`run-status run-${item.status}`}>{item.status}</span>
                   <strong>{item.scan_title}</strong>
-                  <small>{localTimestamp(item.received_at)} · {item.match_count} match{item.match_count === 1 ? "" : "es"}</small>
+                  <small>{localTimestamp(item.received_at)} · {(item.match_count || 0) + (item.static_finding_count || 0)} finding{(item.match_count || 0) + (item.static_finding_count || 0) === 1 ? "" : "s"}</small>
                   <code>{item.original_name}</code>
                 </button>
               ))}

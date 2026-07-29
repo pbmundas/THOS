@@ -73,41 +73,8 @@ def _bounded_context(detection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _fallback(detection: dict[str, Any], reason: str) -> dict[str, Any]:
-    context = _bounded_context(detection)
-    events = context["matched_events"]
-    hosts = sorted({str(item.get("host")) for item in events if item.get("host")})
-    users = sorted({str(item.get("user")) for item in events if item.get("user")})
-    timestamps = sorted(str(item["timestamp"]) for item in events if item.get("timestamp"))
-    refs = [str(item["record_ref"]) for item in events[:5]]
-    first = events[0] if events else {}
-    scope = ", ".join(hosts[:5]) or "no host identified"
-    if users:
-        scope += f"; users: {', '.join(users[:5])}"
-    window = (
-        f"{timestamps[0]} to {timestamps[-1]}"
-        if timestamps else "not recoverable from the returned events"
-    )
-    lines = [
-        f"{context['detection_uid']} records {context.get('events_matched') or 0} match(es) for {context.get('rule_title') or context.get('rule_id') or 'the scheduled rule'}.",
-        f"Observed scope: {scope}.",
-        f"Observed event window: {window}.",
-        f"Strongest returned lead: {first.get('event') or 'unspecified event'} in {first.get('source_file') or 'telemetry'} (ref {first.get('record_ref', 'unavailable')}).",
-        "The match merits analyst validation, but it does not by itself prove malicious intent, compromise, or attribution.",
-        "Scope is limited to the telemetry and bounded matched-event sample retained with this detection.",
-        "Next step: validate the cited event on the affected entity and pivot to adjacent authentication, process, and network activity in the same time window.",
-    ]
-    return {
-        "analysis_lines": lines,
-        "confidence": "medium" if events else "low",
-        "evidence_refs": refs,
-        "generation_mode": "deterministic_fallback",
-        "fallback_reason": str(reason)[:500],
-    }
-
-
 async def analyze_detection(detection: dict[str, Any]) -> dict[str, Any]:
-    """Produce one 5-10 line explanation, falling back without retry storms."""
+    """Produce one model-authored, evidence-bounded 5-10 line explanation."""
     target = target_for("detection_analysis")
     started = time.perf_counter()
     try:
@@ -133,7 +100,16 @@ async def analyze_detection(detection: dict[str, Any]) -> dict[str, Any]:
             "generation_mode": "local_model",
         }
     except Exception as exc:
-        result = _fallback(detection, str(exc))
+        result = {
+            "analysis_lines": [],
+            "confidence": "unavailable",
+            "evidence_refs": [],
+            "generation_mode": "model_failed",
+            "error": (
+                "Detection analysis was not generated because the model did "
+                f"not return a complete validated response: {str(exc)[:500]}"
+            ),
+        }
     result.update({
         "detection_uid": _detection_uid(detection),
         "generated_at": datetime.now(timezone.utc).isoformat(),

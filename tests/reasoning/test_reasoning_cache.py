@@ -33,7 +33,10 @@ def test_repeated_identical_reasoning_uses_cached_completion(monkeypatch):
             }],
             "recommendations": "Continue monitoring.",
             "need_more_logs": False,
-            "follow_up_query": "",
+            "follow_up_objective": "",
+            "follow_up_source": "",
+            "follow_up_lookback_minutes": 0,
+            "follow_up_limit": 0,
         })
 
     monkeypatch.setattr(reasoning, "_build_kb_context", no_kb_context)

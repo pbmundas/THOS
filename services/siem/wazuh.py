@@ -65,6 +65,7 @@ _SEARCH_FIELDS = [
     "data.win.eventdata.commandLine^3",
     "data.user_agent^3",
     "data.url^2",
+    "data.alert.signature^3",
     "agent.name",
     "agent.ip",
     "decoder.name",
@@ -295,6 +296,7 @@ def _normalize_record(hit: dict) -> dict:
     evidence_parts = []
     evidence_fields = (
         ("rule", "rule.description"),
+        ("network alert", "data.alert.signature"),
         ("MITRE ID", "rule.mitre.id"),
         ("MITRE technique", "rule.mitre.technique"),
         ("full log", "full_log"),
@@ -304,6 +306,18 @@ def _normalize_record(hit: dict) -> dict:
         ("command line", "data.win.eventdata.commandLine"),
         ("process", "data.win.eventdata.image"),
         ("parent process", "data.win.eventdata.parentImage"),
+        ("source IP", "data.src_ip"),
+        ("source IP", "data.srcip"),
+        ("destination IP", "data.dest_ip"),
+        ("destination IP", "data.dstip"),
+        ("source port", "data.src_port"),
+        ("source port", "data.srcport"),
+        ("destination port", "data.dest_port"),
+        ("destination port", "data.dstport"),
+        ("flow destination port", "data.flow.dest_port"),
+        ("protocol", "data.proto"),
+        ("TCP SYN", "data.tcp.syn"),
+        ("flow state", "data.flow.state"),
     )
     for label, field_path in evidence_fields:
         value = _pick(raw, field_path)
@@ -336,8 +350,24 @@ def _normalize_record(hit: dict) -> dict:
         # high-signal values (for example the Nmap NSE user-agent) beyond the
         # reasoning prompt's raw-detail limit.
         "evidence_summary": evidence_summary,
-        "src_ip": _pick(raw, "data.srcip", "srcip", "agent.ip"),
-        "dst_ip": _pick(raw, "data.dstip", "dstip"),
+        # Wazuh decoder field names vary by integration. Suricata's native
+        # EVE mapping uses src_ip/dest_ip while other decoders use srcip/dstip.
+        # Agent IP is only a final source fallback because it identifies the
+        # collector host, not necessarily the network initiator.
+        "src_ip": _pick(
+            raw, "data.src_ip", "data.flow.src_ip", "data.srcip", "srcip",
+            "agent.ip",
+        ),
+        "dst_ip": _pick(
+            raw, "data.dest_ip", "data.flow.dest_ip", "data.dstip", "dstip",
+        ),
+        "src_port": _pick(
+            raw, "data.src_port", "data.flow.src_port", "data.srcport", "srcport",
+        ),
+        "dst_port": _pick(
+            raw, "data.dest_port", "data.flow.dest_port", "data.dstport", "dstport",
+        ),
+        "protocol": _pick(raw, "data.proto", "data.protocol", "protocol"),
         "source_file": index,
         "source_type": "wazuh",
         "_wazuh_id": str(hit.get("_id", "")),
@@ -504,11 +534,18 @@ def resource_pressure() -> dict[str, Any]:
         }
 
 
-def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_ignored) -> dict:
+def fetch_logs(
+    query: str,
+    limit: int = 25,
+    trusted_sigma: bool = False,
+    lookback_minutes: int | None = None,
+    **_ignored,
+) -> dict:
     """Execute a bounded read-only search against the Wazuh Indexer."""
     cfg = _get_config()
     bounded_limit = max(1, min(int(limit), cfg["max_results"]))
-    body = _build_search_body(query, cfg["lookback_minutes"], bounded_limit, trusted_sigma)
+    effective_lookback = max(1, int(lookback_minutes or cfg["lookback_minutes"]))
+    body = _build_search_body(query, effective_lookback, bounded_limit, trusted_sigma)
     url = f"{cfg['base_url']}/{cfg['index_pattern']}/_search"
 
     with httpx.Client(
@@ -566,6 +603,7 @@ def fetch_logs(query: str, limit: int = 25, trusted_sigma: bool = False, **_igno
         "query": query,
         "record_count": len(records),
         "total_hits": int(total_value or 0),
+        "lookback_minutes": effective_lookback,
         "indices": cfg["index_pattern"],
         "logs": records,
     }

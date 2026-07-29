@@ -1,0 +1,117 @@
+{
+  "catalog_version": 2,
+  "tools": [
+    {
+      "tool_id": "yara",
+      "name": "YARA",
+      "purpose": "Byte-signature and pattern matching",
+      "capabilities": ["signature", "memory", "process_dump", "file"],
+      "availability": "python:yara",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "file",
+      "name": "libmagic file",
+      "purpose": "Content and media-type identification",
+      "capabilities": ["identify", "file"],
+      "availability": "command:file",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "strings",
+      "name": "GNU strings",
+      "purpose": "Bounded printable string extraction",
+      "capabilities": ["strings", "file", "memory", "process_dump"],
+      "availability": "command:strings",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "exiftool",
+      "name": "ExifTool",
+      "purpose": "Read-only embedded metadata extraction",
+      "capabilities": ["metadata", "document", "image", "file"],
+      "availability": "command:exiftool",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "clamav",
+      "name": "ClamAV",
+      "purpose": "Known-malware signature screening",
+      "capabilities": ["antivirus", "file"],
+      "availability": "command:clamscan",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "pefile",
+      "name": "pefile",
+      "purpose": "Static Windows PE header, section, import, and signature triage",
+      "capabilities": ["pe", "executable", "static"],
+      "availability": "python:pefile",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "capa",
+      "name": "capa",
+      "purpose": "Static executable capability identification",
+      "capabilities": ["capabilities", "pe", "elf", "dotnet", "shellcode"],
+      "availability": "command:capa",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "floss",
+      "name": "FLOSS",
+      "purpose": "Static, stack, tight, and decoded string extraction",
+      "capabilities": ["decoded_strings", "pe", "executable"],
+      "availability": "command:floss",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "pdf",
+      "name": "pypdf structural parser",
+      "purpose": "PDF metadata, JavaScript, attachment, action, and stream indicators",
+      "capabilities": ["pdf", "document", "static"],
+      "availability": "python:pypdf",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "oletools",
+      "name": "oletools",
+      "purpose": "Office/OLE macro, object, and suspicious-content inspection",
+      "capabilities": ["office", "ole", "macro", "document"],
+      "availability": "command:oleid",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "volatility3",
+      "name": "Volatility 3",
+      "purpose": "Memory-image process, network, module, registry, and injection artifact analysis",
+      "capabilities": ["memory", "process", "network", "registry", "injection"],
+      "availability": "command:vol",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "ewf",
+      "name": "libewf tools",
+      "purpose": "EWF image metadata and evidence-container inspection",
+      "capabilities": ["disk", "ewf", "metadata"],
+      "availability": "command:ewfinfo",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "sleuthkit",
+      "name": "The Sleuth Kit",
+      "purpose": "Disk layout, filesystem metadata, deleted-name, and content examination",
+      "capabilities": ["disk", "filesystem", "deleted_files", "carving"],
+      "availability": "command:mmls",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "regripper",
+      "name": "RegRipper",
+      "purpose": "Offline Windows Registry hive parsing",
+      "capabilities": ["registry", "windows", "timeline"],
+      "availability": "command:regripper",
+      "deployment": "bundled"
+    }
+  ]
+}

@@ -53,7 +53,18 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
     reports = tmp_path / "reports"
     monkeypatch.setattr(analysis, "FORENSIC_ROOT", root)
     monkeypatch.setattr(report, "REPORTS_DIR", reports)
-    monkeypatch.setattr(workflow, "analyze_artifacts", lambda verified: {
+    async def plan(_verified, _prior=None):
+        return {
+            "case_objective": "Examine supplied evidence.",
+            "artifacts": [{
+                "evidence_id": "E0001",
+                "reasoning": "Use parsed record evidence.",
+                "tools": [],
+            }],
+        }
+
+    monkeypatch.setattr(workflow, "plan_forensic_tools", plan)
+    monkeypatch.setattr(workflow, "analyze_artifacts", lambda verified, _plan: {
         "inventory": [{
             "evidence_id": "E0001", "original_name": "events.log",
             "stored_name": "E0001_events.log", "size_bytes": 58,
@@ -66,30 +77,45 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
             "detail": "powershell encodedcommand", "_record_ref": "E0001:0",
         }],
         "archives": [], "disk_images": [], "warnings": [],
+        "static_analysis": [], "forensic_tools": {}, "tool_plan": {},
     })
     monkeypatch.setattr(workflow, "correlate_evidence", lambda triage: {
         "records_analyzed": 1,
         "event_histogram": {"log": 1},
         "indicators": {"ipv4": [], "url": [], "email": [], "cve": [], "sha256": []},
-        "suspicious_observations": [{
-            "ref": "E0001:0", "event": "log", "source_file": "events.log",
-            "basis": "review lead", "excerpt": "powershell encodedcommand",
-        }],
-        "sigmahq_rules_evaluated": 0, "sigmahq_rule_matches": [],
-        "local_sigma_rules_evaluated": 0, "local_sigma_rule_matches": [],
-        "sigma_matched_record_refs": [], "anomaly_scores": [],
+        "detection_rules_evaluated": 0,
+        "detection_rule_matches": [],
+        "matched_record_refs": [],
+        "anomaly_scores": [],
+        "yara_scan": {"match_count": 0},
+        "ioc_matches": [],
+        "attack_techniques": [],
+        "attack_techniques_by_ref": {},
+        "evidence_facts": [],
+        "activity_assessments": [],
     })
+    async def interpret(_triage, correlation):
+        return {
+            **correlation,
+            "summary": "The supplied record was examined.",
+            "overall_disposition": "inconclusive",
+            "proven_facts": [{
+                "claim": "The record contains the supplied command text.",
+                "evidence_refs": ["E0001:0"],
+            }],
+            "activity_assessments": [],
+            "unresolved_anomalies": ["Execution context was not supplied."],
+            "recommendations": ["Collect process context."],
+            "interpretation_status": "completed",
+        }
+    monkeypatch.setattr(
+        workflow, "interpret_forensic_evidence", interpret
+    )
     monkeypatch.setattr(workflow, "build_timeline", lambda triage, correlation=None: [{
         "timestamp": "2026-07-25T12:00:00Z", "evidence_ref": "E0001:0",
         "host": "host-a", "user": None, "event": "log",
         "source_file": "events.log", "detail": "powershell encodedcommand",
     }])
-    monkeypatch.setattr(workflow, "STAGES", (
-        ("forensic_intake", "Forensic Intake & Integrity Agent", "Verify integrity.", workflow.verify_evidence),
-        ("forensic_artifact", "Forensic Artifact Analysis Agent", "Analyze artifacts.", workflow.analyze_artifacts),
-        ("forensic_correlation", "Forensic Detection Correlation Agent", "Correlate evidence.", workflow.correlate_evidence),
-        ("forensic_timeline", "Forensic Timeline Agent", "Build timeline.", workflow.build_timeline),
-    ))
     events = []
 
     async def progress(event):
@@ -100,12 +126,15 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
     completed = [event for event in events if event["event"] == "agent_complete"]
     assert [event["agent_name"] for event in completed] == [
         "Forensic Intake & Integrity Agent",
-        "Forensic Artifact Analysis Agent",
-        "Forensic Detection Correlation Agent",
+        "Forensic Planning Agent",
+        "Forensic Artifact Execution Agent",
+        "Forensic Follow-up Planning Agent",
+        "Forensic Evidence Correlation Agent",
+        "Forensic Interpretation Agent",
         "Forensic Timeline Agent",
         "Forensic Reporting Agent",
     ]
-    assert all(event["model_name"] is None and event["duration_ms"] >= 0 for event in completed)
+    assert all(event["duration_ms"] >= 0 for event in completed)
     text = (reports / Path(result["report_path"]).name).read_text(encoding="utf-8")
     assert "Chain of custody and integrity" in text
     assert "## Proven Facts" in text
@@ -114,6 +143,5 @@ def test_forensic_workflow_records_named_agents_and_writes_technical_report(tmp_
     assert "Legal and evidentiary considerations" in text
     assert "automated results are" in text.lower()
     headings = [line for line in text.splitlines() if line.startswith("## ")]
-    assert headings[0] == "## Executive summary"
-    assert headings[-1] == "## Final conclusion"
-    assert text.rfind("## Final conclusion") > text.rfind("## Reviewer sign-off")
+    assert headings[0] == "## Summary"
+    assert "## Proven Facts" in headings

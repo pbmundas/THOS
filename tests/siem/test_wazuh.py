@@ -110,6 +110,32 @@ def test_normalize_wazuh_alert_to_thos_schema():
     assert record["_raw"] is hit["_source"]
 
 
+def test_normalize_suricata_network_fields_and_alert_signature():
+    record = wazuh._normalize_record(_hit(**{
+        "@timestamp": "2026-07-29T19:16:25.000Z",
+        "agent": {"name": "linux-victim", "ip": "172.20.0.2"},
+        "rule": {"description": "Suricata: Alert - PURPLE LAB TCP reconnaissance"},
+        "data": {
+            "src_ip": "172.20.0.4",
+            "dest_ip": "172.20.0.2",
+            "src_port": 41234,
+            "dest_port": 443,
+            "proto": "TCP",
+            "tcp": {"syn": True},
+            "alert": {"signature": "PURPLE LAB TCP reconnaissance"},
+        },
+    }))
+
+    assert record["src_ip"] == "172.20.0.4"
+    assert record["dst_ip"] == "172.20.0.2"
+    assert record["src_port"] == "41234"
+    assert record["dst_port"] == "443"
+    assert record["protocol"] == "TCP"
+    assert "network alert: PURPLE LAB TCP reconnaissance" in \
+        record["evidence_summary"]
+    assert "TCP SYN: True" in record["evidence_summary"]
+
+
 def test_deduplicate_prefers_alert_over_archive_copy():
     common = {
         "@timestamp": "2026-07-20T10:00:00.000Z",

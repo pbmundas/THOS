@@ -16,6 +16,7 @@ import json
 import logging
 import asyncio
 from fastmcp import Client
+from services.security.configuration import required_secret
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,7 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://mcp-server:8100/mcp")
 # Must match the MCP server's MCP_AUTH_TOKEN (see services/api/server.py) —
 # the server now requires a bearer token on every call, so an unauthenticated
 # caller can no longer reach any SOC tool directly.
-_DEFAULT_MCP_AUTH_TOKEN = "thos_change_me_mcp_token"
-MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", _DEFAULT_MCP_AUTH_TOKEN)
-if MCP_AUTH_TOKEN == _DEFAULT_MCP_AUTH_TOKEN:
-    logger.warning(
-        "MCP_AUTH_TOKEN is unset, using the built-in default. Set a real "
-        "shared secret before exposing this stack beyond a trusted local "
-        "dev network."
-    )
+MCP_AUTH_TOKEN = required_secret("MCP_AUTH_TOKEN")
 
 _client: Client | None = None
 _client_lock = asyncio.Lock()

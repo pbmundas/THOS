@@ -580,9 +580,8 @@ def query_terms_from_text(query: str) -> list[str]:
 def fetch_from_folder(folder: str, query: str = "", limit: int = 100) -> dict:
     """Scan `folder`, parse every supported file, filter by `query`
     (best-effort substring match against the normalized record), and
-    return up to `limit` matching records — falling back to the most
-    recent-looking records unfiltered if the query matches nothing, so
-    an over-specific generated query doesn't silently return zero logs.
+    return up to `limit` matching records. A non-empty query that matches
+    nothing returns zero records and is never replaced with unrelated logs.
     """
     try:
         folder = validate_log_source_path(folder)
@@ -603,11 +602,6 @@ def fetch_from_folder(folder: str, query: str = "", limit: int = 100) -> dict:
     terms = query_terms_from_text(query)
     matched = [r for r in all_records if _matches_query(r, terms)]
 
-    used_fallback = False
-    if terms and not matched:
-        matched = all_records
-        used_fallback = True
-
     matched = matched[:limit]
     return {
         "siem_type": "folder",
@@ -616,6 +610,6 @@ def fetch_from_folder(folder: str, query: str = "", limit: int = 100) -> dict:
         "files_scanned": len(list_supported_files(folder)),
         "total_parsed": len(all_records),
         "record_count": len(matched),
-        "used_fallback_unfiltered": used_fallback,
+        "used_fallback_unfiltered": False,
         "logs": matched,
     }

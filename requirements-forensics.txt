@@ -1,0 +1,9 @@
+# Container-scoped, headless static-analysis dependencies.
+# Pin these separately from the shared application dependencies because they
+# have large reverse-engineering dependency graphs and are only needed by the
+# forensic worker.
+pefile==2024.8.26
+flare-capa==9.4.0
+flare-floss==3.1.1
+oletools==0.60.2
+volatility3==2.28.0

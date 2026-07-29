@@ -1,201 +1,156 @@
-"""
-Unit tests for services.mcp.soc_tools.run_soc_tools_node.
-
-The Sigma engines and the MCP tool call are monkeypatched so these tests
-exercise only the merge/tagging logic in soc_tools.py itself — not
-pySigma rule parsing (covered in tests/detection/test_sigmahq_engine.py)
-or the real MCP round trip.
-"""
+"""Tests for detection correlation plus agent-owned evidence selection."""
 import asyncio
-import threading
-
-import pytest
 
 from services.mcp import soc_tools
 
 
-def _hq_result(matches, evaluated=2843):
-    matched = sorted({i for rm in matches for i in rm["matched_indices"]})
-    return {"matched_record_indices": matched, "rule_matches": matches, "rules_evaluated": evaluated}
-
-
-def _thos_result(matches, evaluated=16):
-    matched = sorted({i for rm in matches for i in rm["matched_indices"]})
-    return {"matched_record_indices": matched, "rule_matches": matches, "rules_evaluated": evaluated}
-
-
-def test_merges_all_three_layers_and_tags_records(monkeypatch):
-    processed_logs = [{"detail": f"record {i}"} for i in range(4)]
-
-    hq_matches = [{"rule_id": "hq-1", "title": "HQ Rule", "level": "high",
-                   "matched_indices": [0], "matched_count": 1}]
-    thos_matches = [{"rule_id": "thos-1", "title": "THOS Rule", "level": "medium",
-                      "matched_indices": [1], "matched_count": 1}]
-
-    monkeypatch.setattr(soc_tools.sigmahq_engine, "evaluate_all",
-                         lambda *a, **k: _hq_result(hq_matches))
-    monkeypatch.setattr(soc_tools.sigma_engine, "evaluate_all",
-                         lambda *a, **k: _thos_result(thos_matches))
-
-    async def fake_call_tool(name, args):
-        assert name == "derive_detection_indicators"
-        return {"event_ids": [], "keywords": ["mimikatz"]}
-    monkeypatch.setattr(soc_tools, "call_tool", fake_call_tool)
-
-    processed_logs[2]["detail"] = "record 2 mentions mimikatz"
-
-    state = {
-        "processed_logs": processed_logs,
-        "hypothesis_text": "test hypothesis",
-        "technique_id": "T1003",
-        "technique_name": "OS Credential Dumping",
-        "tactic": "credential-access",
+def _result(matches, evaluated):
+    matched = sorted({
+        index
+        for match in matches
+        for index in match["matched_indices"]
+    })
+    return {
+        "matched_record_indices": matched,
+        "rule_matches": matches,
+        "rules_evaluated": evaluated,
     }
 
-    result = asyncio.run(soc_tools.run_soc_tools_node(state))
 
-    # Detection-rule accounting must not include loose model-derived keywords.
-    assert result["sigma_matched_refs"] == [0, 1]
-    assert result["sigma_matched_count"] == 2
-
-    # Per-record tags reflect exactly which layer(s) hit.
-    assert processed_logs[0]["_sigma_match"] is True
-    assert processed_logs[0]["_sigmahq_match"] is True
-    assert processed_logs[0]["_llm_indicator_match"] is False
-    assert processed_logs[1]["_sigmahq_match"] is False
-    assert processed_logs[2]["_llm_indicator_match"] is True
-    assert processed_logs[3].get("_sigma_match") is None
-
-    # Rule match summary carries a source tag per rule.
-    sources = {rm["rule_id"]: rm["source"] for rm in result["sigma_rule_matches"]}
-    assert sources == {"hq-1": "sigmahq", "thos-1": "thos"}
-
-    enrichment = result["enrichment"]
-    assert enrichment["sigmahq_rules_evaluated"] == 2843
-    assert enrichment["thos_rules_evaluated"] == 16
-    assert enrichment["sigma_rules_evaluated"] == 2843 + 16
-    assert enrichment["llm_indicator_matched_records"] == 1
-
-
-def test_strict_behavioral_evidence_keeps_matching_rehearsal_records():
+def test_rule_facts_and_agent_selected_evidence_are_kept_separate(monkeypatch):
     records = [
-        {
-            "event": "sca",
-            "detail": "CIS Benchmark compliance check without this technique",
-        },
-        {
-            "event": "Purple lab: web protocol command and control rehearsal",
-            "detail": "purple-lab-attack-technique=T1071.001",
-        },
-        {
-            "event": "Network connection",
-            "dst_ip": "203.0.113.25",
-            "detail": (
-                '{"destination.port": 443, '
-                '"rule": {"mitre": {"id": ["T1071.001"]}}}'
-            ),
-        },
+        {"event": "rule matched", "detail": "record zero"},
+        {"event": "process", "detail": "literal governed-tool.exe"},
     ]
-
-    assert soc_tools._behavioral_evidence(records, "T1071.001") == [{
-        "record_index": 1,
-        "event": "Purple lab: web protocol command and control rehearsal",
-        "reason": "explicit ATT&CK mapping T1071.001",
-    }, {
-        "record_index": 2,
-        "event": "Network connection",
-        "reason": "explicit ATT&CK mapping T1071.001",
+    community = [{
+        "rule_id": "community-1",
+        "title": "Community rule",
+        "level": "high",
+        "matched_indices": [0],
+        "matched_count": 1,
     }]
+    monkeypatch.setattr(
+        soc_tools.sigmahq_engine,
+        "evaluate_all",
+        lambda *args, **kwargs: _result(community, 10),
+    )
+    monkeypatch.setattr(
+        soc_tools.sigma_engine,
+        "evaluate_all",
+        lambda *args, **kwargs: _result([], 2),
+    )
+
+    async def indicators(_name, _arguments):
+        return {"keywords": ["governed-tool.exe"]}
+
+    async def selection(**_kwargs):
+        return {
+            "assessment": "One literal artifact supports review.",
+            "evidence": [{
+                "record_index": 1,
+                "kind": "artifact",
+                "claim": "The governed executable name is present.",
+                "matched_literals": ["governed-tool.exe"],
+                "event": "process",
+                "evidence": "literal governed-tool.exe",
+            }],
+        }
+
+    monkeypatch.setattr(soc_tools, "call_tool", indicators)
+    monkeypatch.setattr(soc_tools, "select_hunt_evidence", selection)
+    result = asyncio.run(soc_tools.run_soc_tools_node({
+        "siem_type": "folder",
+        "processed_logs": records,
+        "hypothesis_text": "Investigate governed-tool.exe",
+        "technique_id": "T1003",
+        "technique_name": "Credential Access",
+        "tactic": "credential-access",
+        "active_query_objective": "Find related execution evidence",
+    }))
+
+    assert result["sigma_matched_refs"] == [0]
+    assert result["sigma_matched_count"] == 1
+    assert records[0]["_sigma_match"] is True
+    assert records[1]["_llm_indicator_match"] is True
+    assert result["evidence_highlights"][0]["record_index"] == 1
+    assert result["enrichment"]["llm_indicator_matched_records"] == 1
 
 
-def test_empty_sigmahq_ruleset_still_works(monkeypatch):
-    processed_logs = [{"detail": "record 0"}]
+def test_empty_agent_selection_does_not_fabricate_evidence(monkeypatch):
+    monkeypatch.setattr(
+        soc_tools.sigmahq_engine,
+        "evaluate_all",
+        lambda *args, **kwargs: _result([], 0),
+    )
+    monkeypatch.setattr(
+        soc_tools.sigma_engine,
+        "evaluate_all",
+        lambda *args, **kwargs: _result([], 2),
+    )
 
-    monkeypatch.setattr(soc_tools.sigmahq_engine, "evaluate_all",
-                         lambda *a, **k: _hq_result([], evaluated=0))
-    monkeypatch.setattr(soc_tools.sigma_engine, "evaluate_all",
-                         lambda *a, **k: _thos_result([], evaluated=16))
+    async def indicators(_name, _arguments):
+        return {}
 
-    async def fake_call_tool(name, args):
-        return {"event_ids": [], "keywords": []}
-    monkeypatch.setattr(soc_tools, "call_tool", fake_call_tool)
+    async def selection(**_kwargs):
+        return {"assessment": "No relevant evidence.", "evidence": []}
 
-    state = {"processed_logs": processed_logs, "hypothesis_text": "", "technique_id": "",
-             "technique_name": "", "tactic": ""}
-
-    result = asyncio.run(soc_tools.run_soc_tools_node(state))
+    monkeypatch.setattr(soc_tools, "call_tool", indicators)
+    monkeypatch.setattr(soc_tools, "select_hunt_evidence", selection)
+    result = asyncio.run(soc_tools.run_soc_tools_node({
+        "siem_type": "folder",
+        "processed_logs": [{"event": "unrelated", "detail": "routine"}],
+    }))
 
     assert result["sigma_matched_count"] == 0
-    assert "16 applicable rule" in result["sigma_rule"]
+    assert result["behavioral_evidence"] == []
+    assert result["evidence_highlights"] == []
 
 
-def test_live_siem_uses_query_pushdown_not_local_evaluation(monkeypatch):
+def test_live_source_uses_query_pushdown(monkeypatch):
     async def pushed(**kwargs):
         assert kwargs["siem_type"] == "splunk"
         return {
             "processed_logs": [{
-                "timestamp": "2026-07-22T00:00:00Z", "host": "srv-1",
-                "event": "4688", "detail": "encoded powershell",
-                "_sigma_match": True, "_sigmahq_match": True,
-                "_sigma_rules": ["[sigmahq] hq-1:Encoded PowerShell"],
+                "timestamp": "2026-07-22T00:00:00Z",
+                "event": "process",
+                "detail": "literal event",
+                "_sigma_match": True,
             }],
             "rule_matches": [{
-                "rule_id": "hq-1", "title": "Encoded PowerShell", "level": "high",
-                "source": "sigmahq", "matched_count": 1, "matched_indices": [0],
+                "rule_id": "rule-1",
+                "title": "Rule",
+                "level": "high",
+                "source": "community",
+                "matched_count": 1,
+                "matched_indices": [0],
             }],
             "rules_evaluated": 1,
-            "coverage": {"relevant": 1, "ready": 1, "unsupported": 0, "truncated": 0},
+            "coverage": {
+                "relevant": 1,
+                "ready": 1,
+                "unsupported": 0,
+                "truncated": 0,
+            },
             "errors": [],
         }
 
+    async def indicators(_name, _arguments):
+        return {}
+
+    async def selection(**_kwargs):
+        return {"assessment": "", "evidence": []}
+
     monkeypatch.setattr(soc_tools, "query_sigma_for_hunt", pushed)
-    monkeypatch.setattr(
-        soc_tools.sigmahq_engine, "evaluate_all",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("local evaluator must not run")),
-    )
-    monkeypatch.setattr(
-        soc_tools.sigma_engine, "evaluate_all",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("local evaluator must not run")),
-    )
-
-    async def fake_call_tool(name, args):
-        return {"event_ids": [], "keywords": []}
-
-    monkeypatch.setattr(soc_tools, "call_tool", fake_call_tool)
+    monkeypatch.setattr(soc_tools, "call_tool", indicators)
+    monkeypatch.setattr(soc_tools, "select_hunt_evidence", selection)
     result = asyncio.run(soc_tools.run_soc_tools_node({
-        "siem_type": "splunk", "processed_logs": [], "technique_id": "T1059.001",
+        "siem_type": "splunk",
+        "processed_logs": [],
+        "technique_id": "T1059.001",
         "hypothesis_text": "encoded PowerShell",
     }))
-    assert result["enrichment"]["sigma_execution_mode"] == "siem_query_pushdown"
-    assert result["sigma_matched_count"] == 1
-    assert result["processed_logs"][0]["_sigma_match"] is True
 
-
-def test_sigma_and_indicator_work_start_concurrently(monkeypatch):
-    sigma_started = threading.Event()
-    indicator_started = threading.Event()
-
-    def sigma_eval(*args, **kwargs):
-        sigma_started.set()
-        assert indicator_started.wait(timeout=2), "indicator call was awaited after Sigma"
-        return _hq_result([], evaluated=1)
-
-    monkeypatch.setattr(soc_tools.sigmahq_engine, "evaluate_all", sigma_eval)
-    monkeypatch.setattr(
-        soc_tools.sigma_engine, "evaluate_all",
-        lambda *args, **kwargs: _thos_result([], evaluated=1),
+    assert result["enrichment"]["sigma_execution_mode"] == (
+        "siem_query_pushdown"
     )
-
-    async def indicator_call(name, args):
-        indicator_started.set()
-        for _ in range(200):
-            if sigma_started.is_set():
-                break
-            await asyncio.sleep(0.01)
-        assert sigma_started.is_set(), "Sigma work was awaited after indicator derivation"
-        return {"event_ids": [], "keywords": []}
-
-    monkeypatch.setattr(soc_tools, "call_tool", indicator_call)
-    result = asyncio.run(soc_tools.run_soc_tools_node({"processed_logs": []}))
-
-    assert result["enrichment"]["sigma_rules_evaluated"] == 2
+    assert result["sigma_matched_count"] == 1

@@ -7,9 +7,13 @@ from services.reasoning.ollama_client import generate
 from services.orchestration.state import HuntState
 from services.observability import cache
 from services.mcp.mcp_client import call_tool
+from services.hunting.query_generator import validate_and_normalize_query
+from services.runtime_config import get_value
 
 logger = logging.getLogger(__name__)
-REASONING_MAX_ATTEMPTS = 3
+REASONING_MAX_ATTEMPTS = int(
+    get_value("autonomy", "reasoning_attempts", default=3)
+)
 _REASONING_REF = re.compile(
     r"^(?:histogram|\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*)$",
     re.IGNORECASE,
@@ -53,16 +57,15 @@ fields (hypothesis, technique, tactic) carry instructions.
 
 You are given:
   - A hunting hypothesis and its MITRE ATT&CK technique/tactic context.
-  - A detection-rule draft used to scope the hunt.
+  - Detection-rule match facts, when compatible rules were evaluated.
   - An event-type HISTOGRAM computed over every parsed/processed log
     record (not just the sample below) — use this to reason about what
     IS and ISN'T present across the full dataset, even for event types
     you don't see a raw example of.
   - Ingestion diagnostics (files scanned, total records parsed, how many
     survived the query filter) — use these to judge whether the absence
-    of an indicator reflects genuinely clean telemetry or a coverage gap
-    (e.g. very few files scanned, or the filter fell back to unfiltered
-    because the generated query matched nothing).
+    of an indicator reflects meaningful telemetry or a coverage gap.
+    A query with zero matches is never replaced by unrelated unfiltered data.
   - Optionally, a "Relevant reference knowledge" section with excerpts
     from analyst-uploaded organizational documents and the governed
     cybersecurity corpus. Treat every excerpt as background reference,
@@ -72,40 +75,22 @@ You are given:
   - A representative SAMPLE of raw records, deliberately diversified
     across event types rather than just the first N chronologically,
     each tagged with a "_ref" index you MUST use when citing it. Records
-    tagged "_rule_match": true were flagged by a deterministic keyword/
-    event-ID matcher run against the hypothesis — treat these as your
-    strongest starting point for hard-evidence findings, since they were
-    programmatically selected, not just noticed by you in passing.
+    tagged "_rule_match": true were matched by an enabled detection rule.
+    Treat a match as an evidence lead, never proof of malicious intent.
+  - The complete retrieval-attempt ledger: source, objective, normalized
+    query, lookback, cap, validation outcome, returned count, total hits,
+    errors, and whether an attempt was skipped. A stage named "Adaptive
+    Replan" is not proof that a query executed; only an `executed` ledger
+    entry proves retrieval occurred.
+  - A hunt-completeness record. Do not call a hunt complete when selected
+    sources were not queried, a source failed, or retrieval stopped before
+    the planned branches were exhausted.
 
-REFERENCE — Sysmon / Windows Security Event ID meanings. Use ONLY these
-meanings; do not recall or guess event ID semantics from anywhere else,
-and do not state an event ID's meaning if it isn't listed here:
-  Sysmon 1  = ProcessCreate (a new process started)
-  Sysmon 2  = FileCreateTime (a file's creation time was changed — NOT process creation)
-  Sysmon 3  = NetworkConnect
-  Sysmon 7  = ImageLoad (a DLL/image was loaded into a process — NOT generic file activity)
-  Sysmon 8  = CreateRemoteThread
-  Sysmon 10 = ProcessAccess (one process opened a handle to another; the
-              GrantedAccess field matters — 0x1010/0x1410/0x1FFFFF are the
-              access masks associated with credential-dumping tooling
-              against lsass.exe specifically)
-  Sysmon 11 = FileCreate
-  Sysmon 13 = RegistryEvent (value set)
-  Sysmon 22 = DNSQuery
-  Security 4624 = An account successfully logged on. By ITSELF this is
-              routine and NOT evidence of any attack technique. It only
-              becomes relevant to credential-dumping/lateral-movement
-              hypotheses if paired with something else in the SAME
-              record: an unusual LogonType, a suspicious calling
-              process, or literal suspicious text elsewhere in the
-              record's fields.
-  Security 4688 = A new process was created (with command line if audited).
-  Security 4663 = An attempt was made to access an object (e.g. a file
-              or registry key) — access type and object path matter.
-  Security 5156 = The Windows Filtering Platform allowed a connection.
-If you need to reference an event type not listed above, describe only
-what its literal field values show — do not assert a "textbook" meaning
-for it.
+EVENT SEMANTICS:
+  Use only meanings supplied by the governed knowledge corpus or literal
+  field values in the evidence. Do not recall or guess an event identifier's
+  meaning. If governed knowledge does not define it, state exactly what the
+  record contains and identify the semantic uncertainty.
 
 EVIDENCE DISCIPLINE — this is the most important rule:
   - Every finding must cite the "_ref" of the specific record(s) it is
@@ -114,12 +99,10 @@ EVIDENCE DISCIPLINE — this is the most important rule:
   - Do NOT attribute a specific tool (e.g. "Mimikatz", "ProcDump",
     "Cobalt Strike") to a finding unless the record itself contains
     literal supporting text (a filename, command line, or process name)
-    or a technical indicator specifically associated with that tool
-    (e.g. the GrantedAccess masks above for LSASS access). A bare
-    routine event (like an unqualified 4624) is NOT tool evidence on
-    its own — if you suspect something is going on but the record
-    doesn't literally show it, phrase it as "circumstantial — would
-    need X to confirm" rather than stating the tool as fact.
+    or a governed technical indicator specifically associated with that
+    tool. If you suspect something is going on but the record does not
+    literally show it, phrase it as "circumstantial — would need X to
+    confirm" rather than stating the tool as fact.
   - If you are not confident a claim is directly supported, mark it
     circumstantial rather than presenting it as a hard finding.
 
@@ -139,6 +122,16 @@ Write a thorough analysis, not a one-line verdict. Specifically:
   4. Recommendations must be specific and actionable — name the exact
      audit policy, GPO setting, Sysmon config, or log source to check,
      not generic phrases like "review manually."
+  5. Follow a supported lead through adjacent host, user, process, network,
+     and time context only when those relationships are present in the
+     supplied evidence. Request a follow-up only when it can retrieve
+     materially different records from the active source. Never request a
+     duplicate query or try to compensate for a missing source by repeating
+     another source.
+  6. When more telemetry is required, specify the evidentiary objective,
+     one source from the selected source list, a justified lookback in
+     minutes, and a record limit. Do not write query syntax; the separate
+     Query Generation Agent owns dialect-specific query construction.
 
 OUTPUT DISCIPLINE:
   - Return between 1 and 4 findings, choosing the strongest supported evidence.
@@ -158,7 +151,10 @@ Respond ONLY with a JSON object with these exact keys:
   ],
   "recommendations": "<specific, actionable bullet-point recommendations as a single string with \\n separators>",
   "need_more_logs": <true or false>,
-  "follow_up_query": "<a refined query string if need_more_logs is true, else empty string>"
+  "follow_up_objective": "<the evidentiary question for the Query Generation Agent, or empty>",
+  "follow_up_source": "<one selected telemetry source, or empty>",
+  "follow_up_lookback_minutes": <bounded positive integer, or 0>,
+  "follow_up_limit": <bounded positive integer, or 0>
 }
 No markdown fences, no extra commentary — JSON only.
 """
@@ -196,14 +192,20 @@ FINDINGS_SCHEMA = {
         },
         "recommendations": {"type": "string"},
         "need_more_logs": {"type": "boolean"},
-        "follow_up_query": {"type": "string"},
+        "follow_up_objective": {"type": "string"},
+        "follow_up_source": {"type": "string"},
+        "follow_up_lookback_minutes": {"type": "integer"},
+        "follow_up_limit": {"type": "integer"},
     },
     "required": [
         "summary",
         "findings",
         "recommendations",
         "need_more_logs",
-        "follow_up_query",
+        "follow_up_objective",
+        "follow_up_source",
+        "follow_up_lookback_minutes",
+        "follow_up_limit",
     ],
 }
 
@@ -384,7 +386,10 @@ def _parse_complete_reasoning(raw: str) -> dict:
     findings = parsed.get("findings")
     recommendations = parsed.get("recommendations")
     need_more_logs = parsed.get("need_more_logs")
-    follow_up_query = parsed.get("follow_up_query")
+    follow_up_objective = parsed.get("follow_up_objective")
+    follow_up_source = parsed.get("follow_up_source")
+    follow_up_lookback = parsed.get("follow_up_lookback_minutes")
+    follow_up_limit = parsed.get("follow_up_limit")
     if not isinstance(summary, str) or not summary.strip():
         raise ReasoningResponseError("model response had no summary")
     if not isinstance(findings, list) or not findings:
@@ -403,10 +408,18 @@ def _parse_complete_reasoning(raw: str) -> dict:
         raise ReasoningResponseError("model response had no recommendations")
     if not isinstance(need_more_logs, bool):
         raise ReasoningResponseError("model response had no boolean need_more_logs value")
-    if not isinstance(follow_up_query, str):
-        raise ReasoningResponseError("model response had no follow_up_query string")
-    if need_more_logs and not follow_up_query.strip():
-        raise ReasoningResponseError("model requested more logs without a follow-up query")
+    if not isinstance(follow_up_objective, str):
+        raise ReasoningResponseError("model response had no follow_up_objective string")
+    if not isinstance(follow_up_source, str):
+        raise ReasoningResponseError("model response had no follow_up_source string")
+    if not isinstance(follow_up_lookback, int):
+        raise ReasoningResponseError("model response had no integer follow_up_lookback_minutes")
+    if not isinstance(follow_up_limit, int):
+        raise ReasoningResponseError("model response had no integer follow_up_limit")
+    if need_more_logs and not follow_up_objective.strip():
+        raise ReasoningResponseError(
+            "model requested more logs without an evidentiary objective"
+        )
     return parsed
 
 
@@ -450,85 +463,6 @@ async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | No
     return None, None, REASONING_MAX_ATTEMPTS, "; ".join(failures)
 
 
-def _recommendations_or_default(state: HuntState, value) -> str:
-    recommendations = str(value or "").strip()
-    if recommendations:
-        return recommendations
-    if (state.get("technique_id") or "").upper() == "T1059.001":
-        return (
-            "- Enable PowerShell Script Block Logging (Event ID 4104) and Module Logging through Group Policy.\n"
-            "- Enable process-creation command-line auditing (Security 4688) and Sysmon Event ID 1.\n"
-            "- Review the cited PowerShell host, user, script content, and parent process before containment."
-        )
-    return (
-        "- Review every cited record and correlate its host, user, and timestamp with adjacent telemetry.\n"
-        "- Validate listed coverage gaps before treating absence of evidence as a clean result."
-    )
-
-
-def _deterministic_reasoning_fallback(state: HuntState, histogram: dict) -> dict:
-    """Build a complete, citation-safe analysis without model output.
-
-    This is the reliability floor after three failed model attempts. It uses
-    only deterministic pipeline evidence and never invents telemetry claims.
-    """
-    logs = state.get("processed_logs") or []
-    matched = sorted({int(ref) for ref in (state.get("sigma_matched_refs") or [])
-                      if isinstance(ref, int) and 0 <= ref < len(logs)})
-    rule_matches = state.get("sigma_rule_matches") or []
-    rule_titles = [str(item.get("title") or item.get("rule_id") or "unnamed rule")
-                   for item in rule_matches[:5]]
-    coverage_gaps = state.get("coverage_gaps") or []
-
-    if matched:
-        cited = matched[:8]
-        findings = [{
-            "claim": (
-                f"Deterministic rule and enrichment layers selected {len(matched)} of "
-                f"{len(logs)} normalized records for analyst review."
-            ),
-            "evidence": (
-                f"Matched rule set: {', '.join(rule_titles) if rule_titles else 'deterministic matcher'}; "
-                f"record references: {', '.join(str(item) for item in cited)}."
-            ),
-            "ref": ",".join(str(item) for item in cited),
-            "confidence": "circumstantial",
-        }]
-        support = "partially supports"
-    else:
-        findings = [{
-            "claim": (
-                f"No deterministic rule or enrichment match was found across {len(logs)} "
-                "normalized records; this is not proof that the hypothesis is false."
-            ),
-            "evidence": f"Event histogram across all processed records: {json.dumps(histogram, sort_keys=True)}",
-            "ref": "histogram",
-            "confidence": "circumstantial",
-        }]
-        support = "does not currently support"
-
-    if coverage_gaps:
-        findings.append({
-            "claim": "Telemetry coverage limitations prevent a definitive conclusion.",
-            "evidence": "; ".join(str(item) for item in coverage_gaps),
-            "ref": "histogram",
-            "confidence": "circumstantial",
-        })
-
-    return {
-        "summary": (
-            f"The available deterministic evidence {support} the hunting hypothesis. "
-            f"THOS analyzed {len(logs)} normalized records and identified {len(matched)} "
-            "records requiring review. The model-independent evidence fallback completed "
-            "the analysis; an analyst should review the cited evidence before action."
-        ),
-        "findings": findings,
-        "recommendations": _recommendations_or_default(state, ""),
-        "need_more_logs": False,
-        "follow_up_query": "",
-    }
-
-
 def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None:
     """Return a model-free result when every deterministic evidence lane is empty.
 
@@ -560,37 +494,29 @@ def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None
         "behavioral": behavioral_matches,
     }
     processed_logs = state.get("processed_logs") or []
-    total_hits = state.get("total_hits")
-    try:
-        search_returned_zero = total_hits is not None and int(total_hits) <= 0
-    except (TypeError, ValueError):
-        search_returned_zero = False
-    has_usable_search_records = bool(processed_logs) and not search_returned_zero
+    # Any normalized record returned by an executed primary, refinement,
+    # shared ATT&CK, or selected-source query is usable search telemetry.
+    # A zero `total_hits` value from one primary Wazuh query must not erase
+    # concurrently returned technique telemetry.
+    has_usable_search_records = bool(processed_logs)
     if not has_usable_search_records:
         evidence_counts = {key: 0 for key in evidence_counts}
     if has_usable_search_records and any(evidence_counts.values()):
         return None
 
-    parsed = _deterministic_reasoning_fallback(state, histogram)
     coverage_status = str(
         (state.get("coverage_assessment") or {}).get("status") or "unknown"
     )
-    if coverage_status != "covered":
-        parsed["summary"] = (
-            "Deterministic negative screening found zero detection-rule, artifact, IOC, "
-            "or behavioral-evidence matches. Model reasoning was skipped because "
-            "it cannot compensate for absent evidence. Telemetry coverage is "
-            f"{coverage_status}, so the result is inconclusive rather than clean."
-        )
-    else:
-        parsed["summary"] = (
-            "Deterministic negative screening found zero detection-rule, artifact, IOC, "
-            "or behavioral-evidence matches in the covered telemetry window. "
-            "Model reasoning was skipped; this absence does not prove the "
-            "hypothesis false."
-        )
-    parsed["_screening_counts"] = evidence_counts
-    return parsed
+    return {
+        "summary": (
+            "The evidence gate found no rule, artifact, IOC, or behavioral "
+            "matches in the retrieved telemetry. No model reasoning or report "
+            f"will be created. Coverage status: {coverage_status}."
+        ),
+        "findings": [],
+        "recommendations": "",
+        "_screening_counts": evidence_counts,
+    }
 
 
 def _negative_screening_update(state: HuntState, screened: dict) -> dict:
@@ -598,9 +524,7 @@ def _negative_screening_update(state: HuntState, screened: dict) -> dict:
     return {
         "reasoning_summary": screened["summary"],
         "findings": _render_findings(screened["findings"]),
-        "recommendations": _recommendations_or_default(
-            state, screened.get("recommendations")
-        ),
+        "recommendations": "",
         "need_more_logs": False,
         "follow_up_query": None,
         "iteration": state.get("iteration", 0) + 1,
@@ -724,40 +648,50 @@ async def reason_node(state: HuntState) -> dict:
         f"Records after query filter (record_count): {state.get('record_count', 'n/a')}\n"
         f"Total records matching the live SIEM query: {state.get('total_hits', 'n/a')}\n"
         f"Records reaching this analysis (after dedup): {len(processed_logs)}\n"
-        f"Fell back to unfiltered (query matched nothing): {state.get('used_fallback_unfiltered', 'n/a')}\n"
-        f"Detection-rule matcher (event-ID + keyword substring match against "
-        f"the 'detail' field, where the event IDs/keywords were themselves "
-        f"LLM-derived for THIS hypothesis+technique via "
-        f"derive_detection_indicators — not a hardcoded table, and not a "
-        f"full field-level rule evaluation, since this schema has no "
-        f"structured GrantedAccess/TargetImage/CommandLine fields): "
-        f"matched {sigma_matched_count} of {len(processed_logs)} records. "
-        f"Matched records are marked '_rule_match': true in the sample "
-        f"below and were prioritized into it.\n"
+        f"Unfiltered substitution used: {state.get('used_fallback_unfiltered', False)}\n"
+        f"Selected telemetry sources: {state.get('siem_types') or [state.get('siem_type', 'folder')]}\n"
+        f"Active query source: {state.get('active_query_source') or state.get('siem_type', 'folder')}\n"
+        f"Active lookback minutes: {state.get('active_lookback_minutes', 'n/a')}\n"
+        f"Active result cap: {state.get('active_query_limit', 'n/a')}\n"
+        f"Enabled detection-rule execution matched {sigma_matched_count} of "
+        f"{len(processed_logs)} records. Matched records are marked "
+        f"'_rule_match': true in the sample and are evidence leads rather "
+        f"than automatic conclusions.\n"
     )
     coverage_section = "\n".join(f"- {gap}" for gap in state.get("coverage_gaps") or []) or "- No deterministic coverage gaps identified."
     coverage_matrix = json.dumps(state.get("coverage_assessment") or {}, indent=2)
     intel_section = json.dumps(state.get("enrichment_hits") or [], indent=2)
-    anomaly_section = json.dumps(state.get("anomaly_scores") or [], indent=2)
     evidence_highlights_section = json.dumps(state.get("evidence_highlights") or [], indent=2)
     behavioral_evidence_section = json.dumps(
         state.get("behavioral_evidence") or [], indent=2
     )
     memory_section = json.dumps(state.get("hunt_memory") or [], indent=2, default=str)
-
+    retrieval_section = json.dumps(
+        state.get("retrieval_attempts") or [], indent=2, default=str
+    )
+    completeness_section = json.dumps(
+        state.get("hunt_completeness") or {}, indent=2, default=str
+    )
+    active_source = str(
+        state.get("active_query_source") or state.get("siem_type") or "folder"
+    )
     prompt = (
         f"Hypothesis: {state.get('hypothesis_text')}\n"
         f"MITRE technique: {state.get('technique_id')} ({state.get('technique_name')}) — {state.get('tactic')}\n"
-        f"Detection-rule draft + matcher results:\n{state.get('sigma_rule')}\n\n"
+        f"Detection-rule execution results:\n{state.get('sigma_rule')}\n\n"
         f"Ingestion diagnostics:\n{diagnostics}\n"
         f"MITRE ATT&CK telemetry coverage matrix:\n{coverage_matrix}\n\n"
-        f"Deterministic coverage-gap assessment:\n{coverage_section}\n\n"
+        f"Coverage Agent gap assessment:\n{coverage_section}\n\n"
         f"On-prem threat-intel hits (local blocklist only):\n{intel_section}\n\n"
-        f"Deterministic behavioural rarity signals (not findings by themselves):\n{anomaly_section}\n\n"
-        f"Strict deterministic behavioral evidence:\n{behavioral_evidence_section}\n\n"
-        f"Deterministic artifact highlights (literal matches in normalized evidence):\n"
+        f"Evidence Selection Agent behavioral evidence:\n{behavioral_evidence_section}\n\n"
+        f"Evidence Selection Agent artifact highlights:\n"
         f"{evidence_highlights_section}\n\n"
         f"Prior completed hunts with similar technique context (context only, not evidence):\n{memory_section}\n\n"
+        f"Retrieval-attempt ledger (authoritative query execution audit):\n{retrieval_section}\n\n"
+        f"Hunt completeness assessment:\n{completeness_section}\n\n"
+        f"Active follow-up query source: {active_source}\n"
+        f"User-authorized telemetry sources: "
+        f"{json.dumps(state.get('siem_types') or [active_source])}\n"
         f"{kb_section}"
         f"Event-type histogram across ALL {len(processed_logs)} processed records "
         f"(event_id/type -> count, top {len(histogram)} shown):\n"
@@ -804,30 +738,122 @@ async def reason_node(state: HuntState) -> dict:
             f"Reasoning model did not return a complete, validated response after "
             f"{REASONING_MAX_ATTEMPTS} attempts. {strike_error}"
         )
-        logger.error(
-            "reasoning model exhausted all strikes; using deterministic evidence fallback: %s",
-            reasoning_error,
-        )
-        parsed = _deterministic_reasoning_fallback(state, histogram)
-        reasoning_degraded = True
-        reasoning_mode = "deterministic_fallback"
+        logger.error("reasoning model exhausted all strikes: %s", reasoning_error)
+        return {
+            "reasoning_summary": "",
+            "findings": "",
+            "recommendations": "",
+            "need_more_logs": False,
+            "follow_up_query": None,
+            "iteration": state.get("iteration", 0) + 1,
+            "reasoning_cache_hit": False,
+            "reasoning_failed": True,
+            "reasoning_degraded": False,
+            "reasoning_mode": "model_failed",
+            "reasoning_attempts": reasoning_attempts,
+            "reasoning_error": reasoning_error,
+            "report_status": "not_generated_reasoning_failed",
+        }
 
     iteration = state.get("iteration", 0) + 1
     max_iterations = state.get("max_iterations", 1)
     need_more = bool(parsed.get("need_more_logs")) and iteration < max_iterations
+    follow_up_query = None
+    follow_up_validation_error = None
+    selected_sources = list(dict.fromkeys(
+        str(source).strip().lower()
+        for source in (
+            state.get("siem_types")
+            or [state.get("siem_type") or active_source]
+        )
+        if str(source).strip()
+    ))
+    follow_up_source = str(
+        parsed.get("follow_up_source") or ""
+    ).strip().lower()
+    follow_up_objective = str(
+        parsed.get("follow_up_objective") or ""
+    ).strip()
+    follow_up_lookback = min(
+        max(1, int(parsed.get("follow_up_lookback_minutes") or 1)),
+        int(
+            state.get("max_lookback_minutes")
+            or get_value(
+                "autonomy", "max_lookback_minutes", default=10080
+            )
+        ),
+    )
+    follow_up_limit = min(
+        max(1, int(parsed.get("follow_up_limit") or 1)),
+        int(
+            state.get("max_query_limit")
+            or get_value("autonomy", "max_query_limit", default=2000)
+        ),
+    )
+    if need_more:
+        if follow_up_source not in selected_sources:
+            need_more = False
+            follow_up_validation_error = (
+                "Reasoning Agent selected a telemetry source outside the "
+                "user-authorized source scope."
+            )
+        else:
+            generated = await call_tool(
+                "generate_siem_query",
+                {
+                    "hypothesis_text": state.get("hypothesis_text", ""),
+                    "siem_type": follow_up_source,
+                    "objective": follow_up_objective,
+                    "investigation_context": {
+                        "phase": "reasoning_followup",
+                        "technique_id": state.get("technique_id", ""),
+                        "technique_name": state.get("technique_name", ""),
+                        "tactic": state.get("tactic", ""),
+                        "retrieval_attempts": state.get(
+                            "retrieval_attempts"
+                        ) or [],
+                        "reasoning_summary": parsed.get("summary", ""),
+                    },
+                },
+            )
+            validation = validate_and_normalize_query(
+                str(generated.get("query") or ""),
+                state.get("hypothesis_text", "") or "",
+                follow_up_source,
+            )
+            follow_up_query = validation["query"]
+            follow_up_validation_error = validation["validation_error"]
+            if not follow_up_query:
+                need_more = False
+    if need_more:
+        attempt_key = json.dumps({
+            "source": follow_up_source,
+            "query": follow_up_query,
+            "lookback_minutes": follow_up_lookback,
+            "limit": follow_up_limit,
+        }, sort_keys=True, separators=(",", ":"))
+        if attempt_key in set(state.get("executed_query_keys") or []):
+            need_more = False
+            follow_up_query = None
 
     return {
         "reasoning_summary": parsed.get("summary", ""),
         "findings": _render_findings(parsed.get("findings", "")),
-        "recommendations": _recommendations_or_default(state, parsed.get("recommendations")),
+        "recommendations": str(parsed.get("recommendations") or "").strip(),
         "need_more_logs": need_more,
-        "follow_up_query": parsed.get("follow_up_query") if need_more else None,
+        "follow_up_query": follow_up_query if need_more else None,
+        "follow_up_source": follow_up_source if need_more else None,
+        "follow_up_lookback_minutes": follow_up_lookback if need_more else None,
+        "follow_up_limit": follow_up_limit if need_more else None,
+        "follow_up_objective": follow_up_objective if need_more else None,
         "iteration": iteration,
         "reasoning_cache_hit": reasoning_cache_hit,
         "reasoning_failed": False,
         "reasoning_degraded": reasoning_degraded,
         "reasoning_mode": reasoning_mode,
         "reasoning_attempts": reasoning_attempts,
-        "reasoning_error": reasoning_error if reasoning_degraded else None,
+        "reasoning_error": (
+            reasoning_error if reasoning_degraded else follow_up_validation_error
+        ),
         "report_status": "pending",
     }

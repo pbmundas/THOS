@@ -1,5 +1,52 @@
+import re
+
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
+
+
+_LITERAL_OBSERVABLES = re.compile(
+    r"""(?ix)
+    \b(?:
+        [a-z0-9_.-]+\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|msi|sh)
+        |
+        (?:event\s*id|eventid)[\s:_-]*\d{1,6}
+        |
+        (?:tcp|udp)?\s*port\s+\d{1,5}
+        |
+        T\d{4}(?:\.\d{3})?
+    )\b
+    """
+)
+
+
+def _investigation_requirements(detail: dict, mitre_detail: dict) -> dict:
+    """Preserve a verifiable hunt contract instead of passing only prose."""
+    text = str(detail.get("text") or "")
+    observables = list(dict.fromkeys(
+        match.group(0).strip()
+        for match in _LITERAL_OBSERVABLES.finditer(text)
+    ))[:30]
+    return {
+        "title": str(detail.get("title") or "")[:500],
+        "statement": text,
+        "technique_id": str(detail.get("technique") or ""),
+        "tactic": str(detail.get("tactic") or mitre_detail.get("tactic") or ""),
+        "required_data_sources": list(mitre_detail.get("data_sources") or []),
+        "literal_observables": observables,
+        "investigation_steps": [
+            "Validate that each required telemetry category is available in the selected source set.",
+            "Run a high-precision direct-evidence query using only literal hypothesis and governed ATT&CK context.",
+            "If the search is empty, expand the bounded time window and run a broader technique/context query.",
+            "If the search is noisy or capped, tighten on observed entities, event categories, and adjacent timestamps.",
+            "Correlate supported leads by host, user, process, network entity, and time across selected sources.",
+            "Conclude only after planned retrieval branches are executed or explicitly recorded as unavailable.",
+        ],
+        "completion_criteria": (
+            "Every selected telemetry source was queried, required ATT&CK data-source "
+            "coverage was assessed, query failures were recorded, and supported leads "
+            "were correlated or the evidence gate stopped model reasoning."
+        ),
+    }
 
 
 async def select_hypothesis(state: HuntState) -> dict:
@@ -35,8 +82,12 @@ async def select_hypothesis(state: HuntState) -> dict:
 
     return {
         "hypothesis_id": detail.get("id", state.get("hypothesis_id")),
+        "hypothesis_title": detail.get("title", ""),
         "hypothesis_text": detail.get("text", state.get("hypothesis_text", "")),
         "technique_id": technique_id,
         "technique_name": mitre_detail.get("name", ""),
         "tactic": detail.get("tactic", mitre_detail.get("tactic", "")),
+        "hypothesis_severity": detail.get("severity", ""),
+        "hypothesis_category": detail.get("category", ""),
+        "investigation_requirements": _investigation_requirements(detail, mitre_detail),
     }

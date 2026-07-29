@@ -131,8 +131,8 @@ const NODE_LABELS = {
   supervisor: "Planning adaptive hunt workflow",
   hypothesis: "Selecting hypothesis & MITRE context",
   hunt_memory: "Recalling relevant completed hunts",
-  query_gen: "Generating SIEM query",
-  siem_fetch: "Fetching logs from SIEM",
+  query_gen: "Generating source-specific hunt query",
+  siem_fetch: "Fetching bounded telemetry",
   log_processing: "Normalizing and deduplicating logs",
   guardrail: "Screening untrusted telemetry",
   soc_tools: "Running detection and enrichment tools",
@@ -151,13 +151,13 @@ const NODE_REASONS = {
   hypothesis: "resolves hunt scope and ATT&CK context",
   hunt_memory: "recalls lessons from comparable hunts",
   supervisor: "selects the analysis stages required",
-  query_gen: "creates deterministic, validated SIEM syntax",
-  siem_fetch: "retrieves bounded telemetry from the selected source",
+  query_gen: "creates dialect-validated syntax for the current investigation step",
+  siem_fetch: "retrieves bounded telemetry and records the complete query attempt",
   log_processing: "normalizes evidence and removes duplicates",
   guardrail: "screens untrusted log text before model use",
   soc_tools: "runs community rules, local rules, and enrichment concurrently",
   coverage_gap: "checks whether available telemetry supports a conclusion",
-  adaptive_replan: "decides whether one evidence-based query refinement is justified",
+  adaptive_replan: "expands empty searches, tightens noise, pivots leads, and exhausts selected sources",
   threat_intel: "compares observed indicators with local intelligence",
   negative_screening_gate: "checks whether any rule, artifact, IOC, or behavioral evidence exists",
   reasoning: "turns evidence into cited findings",
@@ -186,7 +186,7 @@ function displayReportContent(value) {
 }
 
 function eventReason(node, data = {}) {
-  if (node === "siem_fetch") return `retrieved ${data.record_count || 0} matching records`;
+  if (node === "siem_fetch") return `retrieved ${data.last_record_count ?? data.record_count ?? 0} record(s) from ${data.active_query_source || "the active source"}; ${data.record_count || 0} cumulative`;
   if (node === "log_processing") return `retained ${(data.processed_logs || []).length} normalized records`;
   if (node === "soc_tools") {
     const enrichment = data.enrichment || {};
@@ -198,11 +198,12 @@ function eventReason(node, data = {}) {
     return `evaluated ${evaluated} rules; flagged ${data.sigma_matched_count || 0} records`;
   }
   if (node === "coverage_gap") return `identified ${(data.coverage_gaps || []).length} coverage gaps`;
+  if (node === "adaptive_replan" && data.replan_action === "refine_query") return `supervisor agent scheduled ${data.follow_up_objective || "a bounded refinement"} on ${data.follow_up_source || "the active source"}`;
+  if (node === "adaptive_replan") return `supervisor agent stopped retrieval with completeness ${data.hunt_completeness?.status || "unknown"}`;
   if (node === "threat_intel") return `found ${(data.enrichment_hits || []).length} local IOC matches`;
   if (node === "negative_screening_gate" && data.reasoning_skipped) return "found no actionable evidence; stopped before model reasoning and report generation";
   if (node === "negative_screening_gate") return "found evidence requiring analyst reasoning";
   if (node === "reasoning" && data.reasoning_failed) return `failed after ${data.reasoning_attempts || 3} attempts; report generation was stopped`;
-  if (node === "reasoning" && data.reasoning_degraded) return `model attempts exhausted; completed with deterministic evidence fallback and analyst review`;
   if (node === "reasoning" && data.reasoning_cache_hit) return "reused a previously validated reasoning result";
   if (node === "reasoning" && data.reasoning_attempts) return `returned a complete validated result on attempt ${data.reasoning_attempts}`;
   return NODE_REASONS[node] || "completed this hunt stage";
@@ -360,8 +361,11 @@ function App() {
   const [severity, setSeverity] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [readingHypothesis, setReadingHypothesis] = useState(null);
-  const [activeSources, setActiveSources] = useState([{ id: "folder", label: "Local folder" }]);
-  const [siemType, setSiemType] = useState("folder");
+  const [activeSources, setActiveSources] = useState([
+    { id: "wazuh", label: "Wazuh" },
+    { id: "folder", label: "Local folder" },
+  ]);
+  const [siemType, setSiemType] = useState("wazuh");
   const [folderPath, setFolderPath] = useState("/data/log_sources");
   const [coverStyle, setCoverStyle] = useState("1");
   const [running, setRunning] = useState(false);
@@ -411,7 +415,10 @@ function App() {
       const payload = await api("/api/telemetry-sources");
       const items = Array.isArray(payload.items) && payload.items.length ? payload.items : [{ id: "folder", label: "Local folder" }];
       setActiveSources(items);
-      setSiemType(payload.default || items[0].id || "folder");
+      const primary = items.some((item) => item.id === "wazuh")
+        ? "wazuh"
+        : (payload.default || items[0].id || "folder");
+      setSiemType(primary);
     } catch {
       setActiveSources([{ id: "folder", label: "Local folder" }]);
       setSiemType("folder");
@@ -634,6 +641,7 @@ function App() {
           hypothesis_tactic: hypothesisTactic,
           hypothesis_technique: hypothesisTechnique,
           siem_type: siemType,
+          siem_types: [siemType],
           log_source_path: siemType === "folder" ? folderPath : null,
           cover_style: coverStyle,
         }),
@@ -962,7 +970,7 @@ function App() {
                   ))}
                   {running && activeNode && <button className="progress-row current" onClick={() => setExpandedNode(expandedNode === activeNode ? "" : activeNode)}><span className="pulse-ring" /><div><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "Agent is working on the current hunt state."}</p><small>{activeAgent?.model_name ? `${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "deterministic/tool stage"}</small></div><time>running</time></button>}
                 </div>
-                {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>{finalState.reasoning_degraded ? "Deterministic fallback conclusion" : "Verified conclusion"}</h3><p>{finalState.reasoning_summary}</p></div>}
+                {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>Verified conclusion</h3><p>{finalState.reasoning_summary}</p></div>}
               </section>
             )}
           </div>
@@ -986,13 +994,12 @@ function App() {
               <div className="hunt-history-list">
                 {huntHistory.map((hunt) => {
                   const report = reports.find((item) => item.hunt_id === hunt.hunt_id);
-                  const degraded = Boolean(hunt.outcome?.reasoning_degraded);
                   const failed = hunt.status === "failed";
                   const failureReason = hunt.failure_reason || (failed ? "Hunt failed before a detailed reason was recorded." : "");
                   return <article key={hunt.hunt_id} className={`hunt-history-row ${hunt.status}`}>
                     <span className={`run-status run-${hunt.status}`}>{hunt.status}</span>
                     <div><strong>{hunt.hypothesis_id || "Dynamic hypothesis"}</strong><code>{hunt.hunt_id}</code><small>{new Date(hunt.created_at).toLocaleString()} · Last stage: {hunt.last_stage || "started"}</small></div>
-                    <div className="run-outcome">{failed ? <p><ExclamationTriangleIcon />{failureReason}</p> : degraded ? <p className="degraded"><ShieldCheckIcon />Completed with deterministic evidence fallback; analyst review recommended.</p> : <p className="successful"><CheckCircleIcon />Completed successfully</p>}{hunt.outcome?.reasoning_error && <details><summary>Reasoning strikes</summary><pre>{hunt.outcome.reasoning_error}</pre></details>}</div>
+                    <div className="run-outcome">{failed ? <p><ExclamationTriangleIcon />{failureReason}</p> : <p className="successful"><CheckCircleIcon />Completed successfully</p>}{hunt.outcome?.reasoning_error && <details><summary>Reasoning strikes</summary><pre>{hunt.outcome.reasoning_error}</pre></details>}</div>
                     {report ? <button className="secondary-button" onClick={() => openReport(report.filename)}>View report</button> : <span className="no-report">No report</span>}
                   </article>;
                 })}

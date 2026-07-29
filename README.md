@@ -1,10 +1,11 @@
 # THOS - Threat Hunting Operating System
 
-THOS is an on-premises security operations platform for hypothesis-driven
+THOS is a security operations platform for hypothesis-driven
 threat hunting, detection monitoring, digital forensics, threat-intelligence
 correlation, risk analysis, and evidence-backed reporting.
 
-It combines deterministic security tooling with local model reasoning. Live
+It combines evidence-integrity controls and security tools with local
+agent-model planning and reasoning. Live
 telemetry and submitted evidence are collected and normalized first; model
 reasoning is used only when the evidence gate finds relevant events or other
 supported signals.
@@ -56,7 +57,7 @@ The primary request path is:
    gateway.
 2. The gateway validates the signed session, role, feature permission, route,
    and request before forwarding an operation.
-3. The LangGraph orchestrator coordinates deterministic agents, MCP tools,
+3. The LangGraph orchestrator coordinates specialist agents, governed tools,
    telemetry retrieval, local knowledge, and Ollama model tiers.
 4. Connectors retrieve bounded evidence from the selected source. Evidence is
    normalized, deduplicated, guarded, correlated, and checked for coverage.
@@ -121,12 +122,13 @@ Knowledge refresh
   -> SIEM retrieval
   -> Log processing and normalization
   -> Guardrails
-  -> Deterministic SOC tools
+  -> Detection and evidence tools
   -> ATT&CK coverage analysis
   -> Threat-intelligence enrichment
+  -> Supervisor-directed adaptive retrieval
   -> Negative evidence screening
       -> no supported evidence: stop; retain hunt outcome; create no report
-      -> supported evidence: bounded adaptive replan and local reasoning
+      -> supported evidence: local reasoning
   -> Citation verification
   -> Detection-engineering proposal
   -> Audience-aware communication
@@ -137,16 +139,17 @@ Only one hunt runs at a time. The active-hunt banner opens the timestamped
 progress view. Hunts continue on the server if the browser reloads or navigates
 away.
 
-Related Wazuh hunts can reuse telemetry by ATT&CK technique and time window.
+Related hunts can reuse identical validated telemetry retrievals by ATT&CK
+technique and time window.
 Detection Monitoring can use bounded multi-search batches where supported.
-Adaptive scheduling prioritizes overdue critical and high-severity work, uses
-recorded duration percentiles, and reduces batch pressure when resource or
-source-health thresholds are exceeded.
+The Schedule Planning Agent orders overdue work, uses recorded duration
+percentiles, and selects a batch that fits the maintenance window and current
+model, queue, and source capacity.
 
 When relevant evidence exists but the reasoning model returns malformed output,
 THOS makes up to three bounded attempts. If they all fail, the current
-implementation can produce a clearly identified deterministic,
-evidence-restricted fallback rather than inventing model conclusions.
+implementation records the model failure and creates no report. THOS does not
+substitute a static technique-specific conclusion for a failed analyst model.
 
 ## Telemetry integrations
 
@@ -216,9 +219,17 @@ The Forensic page has two analysis paths.
 - Streams uploads to managed case storage and records SHA-256, size, original
   name, stored name, collector/tool, authority, and acquisition notes.
 - Verifies evidence integrity before analysis.
-- Parses supported logs, inventories unknown files, inspects archives, and
-  gathers bounded disk-image metadata where supported.
-- Correlates detection rules, YARA results, and local intelligence.
+- Profiles artifacts by content, parses supported logs, inventories archives
+  without unsafe extraction, and gives those facts to the Forensic Planning
+  Agent.
+- Runs only the planner-selected available tools, then performs a second
+  planning pass over the first-pass results to decide whether memory, disk,
+  executable, or document analysis is still required.
+- Bundles YARA, capa with pinned rules, FLOSS, pefile, GNU strings, ExifTool,
+  ClamAV, oletools, Volatility 3, RegRipper, libewf, The Sleuth Kit, and safe
+  PDF/document parsers in the forensic worker.
+- Correlates selected tool results and local intelligence as evidence facts;
+  the Forensic Interpretation Agent owns the final cited assessment.
 - Produces an ordered timeline, ATT&CK mappings, proven facts, unresolved
   anomalies, limitations, and chain-of-custody details.
 
@@ -227,11 +238,20 @@ The Forensic page has two analysis paths.
 - Accepts PE/ELF executables, DLLs, scripts, documents, archives, raw/VM/LiME
   memory images, core files, minidumps, and process dumps.
 - Hashes and preserves the original artifact before scanning.
-- Runs enabled actionable YARA rules deterministically without model reasoning.
-- Shows matched rule metadata, namespaces, tags, byte offsets, matched data,
-  scan duration, and integrity information.
+- Routes PE/ELF, PDF, Office/OLE, registry, disk, memory, and generic files to
+  model-selected applicable tools. The dedicated YARA action remains an
+  explicit analyst-requested scan.
+- Shows each selected tool's duration, structured output, limitations,
+  truncation state, and evidence observations.
 - Treats a no-match result as inconclusive rather than proof that an artifact
   is benign.
+
+Local tool processes use fixed argument arrays without a shell, per-tool
+timeouts, and output caps. Submitted samples are never executed by the THOS
+worker. The Forensics page lists only tools installed in the worker image.
+
+See [docs/FORENSIC-TOOLS.md](docs/FORENSIC-TOOLS.md) for the capability matrix,
+resource controls, network allowlist, directory mapping, and validation steps.
 
 ## Detection Monitoring and YARA
 
@@ -255,10 +275,12 @@ underlying event evidence remains the source of truth.
 
 ## Reports, risks, and auditability
 
-Hunt reports begin with a concise summary and include executed queries,
-ingestion diagnostics, representative evidence, record references, findings,
-ATT&CK coverage, intelligence correlation, agent timings, limitations,
-recommendations, and draft detection improvements.
+Hunt reports begin with a concise summary and contain only investigation
+content: hypothesis and scope, executed queries, retrieval results,
+representative evidence, record references, findings, ATT&CK coverage,
+intelligence correlation, limitations, recommendations, and draft detection
+improvements. Platform audit, model, cache, case, and workflow details remain
+in operational views and are not included in hunt reports.
 
 Forensic reports additionally include chain of custody, proven facts,
 unresolved anomalies, technical timelines, and evidence integrity.
@@ -267,10 +289,10 @@ The Reports page supports dynamic age filters from days to years. Report
 previews provide Markdown and PDF downloads without obscuring the preview
 controls.
 
-The deterministic Risk Analysis Agent consolidates verifier-supported findings
-and detections into entity-level risks. Each risk includes a score, severity,
-age, discovery explanation, evidence source, export support, and a link to its
-originating detection or report.
+The Risk Analysis Agent consolidates verifier-supported findings and detections
+into entity-level risks. Each risk includes a score, severity, age, discovery
+explanation, evidence source, export support, and a link to its originating
+detection or report.
 
 Audit logs record timestamps, actor, action, outcome, request context, and
 workflow identifiers to support troubleshooting and reconstruction.

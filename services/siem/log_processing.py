@@ -13,13 +13,34 @@ async def process_logs_node(state: HuntState) -> dict:
     seen = set()
     deduped = []
     for log in logs:
-        key = (log.get("timestamp"), log.get("host"), log.get("user"), log.get("event"))
+        key = (
+            log.get("timestamp"),
+            log.get("host"),
+            log.get("user"),
+            log.get("event"),
+            log.get("src_ip"),
+            log.get("dst_ip"),
+            log.get("src_port"),
+            log.get("dst_port"),
+            log.get("protocol"),
+            str(log.get("detail") or "")[:1000],
+            log.get("source_type"),
+        )
         if key not in seen:
             seen.add(key)
             deduped.append(log)
 
     attributed = [
-        attribute_record(log, str(state.get("siem_type") or ""))
+        attribute_record(
+            log,
+            str(
+                log.get("collector")
+                or log.get("source_type")
+                or state.get("active_query_source")
+                or state.get("siem_type")
+                or ""
+            ),
+        )
         for log in deduped
     ]
     return {

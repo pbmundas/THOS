@@ -3,113 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 
 from services.detection import sigma_engine, sigmahq_engine
-from services.detection.anomaly_scoring import score_rare_events
 from services.detection.sigma_detection_agent import LOCAL_SOURCES, query_sigma_for_hunt
+from services.hunting.evidence_selector import select_hunt_evidence
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
-
-_TECHNIQUE_ARTIFACTS = {
-    # Deterministic artifact aliases supplement, but never replace, Sigma.
-    # They are intentionally narrow and must occur literally in evidence.
-    "T1046": ("nmap", "nmap scripting engine", "masscan", "zmap",
-              "network service discovery", "port scan"),
-}
-
-_NETWORK_BEHAVIOR_TECHNIQUES = (
-    "T1041", "T1046", "T1071", "T1095", "T1102", "T1105", "T1219",
-)
-
-
-def _behavioral_evidence(logs: list[dict], technique_id: str) -> list[dict]:
-    """Return only explicit, source-grounded technique behavior.
-
-    Rarity scores and model-derived keyword hits are useful for prioritization,
-    but neither is an explicit match. Rehearsal, simulation, and compliance
-    records remain eligible whenever they contain the requested technique
-    mapping or strict structured behavior.
-    """
-    normalized_id = str(technique_id or "").strip().upper()
-    if not normalized_id:
-        return []
-    attack_id = re.compile(
-        rf"(?<![A-Z0-9.]){re.escape(normalized_id)}(?![A-Z0-9.])",
-        re.IGNORECASE,
-    )
-    network_family = normalized_id.startswith(_NETWORK_BEHAVIOR_TECHNIQUES)
-    network_port = re.compile(
-        r"""(?ix)
-        ["']?(?:destination|dest|dst)[._ -]?port["']?\s*[:=]\s*["']?\d{1,5}
-        """
-    )
-    results = []
-    for index, log in enumerate(logs):
-        searchable = " ".join((
-            str(log.get("event", "")),
-            str(log.get("evidence_summary", "")),
-            str(log.get("detail", "")),
-        ))
-        exact_technique = bool(attack_id.search(searchable))
-        structured_network = bool(
-            network_family
-            and log.get("dst_ip")
-            and network_port.search(searchable)
-        )
-        if not (exact_technique or structured_network):
-            continue
-        results.append({
-            "record_index": index,
-            "event": str(log.get("event", "unknown")),
-            "reason": (
-                f"explicit ATT&CK mapping {normalized_id}"
-                if exact_technique
-                else "structured network destination and port"
-            ),
-        })
-        if len(results) >= 100:
-            break
-    return results
-
-
-def _keyword_matches(log: dict, event_ids: list[str], keywords: list[str]) -> bool:
-    event = str(log.get("event", "")).lower()
-    detail = " ".join((
-        str(log.get("evidence_summary", "")),
-        str(log.get("detail", "")),
-    )).lower()
-    return (any(event == eid.lower() or event.endswith(f":{eid.lower()}") for eid in event_ids)
-            or any(keyword in detail for keyword in keywords))
-
-
-def _artifact_highlights(logs: list[dict], technique_id: str,
-                         technique_name: str) -> list[dict]:
-    terms = list(_TECHNIQUE_ARTIFACTS.get(technique_id.upper(), ()))
-    normalized_name = technique_name.strip().lower()
-    if len(normalized_name) >= 5:
-        terms.append(normalized_name)
-    highlights = []
-    for index, log in enumerate(logs):
-        haystack = " ".join((
-            str(log.get("event", "")),
-            str(log.get("evidence_summary", "")),
-            str(log.get("detail", "")),
-        )).lower()
-        matched = sorted({term for term in terms if term and term in haystack})
-        if not matched:
-            continue
-        evidence = str(log.get("evidence_summary") or log.get("event") or "")[:800]
-        highlights.append({
-            "record_index": index,
-            "matched_artifacts": matched,
-            "event": str(log.get("event", "unknown")),
-            "evidence": evidence,
-        })
-        if len(highlights) >= 25:
-            break
-    return highlights
-
 
 def _record_key(record: dict) -> str:
     return json.dumps({key: record.get(key) for key in
@@ -146,7 +45,11 @@ async def run_soc_tools_node(state: HuntState) -> dict:
     technique_id = state.get("technique_id", "") or ""
     technique_name = state.get("technique_name", "") or ""
     tactic = state.get("tactic", "") or ""
-    siem_type = (state.get("siem_type", "folder") or "folder").lower()
+    siem_type = (
+        state.get("active_query_source")
+        or state.get("siem_type", "folder")
+        or "folder"
+    ).lower()
 
     indicator_call = call_tool("derive_detection_indicators", {
         "hypothesis_text": hypothesis_text, "technique_id": technique_id,
@@ -194,13 +97,44 @@ async def run_soc_tools_node(state: HuntState) -> dict:
         rules_evaluated = pushed["rules_evaluated"]
         coverage = {**pushed["coverage"], "mode": "siem_query_pushdown", "errors": pushed["errors"]}
 
+    # Preserve evidence established by an earlier selected source or adaptive
+    # iteration. Live-source rule pushdown returns only the current source's
+    # matches, while processed_logs contains the accumulated cross-source set.
+    sigma_refs.update(
+        index
+        for index, record in enumerate(processed_logs)
+        if record.get("_sigma_match") or record.get("_sigmahq_match")
+    )
+
     indicators = indicators or {}
-    event_ids = [str(value) for value in indicators.get("event_ids", [])]
-    keywords = [str(value).lower() for value in indicators.get("keywords", [])]
-    llm_refs = {index for index, log in enumerate(processed_logs)
-                if _keyword_matches(log, event_ids, keywords)}
-    evidence_highlights = _artifact_highlights(processed_logs, technique_id, technique_name)
-    behavioral_evidence = _behavioral_evidence(processed_logs, technique_id)
+    selected_evidence = await select_hunt_evidence(
+        logs=processed_logs,
+        hypothesis_text=hypothesis_text,
+        technique_id=technique_id,
+        technique_name=technique_name,
+        tactic=tactic,
+        objective=str(state.get("active_query_objective") or ""),
+        indicators=indicators,
+        detection_rule_refs=sorted(sigma_refs),
+    )
+    behavioral_evidence = [
+        item
+        for item in selected_evidence.get("evidence") or []
+        if item.get("kind") == "behavioral"
+    ]
+    evidence_highlights = [
+        {
+            **item,
+            "matched_artifacts": item.get("matched_literals") or [],
+        }
+        for item in selected_evidence.get("evidence") or []
+        if item.get("kind") == "artifact"
+    ]
+    llm_refs = {
+        int(item["record_index"])
+        for item in selected_evidence.get("evidence") or []
+        if isinstance(item.get("record_index"), int)
+    }
     for index, record in enumerate(processed_logs):
         record["_llm_indicator_match"] = index in llm_refs
     rule_matches.sort(key=lambda item: item.get("matched_count", 0), reverse=True)
@@ -222,8 +156,8 @@ async def run_soc_tools_node(state: HuntState) -> dict:
             f"{match['matched_count']} match(es)\n"
         )
     sigma_rule_text += (
-        f"# Supplementary model-derived indicators: event IDs {event_ids or '(none)'}, "
-        f"keywords {keywords or '(none)'}, {len(llm_refs)} record(s) matched.\n"
+        f"# Evidence Selection Agent cited {len(llm_refs)} hypothesis-relevant "
+        "record(s) after literal-reference validation.\n"
     )
 
     sigmahq_matches = [item for item in rule_matches if item.get("source") == "sigmahq"]
@@ -247,8 +181,9 @@ async def run_soc_tools_node(state: HuntState) -> dict:
             "thos_rules_matched": len(thos_matches),
             "thos_matched_records": len({i for m in thos_matches for i in m.get("matched_indices", [])}),
             "sigma_rules_evaluated": rules_evaluated, "sigma_rules_matched": len(rule_matches),
-            "sigma_matched_records": len(sigma_refs), "llm_indicator_event_ids": event_ids,
-            "llm_indicator_keywords": keywords, "llm_indicator_matched_records": len(llm_refs),
+            "sigma_matched_records": len(sigma_refs),
+            "governed_indicators": indicators,
+            "evidence_selection": selected_evidence,
+            "llm_indicator_matched_records": len(llm_refs),
         },
-        "anomaly_scores": score_rare_events(processed_logs),
     }

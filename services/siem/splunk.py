@@ -211,7 +211,12 @@ def _normalize_record(raw: dict) -> dict:
     }
 
 
-def fetch_logs(query: str, limit: int = 25, **_ignored) -> dict:
+def fetch_logs(
+    query: str,
+    limit: int = 25,
+    lookback_minutes: int | None = None,
+    **_ignored,
+) -> dict:
     """
     Entry point dispatched from siem_connector.fetch_logs when
     siem_type == "splunk". Synchronous (uses httpx.Client) so it can be
@@ -219,6 +224,8 @@ def fetch_logs(query: str, limit: int = 25, **_ignored) -> dict:
     event-loop juggling — same shape as logrhythm.fetch_logs.
     """
     cfg = _get_config()
+    if lookback_minutes:
+        cfg = {**cfg, "lookback": f"-{max(1, int(lookback_minutes))}m"}
 
     with httpx.Client(headers=_headers(cfg["token"]), timeout=cfg["poll_timeout"] + 10,
                        verify=cfg["verify_ssl"]) as client:

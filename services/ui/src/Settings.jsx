@@ -28,6 +28,32 @@ const displayDetectionText = (value) => String(value || "")
   .replace(/Sigma/gi, "Detection rule");
 const CONNECTION_SIEMS = ["wazuh", "elasticsearch", "logrhythm", "splunk", "qradar", "folder"];
 const ALL_FEATURES = ["hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings"];
+const DETECTION_RULE_TEMPLATE = `title: New detection rule
+status: experimental
+description: Describe the behavior and intended evidence.
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: "\\\\example.exe"
+  condition: selection
+level: medium
+tags:
+  - attack.execution
+`;
+const YARA_RULE_TEMPLATE = `rule New_Local_Rule {
+  meta:
+    title = "New local rule"
+    description = "Describe the matched artifact"
+    severity = "medium"
+    status = "experimental"
+  strings:
+    $indicator = "replace_me" ascii wide nocase
+  condition:
+    $indicator
+}
+`;
 
 function scheduleLabel(item) {
   const count = Number(item.interval || 1);
@@ -55,6 +81,14 @@ function schedulePerformance(item) {
   return parts.length ? ` · ${parts.join(" · ")}` : "";
 }
 
+function RuleAuthoringPanel({ title, content, onChange, onSave, onCancel, working }) {
+  return <section className="rule-authoring">
+    <header><div><h4>{title}</h4><p>Only locally managed rules can be edited. Content is validated before it is saved.</p></div></header>
+    <textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck="false" />
+    <div className="settings-actions"><button className="primary-button" disabled={working || !content.trim()} onClick={onSave}>{working ? <ArrowPathIcon className="spinning" /> : <CheckCircleIcon />} Validate and save</button><button className="secondary-button" disabled={working} onClick={onCancel}>Cancel</button></div>
+  </section>;
+}
+
 function Notice({ type = "success", children }) {
   return <div className={`settings-notice ${type}`}><span>{type === "error" ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}</span>{children}</div>;
 }
@@ -66,7 +100,7 @@ function DayPicker({ value, onChange }) {
 
 function GeneralTab({ activeSources }) {
   const [models, setModels] = useState([]);
-  const [form, setForm] = useState({ default_model: "", default_iterations: 1, default_siem: "folder" });
+  const [form, setForm] = useState({ default_model: "", default_iterations: 2, default_siem: "folder" });
   const [timezone, setTimezone] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -90,7 +124,7 @@ function GeneralTab({ activeSources }) {
     {notice && <Notice type={notice.includes("saved") ? "success" : "error"}>{notice}</Notice>}
     <div className="settings-form-grid">
       <label>Default local model<select disabled={loading} value={form.default_model} onChange={(event) => setForm({ ...form, default_model: event.target.value })}>{models.map((item) => <option key={item.name} value={item.name}>{item.name} · {(Number(item.size || 0) / 1024 ** 3).toFixed(1)} GB</option>)}</select></label>
-      <label>Default hunt iterations<select value={form.default_iterations} onChange={(event) => setForm({ ...form, default_iterations: Number(event.target.value) })}>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}{value === 1 ? " · recommended" : ""}</option>)}</select></label>
+      <label>Default hunt iterations<select value={form.default_iterations} onChange={(event) => setForm({ ...form, default_iterations: Number(event.target.value) })}>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}{value === 2 ? " · recommended" : ""}</option>)}</select></label>
       <label>Default telemetry source<select value={form.default_siem} onChange={(event) => setForm({ ...form, default_siem: event.target.value })}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       <label>Scheduler timezone<input value={timezone} disabled /></label>
     </div>
@@ -109,6 +143,8 @@ function DetectionRulesTab({ activeSources }) {
   const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [notice, setNotice] = useState("");
   const [editingSchedule, setEditingSchedule] = useState(null);
+  const [authoring, setAuthoring] = useState(null);
+  const [authoringWorking, setAuthoringWorking] = useState(false);
   const load = useCallback(async () => {
     try { setData(await api(`/api/settings/sigma?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
     catch (error) { setNotice(error.message); }
@@ -118,6 +154,26 @@ function DetectionRulesTab({ activeSources }) {
   const toggle = async (rule) => {
     try { await api(`/api/settings/sigma/${encodeURIComponent(rule.id)}`, jsonOptions("PUT", { enabled: !rule.enabled })); load(); }
     catch (error) { setNotice(error.message); }
+  };
+  const editRule = async (rule) => {
+    try {
+      const result = await api(`/api/settings/sigma/authoring/${encodeURIComponent(rule.id)}`);
+      setAuthoring({ id: rule.id, content: result.content, mode: "edit" });
+    } catch (error) { setNotice(error.message); }
+  };
+  const saveRule = async () => {
+    if (!authoring) return;
+    setAuthoringWorking(true);
+    try {
+      const target = authoring.mode === "edit"
+        ? `/api/settings/sigma/authoring/${encodeURIComponent(authoring.id)}`
+        : "/api/settings/sigma/authoring";
+      const result = await api(target, jsonOptions(authoring.mode === "edit" ? "PUT" : "POST", { content: authoring.content }));
+      setNotice(`Detection rule ${result.id} saved successfully.`);
+      setAuthoring(null);
+      await load();
+    } catch (error) { setNotice(error.message); }
+    finally { setAuthoringWorking(false); }
   };
   const intervalMax = frequency === "minutes" ? 59 : 24;
   const schedule = async (rule) => {
@@ -164,8 +220,10 @@ function DetectionRulesTab({ activeSources }) {
   const remove = async (id) => { await api(`/api/settings/schedules/sigma/${id}`, { method: "DELETE" }); load(); };
   return <div className="settings-stack">
     <section className="settings-card">
-      <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>Detection rule catalog</h3><p>{data.total.toLocaleString()} community and local rules. Disabled rules are excluded from hunts and scheduled validation.</p></div></div>
-      {notice && <Notice type={notice.startsWith("Scheduled") ? "success" : "error"}>{notice}</Notice>}
+      <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>Detection rule catalog</h3><p>{data.total.toLocaleString()} community and local rules. Admins and SMEs can create or edit locally managed rules.</p></div></div>
+      {notice && <Notice type={/Scheduled|saved successfully|Updated/.test(notice) ? "success" : "error"}>{notice}</Notice>}
+      <div className="settings-actions"><button className="secondary-button" onClick={() => setAuthoring({ id: "", content: DETECTION_RULE_TEMPLATE, mode: "create" })}><PlusIcon /> Create detection rule</button></div>
+      {authoring && <RuleAuthoringPanel title={authoring.mode === "edit" ? `Edit ${authoring.id}` : "Create detection rule"} content={authoring.content} onChange={(content) => setAuthoring({ ...authoring, content })} onSave={saveRule} onCancel={() => setAuthoring(null)} working={authoringWorking} />}
       <div className="sigma-controls">
         <input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule ID, title, or ATT&CK tag…" />
         <label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label>
@@ -176,7 +234,7 @@ function DetectionRulesTab({ activeSources }) {
         <DayPicker value={days} onChange={setDays} />
       </div>
       <div className="settings-actions">{editingSchedule ? <><button className="primary-button" disabled={!days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="primary-button" disabled={!days.length || !["wazuh", "splunk"].includes(siem)} onClick={scheduleCatalog}><ClockIcon /> Schedule all compatible rules</button>}</div>
-      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.severity || rule.level} severity · {rule.id}</small></div><button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+      <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.severity || rule.level} severity · {rule.id}</small></div>{rule.editable && <button className="secondary-button compact" onClick={() => editRule(rule)}><PencilSquareIcon /> Edit</button>}<button className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || !days.length} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
     <section className="settings-card"><h3>Scheduled detection validations</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>{item.severity || "medium"} severity · {scheduleLabel(item)} · {item.siem_type} · {(item.days || []).map((day) => DAYS[day]).join(", ")} · {item.last_status}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No detection schedules configured.</p>}</div></section>
   </div>;
@@ -192,6 +250,8 @@ function YaraRulesTab() {
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState(null);
+  const [authoring, setAuthoring] = useState(null);
+  const [authoringWorking, setAuthoringWorking] = useState(false);
   const load = useCallback(async () => {
     try { setData(await api(`/api/settings/yara?query=${encodeURIComponent(query)}&severity=${severity}&page_size=100`)); }
     catch (error) { setNotice(error.message); }
@@ -200,6 +260,26 @@ function YaraRulesTab() {
   const toggle = async (rule) => {
     try { await api(`/api/settings/yara/${encodeURIComponent(rule.id)}`, jsonOptions("PUT", { enabled: !rule.enabled })); load(); }
     catch (error) { setNotice(error.message); }
+  };
+  const editRule = async (rule) => {
+    try {
+      const result = await api(`/api/settings/yara/authoring/${encodeURIComponent(rule.id)}`);
+      setAuthoring({ id: rule.id, content: result.content, mode: "edit" });
+    } catch (error) { setNotice(error.message); }
+  };
+  const saveRule = async () => {
+    if (!authoring) return;
+    setAuthoringWorking(true);
+    try {
+      const target = authoring.mode === "edit"
+        ? `/api/settings/yara/authoring/${encodeURIComponent(authoring.id)}`
+        : "/api/settings/yara/authoring";
+      const result = await api(target, jsonOptions(authoring.mode === "edit" ? "PUT" : "POST", { content: authoring.content }));
+      setNotice(`YARA rule ${result.id} saved successfully.`);
+      setAuthoring(null);
+      await load();
+    } catch (error) { setNotice(error.message); }
+    finally { setAuthoringWorking(false); }
   };
   const scan = async (ruleId = null) => {
     setWorking(true);
@@ -255,15 +335,17 @@ function YaraRulesTab() {
   const remove = async (id) => { await api(`/api/settings/schedules/yara/${id}`, { method: "DELETE" }); load(); };
   return <div className="settings-stack">
     <section className="settings-card">
-      <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>YARA rule catalog and scanning</h3><p>Compile enabled rules and scan managed forensic or local evidence with bounded file-size, file-count, and timeout controls.</p></div></div>
-      {notice && <Notice type={/scanned|Scheduled/.test(notice) ? "success" : "error"}>{notice}</Notice>}
+      <div className="settings-card-title"><span><ShieldCheckIcon /></span><div><h3>YARA rule catalog and scanning</h3><p>Admins and SMEs can create or edit locally managed rules, then scan evidence with bounded resource controls.</p></div></div>
+      {notice && <Notice type={/scanned|Scheduled|saved successfully|Updated/.test(notice) ? "success" : "error"}>{notice}</Notice>}
+      <div className="settings-actions"><button className="secondary-button" onClick={() => setAuthoring({ id: "", content: YARA_RULE_TEMPLATE, mode: "create" })}><PlusIcon /> Create YARA rule</button></div>
+      {authoring && <RuleAuthoringPanel title={authoring.mode === "edit" ? `Edit ${authoring.id}` : "Create YARA rule"} content={authoring.content} onChange={(content) => setAuthoring({ ...authoring, content })} onSave={saveRule} onCancel={() => setAuthoring(null)} working={authoringWorking} />}
       <p className="settings-muted">
         Managed community catalog: {data.catalog?.ready_rules || 0} ready rules from {data.catalog?.ready_files || 0} compatible files
         {data.catalog?.invalid_files ? ` · ${data.catalog.invalid_files} incompatible upstream files quarantined` : ""}
         {data.catalog?.compiled_at ? ` · compiled ${new Date(data.catalog.compiled_at).toLocaleString()}` : ""}.
       </p>
     <div className="sigma-controls"><input className="sigma-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rule, ATT&CK ID, or title…" /><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="informational">Informational</option></select></label><label>Managed evidence path<input value={path} onChange={(event) => setPath(event.target.value)} /></label><label>Schedule time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><DayPicker value={days} onChange={setDays} /><button className="primary-button" disabled={working || !path} onClick={() => scan()}>{working ? <ArrowPathIcon className="spinning" /> : <BeakerIcon />} Scan enabled rules</button>{editingSchedule ? <><button className="primary-button" disabled={!path || !days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="secondary-button" disabled={!path || !days.length} onClick={scheduleBundle}><ClockIcon /> Schedule enabled bundle</button>}</div>
-    <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div><button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
+    <div className="rule-list">{data.items.map((rule) => <div className="rule-row" key={rule.id}><div><strong>{displayDetectionText(rule.title)}</strong><small>{displayDetectionText(rule.source)} · {rule.category || "local"} · {rule.severity} severity · {rule.compilation_status === "ready" ? "Ready" : "Incompatible"} · {rule.attack || "Unmapped"} · {rule.id}</small>{rule.compilation_error && <small title={rule.compilation_error}>Quarantined: {rule.compilation_error}</small>}</div>{rule.editable && <button className="secondary-button compact" onClick={() => editRule(rule)}><PencilSquareIcon /> Edit</button>}<button disabled={rule.compilation_status !== "ready"} className={`switch ${rule.enabled ? "on" : ""}`} onClick={() => toggle(rule)} aria-label={`${rule.enabled ? "Disable" : "Enable"} ${displayDetectionText(rule.title)}`}><span /></button><button className="secondary-button compact" disabled={!rule.enabled || working} onClick={() => scan(rule.id)}><BeakerIcon /> Scan</button><button className="secondary-button compact" disabled={!rule.enabled || !days.length || !path} onClick={() => schedule(rule)}><ClockIcon /> Schedule</button></div>)}</div>
     </section>
     <section className="settings-card"><h3>Scheduled YARA scans</h3><div className="schedule-list">{data.schedules?.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>{item.severity || "medium"} severity · {item.time} · {item.log_source_path} · {item.last_status}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!data.schedules?.length && <p className="settings-muted">No YARA schedules configured.</p>}</div></section>
   </div>;
@@ -306,12 +388,18 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
   const [selectedTargets, setSelectedTargets] = useState([]);
   const [time, setTime] = useState("01:00");
   const [days, setDays] = useState([0, 1, 2, 3, 4]);
-  const [siem, setSiem] = useState(activeSources[0]?.id || "folder");
+  const [siemTypes, setSiemTypes] = useState([activeSources[0]?.id || "folder"]);
   const [notice, setNotice] = useState("");
   const [editingSchedule, setEditingSchedule] = useState(null);
   const load = useCallback(async () => { try { setSchedules(await api("/api/settings/schedules/hypothesis")); } catch (error) { setNotice(error.message); } }, []);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (!activeSources.some((item) => item.id === siem)) setSiem(activeSources[0]?.id || "folder"); }, [activeSources, siem]);
+  useEffect(() => {
+    const active = new Set(activeSources.map((item) => item.id));
+    setSiemTypes((current) => {
+      const valid = current.filter((source) => active.has(source));
+      return valid.length ? valid : [activeSources[0]?.id || "folder"];
+    });
+  }, [activeSources]);
   const severityHypotheses = useMemo(
     () => hypotheses.filter((item) => severity === "all" || (item.severity || "medium") === severity),
     [hypotheses, severity],
@@ -335,6 +423,11 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
   }, [severityHypotheses]);
   const toggleTarget = (id) => setSelectedTargets((current) => (
     current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+  ));
+  const toggleSource = (id) => setSiemTypes((current) => (
+    current.includes(id)
+      ? (current.length === 1 ? current : current.filter((item) => item !== id))
+      : [...current, id]
   ));
   const allListedSelected = severityHypotheses.length > 0 && selectedTargets.length === severityHypotheses.length;
   const toggleAllListed = () => setSelectedTargets(
@@ -361,7 +454,8 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
         time,
         days,
         enabled: true,
-        siem_type: siem,
+        siem_type: siemTypes[0],
+        siem_types: siemTypes,
       }));
       setNotice(`${groupSelected ? `${scheduleSeverity === "all" ? "Cross-severity" : scheduleSeverity[0].toUpperCase() + scheduleSeverity.slice(1)} group` : "Hypothesis"} schedule created in system local time.`);
       load();
@@ -372,7 +466,11 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
     setEditingSchedule(item);
     setTime(item.time || "01:00");
     setDays(item.days || []);
-    setSiem(item.siem_type || activeSources[0]?.id || "folder");
+    setSiemTypes(
+      item.siem_types?.length
+        ? item.siem_types
+        : [item.siem_type || activeSources[0]?.id || "folder"],
+    );
   };
   const saveEdit = async () => {
     if (!editingSchedule) return;
@@ -382,7 +480,8 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
         frequency: editingSchedule.frequency || "daily",
         interval: Number(editingSchedule.interval || 1),
         enabled: editingSchedule.enabled !== false,
-        siem_type: siem,
+        siem_type: siemTypes[0],
+        siem_types: siemTypes,
       }));
       setNotice(`Updated ${editingSchedule.title || "hypothesis schedule"}.`);
       setEditingSchedule(null);
@@ -399,13 +498,13 @@ function HypothesisScheduleTab({ hypotheses, activeSources, isAdmin }) {
   return <div className="settings-stack">
     <section className="settings-card"><div className="settings-card-title"><span><ClockIcon /></span><div><h3>Hypothesis scheduler</h3><p>Filter by severity, review the resulting hypotheses, select any subset or every listed item, then create one sequential group schedule.</p></div></div>
       {notice && <Notice type={notice.includes("created") ? "success" : "error"}>{notice}</Notice>}
-      <div className="settings-form-grid"><label>Severity<select value={severity} onChange={(event) => { setSeverity(event.target.value); setSelectedTargets([]); }}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><label>Run time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><label>Active telemetry source<select value={siem} onChange={(event) => setSiem(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div>
+      <div className="settings-form-grid"><label>Severity<select value={severity} onChange={(event) => { setSeverity(event.target.value); setSelectedTargets([]); }}><option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><label>Run time<input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label><div className="source-scope-field"><strong>Telemetry sources</strong><div className="source-scope-options">{activeSources.map((item) => <label key={item.id}><input type="checkbox" checked={siemTypes.includes(item.id)} onChange={() => toggleSource(item.id)} /><span>{item.label}</span></label>)}</div><small>The first selected source is primary; the hunt investigates every selected source.</small></div></div>
       <div className="severity-selection-header"><div><strong>{severity === "all" ? "All severity groups" : `${severity[0].toUpperCase() + severity.slice(1)} severity hypotheses`}</strong><small>{selectedTargets.length} of {severityHypotheses.length} listed hypotheses selected</small></div><span><button className="secondary-button compact" type="button" onClick={toggleAllListed} disabled={!severityHypotheses.length}>{allListedSelected ? "Clear all listed" : "Select all listed"}</button></span></div>
       <div className="hypothesis-schedule-selector">{hypothesisGroups.map((group) => <section className="hypothesis-schedule-group" key={group.severity}><header><span className={`detection-level level-${group.severity}`}>{group.severity}</span><small>{group.items.length}</small></header>{group.items.map((item) => <label key={item.id} className={selectedTargets.includes(item.id) ? "selected" : ""}><input type="checkbox" checked={selectedTargets.includes(item.id)} onChange={() => toggleTarget(item.id)} /><span><strong>{item.id} · {item.title}</strong><small>{item.tactic || "Unassigned tactic"} · {item.technique || "Unmapped"}</small></span></label>)}</section>)}{!severityHypotheses.length && <p className="settings-muted">No hypotheses are assigned to this severity type.</p>}</div>
       <DayPicker value={days} onChange={setDays} />
       <div className="settings-actions">{editingSchedule ? <><button className="primary-button" disabled={!days.length} onClick={saveEdit}><CheckCircleIcon /> Save schedule changes</button><button className="secondary-button" onClick={() => setEditingSchedule(null)}>Cancel edit</button></> : <button className="primary-button" disabled={!selectedTargets.length || !days.length} onClick={create}><PlusIcon /> Schedule selected ({selectedTargets.length})</button>}{isAdmin && !editingSchedule && <button className="secondary-button" onClick={applyRecommended}><ClockIcon /> Apply recommended schedule</button>}</div>
     </section>
-    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {item.siem_type} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}{schedulePerformance(item)}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
+    <section className="settings-card"><h3>{severity === "all" ? "All severity schedules" : `${severity[0].toUpperCase() + severity.slice(1)} severity schedules`}</h3><div className="schedule-list">{severitySchedules.map((item) => <div key={item.id}><span><strong>{displayDetectionText(item.title || item.target_id)}</strong><small>Severity: {item.severity || "medium"} · {item.target_count || 1} hypothesis{(item.target_count || 1) === 1 ? "" : "es"} · {item.time} · {(item.siem_types || [item.siem_type]).join(", ")} · {item.days.map((day) => DAYS[day]).join(", ")} · {item.last_status}{schedulePerformance(item)}</small></span><button title="Edit schedule" onClick={() => beginEdit(item)}><PencilSquareIcon /></button><button title="Delete schedule" onClick={() => remove(item.id)}><TrashIcon /></button></div>)}{!severitySchedules.length && <p className="settings-muted">No schedules are configured for this severity view.</p>}</div></section>
   </div>;
 }
 

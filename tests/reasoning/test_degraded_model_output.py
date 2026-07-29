@@ -1,11 +1,9 @@
-from services.hunting.query_generator import _fallback_query
 import json
 
 import pytest
 
 from services.reasoning import reasoning
 from services.reasoning.reasoning import (
-    _deterministic_reasoning_fallback,
     _parse_complete_reasoning,
     _reason_with_three_strikes,
     reason_node,
@@ -25,7 +23,10 @@ def _valid_response():
         }],
         "recommendations": "- Continue collecting PowerShell Event ID 4104.",
         "need_more_logs": False,
-        "follow_up_query": "",
+        "follow_up_objective": "",
+        "follow_up_source": "",
+        "follow_up_lookback_minutes": 0,
+        "follow_up_limit": 0,
     })
 
 
@@ -124,7 +125,7 @@ async def test_reasoning_stops_after_exactly_three_failed_attempts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_three_failed_strikes_generate_citation_safe_degraded_report(monkeypatch):
+async def test_three_failed_strikes_do_not_generate_a_report(monkeypatch):
     async def failed(_prompt):
         return None, None, 3, "attempt 1: timeout; attempt 2: timeout; attempt 3: timeout"
 
@@ -139,12 +140,12 @@ async def test_three_failed_strikes_generate_citation_safe_degraded_report(monke
         "max_iterations": 1, "iteration": 0,
     })
 
-    assert result["reasoning_failed"] is False
-    assert result["reasoning_degraded"] is True
-    assert result["reasoning_mode"] == "deterministic_fallback"
+    assert result["reasoning_failed"] is True
+    assert result["reasoning_degraded"] is False
+    assert result["reasoning_mode"] == "model_failed"
     assert result["reasoning_attempts"] == 3
-    assert result["report_status"] == "pending"
-    assert "ref: 0" in result["findings"]
+    assert result["report_status"] == "not_generated_reasoning_failed"
+    assert result["findings"] == ""
     assert "attempt 3: timeout" in result["reasoning_error"]
 
 
@@ -179,7 +180,7 @@ async def test_zero_evidence_skips_model_reasoning_and_remains_inconclusive(monk
     assert result["reasoning_mode"] == "deterministic_negative_screening"
     assert result["reasoning_attempts"] == 0
     assert result["reasoning_skipped"] is True
-    assert "inconclusive rather than clean" in result["reasoning_summary"]
+    assert "No model reasoning or report will be created" in result["reasoning_summary"]
     assert result["negative_screening_counts"] == {
         "sigma": 0, "artifact": 0, "ioc": 0, "behavioral": 0,
     }
@@ -256,23 +257,3 @@ async def test_zero_siem_results_stop_even_if_stale_match_state_is_present():
     assert result["negative_screening_passed"] is False
     assert result["reasoning_skipped"] is True
     assert result["report_status"] == "not_generated_no_evidence"
-
-
-def test_folder_query_fallback_is_nonempty():
-    assert _fallback_query("Suspicious PowerShell script activity", "folder")
-    assert _fallback_query("Suspicious PowerShell script activity", "splunk") == "*"
-
-
-def test_deterministic_reasoning_fallback_is_complete_and_citation_safe():
-    result = _deterministic_reasoning_fallback({
-        "processed_logs": [{"event": "1"}, {"event": "4104"}],
-        "sigma_matched_refs": [1],
-        "sigma_rule_matches": [{"title": "Suspicious PowerShell"}],
-        "technique_id": "T1059.001",
-        "coverage_gaps": [],
-    }, {"1": 1, "4104": 1})
-
-    assert result["summary"]
-    assert result["recommendations"]
-    assert result["findings"][0]["ref"] == "1"
-    assert result["need_more_logs"] is False

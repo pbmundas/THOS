@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -44,6 +45,7 @@ from reportlab.platypus import (
 
 from services.api import control_plane
 from services.runtime_config import get_value, read_config
+from services.security.configuration import required_secret
 
 
 class _JsonFormatter(logging.Formatter):
@@ -69,7 +71,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://orchestrator:8200").rstrip("/")
-ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "thos_change_me_orchestrator_key")
+ORCHESTRATOR_API_KEY = required_secret("ORCHESTRATOR_API_KEY")
 REPORTS_DIR = Path(os.environ.get("REPORTS_DIR", "/data/reports"))
 FORENSIC_ROOT = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic"))
 STATIC_DIR = Path(os.environ.get("UI_STATIC_DIR", "/app/static"))
@@ -85,13 +87,30 @@ def _parse_accounts() -> list[tuple[str, str]]:
     if raw:
         for entry in raw.split(","):
             username, separator, password = entry.strip().partition(":")
-            if separator and username and password:
+            if (
+                separator
+                and username
+                and len(password) >= 12
+                and "change_me" not in password.casefold()
+            ):
                 accounts.append((username, password))
             else:
-                logger.warning("ignoring malformed CHATUI_USERS entry")
+                raise RuntimeError(
+                    "CHATUI_USERS entries require a username and a unique "
+                    "password of at least 12 characters"
+                )
     else:
-        username = os.environ.get("CHATUI_USERNAME", "analyst").strip() or "analyst"
-        password = os.environ.get("CHATUI_PASSWORD", "thos_change_me")
+        username = os.environ.get("CHATUI_USERNAME", "").strip()
+        password = os.environ.get("CHATUI_PASSWORD", "")
+        if not username:
+            raise RuntimeError(
+                "CHATUI_USERNAME or CHATUI_USERS must be explicitly configured"
+            )
+        if len(password) < 12 or "change_me" in password.casefold():
+            raise RuntimeError(
+                "CHATUI_PASSWORD must be explicitly configured with at least "
+                "12 characters"
+            )
         accounts.append((username, password))
     if not accounts:
         raise RuntimeError("no valid UI accounts configured")
@@ -104,13 +123,23 @@ control_plane.seed_ioc_sources()
 SESSION_COOKIE = "thos_session"
 SESSION_TTL_SECONDS = max(900, int(os.environ.get("CHATUI_SESSION_TTL_SECONDS", "43200")))
 SESSION_SECURE_COOKIE = os.environ.get("CHATUI_SECURE_COOKIE", "0").strip().lower() in {"1", "true", "yes"}
-SESSION_SECRET = os.environ.get("CHATUI_SESSION_SECRET", "").encode("utf-8")
-if not SESSION_SECRET:
-    SESSION_SECRET = hashlib.sha256(
-        f"{ORCHESTRATOR_API_KEY}:{UI_ACCOUNTS[0][1]}:thos-ui-session".encode("utf-8")
-    ).digest()
-    logger.warning("CHATUI_SESSION_SECRET is unset; deriving a local session key from configured secrets")
-app = FastAPI(title="THOS SOCmate UI", version="1.0.0", docs_url=None, redoc_url=None)
+SESSION_SECRET = required_secret("CHATUI_SESSION_SECRET").encode("utf-8")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    control_plane.start_scheduler()
+    try:
+        yield
+    finally:
+        await control_plane.stop_scheduler()
+
+
+app = FastAPI(
+    title="THOS SOCmate UI",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=_lifespan,
+)
 
 _SPA_STATIC_ROUTES = {
     "/", "/overview", "/risks", "/detections", "/hunt-board",
@@ -236,8 +265,11 @@ class HuntRequest(BaseModel):
     hypothesis_tactic: str = ""
     hypothesis_technique: str = ""
     siem_type: str = "folder"
+    siem_types: list[str] = Field(default_factory=list, max_length=16)
     log_source_path: str | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=5)
+    lookback_minutes: int | None = Field(default=None, ge=1, le=525600)
+    max_lookback_minutes: int = Field(default=10080, ge=60, le=525600)
     cover_style: str = Field(default="1", pattern="^[12]$")
 
     @model_validator(mode="after")
@@ -466,14 +498,30 @@ async def hunt_progress(hunt_id: str, request: Request):
 @app.post("/api/hunts/stream")
 async def stream_hunt(hunt: HuntRequest, request: Request):
     control_plane.require_feature(request, "hunts")
-    if not control_plane.is_active_telemetry_source(hunt.siem_type):
-        raise HTTPException(status_code=422, detail="Telemetry source is not active; save and successfully test it in Configuration")
+    sources = list(dict.fromkeys(
+        source.strip().lower()
+        for source in ([hunt.siem_type, *hunt.siem_types])
+        if source.strip()
+    ))
+    inactive = [
+        source for source in sources
+        if not control_plane.is_active_telemetry_source(source)
+    ]
+    if inactive:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Telemetry source is not active; save and successfully test "
+                f"it in Configuration: {', '.join(inactive)}"
+            ),
+        )
     status = await _upstream_json("GET", "/hunt/status")
     if status.get("active"):
         raise HTTPException(status_code=409, detail="A hunt is already running. Wait for it to complete before starting another hypothesis.")
     payload = hunt.model_dump()
     if payload.get("max_iterations") is None:
-        payload["max_iterations"] = max(1, min(5, int(get_value("general", "default_iterations", default=1))))
+        payload["max_iterations"] = max(1, min(5, int(get_value("general", "default_iterations", default=2))))
+    payload["siem_types"] = sources
     payload["hunter_name"] = request.state.analyst
 
     async def relay() -> AsyncIterator[bytes]:
@@ -673,6 +721,9 @@ def _yara_scan_summary(payload: dict) -> dict:
         "completed_at": payload.get("completed_at", ""),
         "status": payload.get("status", "unknown"),
         "match_count": scan.get("match_count", 0),
+        "static_finding_count": int(
+            (payload.get("static_analysis") or {}).get("finding_count", 0) or 0
+        ),
         "duration_ms": scan.get("duration_ms", 0),
         "error": payload.get("error", ""),
     }
@@ -738,9 +789,12 @@ async def create_yara_forensic_scan(
         "acquired_from": acquired_from.strip()[:1000],
         "notes": notes.strip()[:10000],
         "agent": {
-            "agent_id": "file_memory_rule_analysis",
-            "agent_name": "File and Memory Rule Analysis Agent",
-            "activity": "Runs the enabled actionable YARA rule bundle against the preserved suspicious file, memory image, or process dump.",
+            "agent_id": "file_memory_static_analysis",
+            "agent_name": "File and Memory Static Analysis Agent",
+            "activity": (
+                "Runs content-routed, non-executing forensic triage and the enabled "
+                "actionable YARA rule bundle against the preserved artifact."
+            ),
         },
     }
     try:
@@ -769,6 +823,16 @@ async def create_yara_forensic_scan(
             "status": "scanning",
         }
         manifest_path.write_text(json.dumps(pending, indent=2), encoding="utf-8")
+        static_analysis = await _upstream_json(
+            "POST",
+            "/forensics/static-scan",
+            json={
+                "path": str(target),
+                "sha256": sha256,
+                "artifact_type": artifact_type,
+            },
+            timeout=3600.0,
+        )
         result = await _upstream_json(
             "POST",
             "/yara/scan",
@@ -787,13 +851,16 @@ async def create_yara_forensic_scan(
         status = (
             "failed"
             if result.get("errors") or file_result.get("status") == "skipped"
-            else "matched" if result.get("match_count") else "clean"
+            else "matched"
+            if result.get("match_count") or static_analysis.get("finding_count")
+            else "clean"
         )
         completed = {
             **pending,
             "status": status,
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "scan_result": result,
+            "static_analysis": static_analysis,
         }
         manifest_path.write_text(json.dumps(completed, indent=2, default=str), encoding="utf-8")
         logger.info(
@@ -946,6 +1013,12 @@ async def create_forensic_case(
 async def list_forensic_cases(request: Request, limit: int = 100):
     control_plane.require_feature(request, "forensics")
     return await _upstream_json("GET", f"/forensics?limit={max(1, min(limit, 500))}")
+
+
+@app.get("/api/forensics/tools")
+async def read_forensic_tools(request: Request):
+    control_plane.require_feature(request, "forensics")
+    return await _upstream_json("GET", "/forensics/tools")
 
 
 @app.get("/api/forensics/{case_id}")
@@ -1168,16 +1241,6 @@ async def download_pdf(filename: str, request: Request):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{path.stem}.pdf"'},
     )
-
-
-@app.on_event("startup")
-async def _start_settings_scheduler():
-    control_plane.start_scheduler()
-
-
-@app.on_event("shutdown")
-async def _stop_settings_scheduler():
-    await control_plane.stop_scheduler()
 
 
 app.include_router(control_plane.router)

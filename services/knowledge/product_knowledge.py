@@ -31,7 +31,7 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-HUNT", "Running a threat hunt",
-        "Choose a curated or organizational hypothesis, select an active SIEM, direct integration, or folder telemetry source, choose the report audience, and start one hunt. THOS serializes hunts platform-wide, streams named-agent updates with local timestamps and model metadata, permits bounded evidence-based replanning and a configured targeted reasoning follow-up, verifies every finding citation, and then writes a report. A negative result with weak telemetry is reported as a coverage limitation rather than proof of absence.",
+        "Choose a curated or organizational hypothesis, select a primary telemetry source and optionally additional active SIEM, direct-integration, or folder sources, choose the report audience, and start one hunt. THOS serializes hunts platform-wide, streams named-agent updates with local timestamps and model metadata, records a structured investigation contract, queries every selected source, expands bounded time and technique context after zero results, tightens capped/noisy searches with dialect-validated queries, and applies the no-evidence gate only after retrieval branches are exhausted. Supported leads can request one validated adjacent-activity follow-up. THOS verifies every finding citation and records query attempts and completeness in the report. A negative result with weak telemetry is a coverage limitation rather than proof of absence.",
         ("hunt", "hypothesis", "start", "workflow", "progress", "follow up"),
         "README.md; services/orchestration/graph.py",
     ),
@@ -61,7 +61,7 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-GOVERNANCE", "Safety, analyst review, cases, and audit",
-        "Untrusted telemetry is canonicalized across Unicode, HTML, URL, Base64, and hexadecimal representations, scored by semantic heuristics, and ambiguous content is classified by a dedicated guard-tier adversarial model. High-risk fields are quarantined only in the reasoning view while original evidence remains available to deterministic tools and audit. Findings must cite actual record references or the event histogram. Failed, degraded, or repaired verification is marked for analyst review and can open a case. Draft detection content stays experimental and THOS performs no autonomous containment.",
+        "Untrusted telemetry is canonicalized across Unicode, HTML, URL, Base64, and hexadecimal representations, screened by security guardrails, and ambiguous instruction-like content is classified by a dedicated guard-tier adversarial model. High-risk fields are quarantined only in the reasoning view while original evidence remains available to tools and audit. Findings must cite exact supplied record references or a computed event histogram. Failed reasoning or citation verification stops report generation and can open an analyst-review case. Draft detection content stays experimental and THOS performs no autonomous containment.",
         ("security", "guardrail", "verification", "review", "case", "audit", "containment", "prompt injection"),
         "services/guardrails; services/verification; services/detection_engineering",
     ),
@@ -73,13 +73,13 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-RISKS", "Actionable Risks page and Risk Analysis Agent",
-        "The Risk Analysis Agent deterministically correlates verifier-supported Security Findings from hunt reports with scheduled detections that matched events. It excludes unverified report claims, consolidates repeated risk/entity pairs, and assigns an explainable 0-100 score and critical, high, medium, or low severity without consuming a model worker. The Risks page shows what the risk is, why it matters, how it was discovered, the affected host, user, IP, technique, or telemetry source, its first-identified age, and a direct link to the originating report or detection. It does not perform containment or declare intent.",
+        "The Risk Analysis Agent uses a configured local model to select, correlate, describe, score, and prioritize verifier-supported hunt findings and scheduled detections that matched events. Its output is schema-validated and must cite exact candidate identifiers; unverified report claims are excluded before model input. The Risks page shows what the risk is, why it matters, how it was discovered, the affected entity, its first-identified age, and a direct link to the originating report or detection. It does not perform containment or declare intent.",
         ("risk", "risks", "score", "severity", "entity", "age", "impact", "risk analysis"),
         "services/risk/risk_agent.py; services/ui/src/Risks.jsx",
     ),
     ProductTopic(
         "PK-FORENSICS", "Digital forensic examination",
-        "The Forensics menu accepts one or more evidence files. THOS stores originals under data/log_sources/forensic/<UTC date>/<date-serial-case>, hashes each file during intake, writes a chain-of-custody manifest, marks originals read-only where supported, and recomputes size and full SHA-256 before analysis. Named deterministic agents inventory and parse artifacts, evaluate pinned community and local detection rules, scan managed files with enabled YARA rules, correlate observed values with the shared IOC index, summarize ATT&CK techniques represented by matching rules, assess suspicious or corroborated malicious activity, reconstruct a referenced classification-aware timeline, and write a technical report with legal-review requirements. E01/Ex01 and raw-image metadata use installed ewf-tools and Sleuth Kit; unavailable or opaque decoders are reported as limitations, never treated as completed examination.",
+        "The Forensics menu accepts one or more evidence files. THOS stores originals under data/log_sources/forensic/<UTC date>/<date-serial-case>, hashes each file during intake, writes a chain-of-custody manifest, marks originals read-only where supported, and recomputes size and full SHA-256 before analysis. A Forensic Planning Agent selects applicable installed tools and objectives per artifact, reviews their first-pass facts, and may select a bounded second pass. A Forensic Interpretation Agent then produces disposition, proven facts, assessments, unresolved anomalies, and recommendations with validated references only. Tool matches are evidence observations rather than automatic verdicts. E01/Ex01 and raw-image metadata use installed libewf tools and The Sleuth Kit; unavailable or opaque decoders are reported as limitations, never treated as completed examination.",
         ("forensic", "forensics", "evidence intake", "chain of custody", "encase", "e01", "disk image", "hash", "timeline", "yara", "malicious activity"),
         "services/forensics; services/api/ui_gateway.py",
     ),
@@ -97,7 +97,7 @@ _STATIC_TOPICS: tuple[ProductTopic, ...] = (
     ),
     ProductTopic(
         "PK-RESOURCES", "Quality and resource controls",
-        "THOS reduces resource use with deterministic agents where a model is unnecessary, bounded SIEM result limits, SIEM-side detection-rule pushdown, cached schemas and reasoning, parallel independent tools, one targeted follow-up by default, and three-strike local-model fallbacks. Quality is protected with schema validation, evidence citations, deterministic verification, fail-closed compilation, case tracking, audit records, and layered automated tests.",
+        "THOS reduces resource use with a deterministic zero-evidence gate, bounded SIEM result limits, SIEM-side detection-rule pushdown, cached schemas and validated reasoning, parallel independent tools, and model-directed bounded follow-ups. Quality is protected with schema validation, exact evidence citations, fail-closed evidence verification, fail-closed compilation, case tracking, audit records, and layered automated tests. A failed reasoning or citation-validation stage does not create a report.",
         ("resource", "performance", "quality", "cost", "cpu", "memory", "cache", "model strikes"),
         "services/orchestration; services/reasoning; services/detection",
     ),

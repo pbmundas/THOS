@@ -60,7 +60,8 @@ def _synthetic_telemetry_allowed() -> bool:
 
 
 def _cache_payload(siem_type: str, query: str, limit: int,
-                   log_source_path: str = "", trusted_sigma: bool = False) -> str:
+                   log_source_path: str = "", trusted_sigma: bool = False,
+                   lookback_minutes: int | None = None) -> str:
     """Build one stable key from every setting that can change results."""
     setting_names = {
         "logrhythm": (
@@ -87,6 +88,7 @@ def _cache_payload(siem_type: str, query: str, limit: int,
         "limit": limit,
         "log_source_path": log_source_path,
         "trusted_sigma": trusted_sigma,
+        "lookback_minutes": lookback_minutes,
         "settings": {
             name: env_or_runtime(name, siem_type, "")
             for name in setting_names.get(siem_type, ())
@@ -97,10 +99,13 @@ def _cache_payload(siem_type: str, query: str, limit: int,
 
 def _cached_fetch(siem_type: str, query: str, limit: int, producer,
                   log_source_path: str = "", trusted_sigma: bool = False,
-                  use_cache: bool = True) -> dict:
+                  use_cache: bool = True,
+                  lookback_minutes: int | None = None) -> dict:
     if not use_cache:
         return producer()
-    payload = _cache_payload(siem_type, query, limit, log_source_path, trusted_sigma)
+    payload = _cache_payload(
+        siem_type, query, limit, log_source_path, trusted_sigma, lookback_minutes,
+    )
     cached = cache.cache_get("siem_fetch", payload)
     if cached is not None:
         return cached
@@ -131,7 +136,8 @@ def _mock_logs(query: str, limit: int) -> list[dict]:
 
 def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
                 log_source_path: str = "", trusted_sigma: bool = False,
-                bypass_cache: bool = False) -> dict:
+                bypass_cache: bool = False,
+                lookback_minutes: int | None = None) -> dict:
     """
     Execute a SIEM query and return matching log records.
 
@@ -182,8 +188,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         try:
             return _cached_fetch(
                 "logrhythm", query, limit,
-                lambda: logrhythm_connector.fetch_logs(query, limit),
+                lambda: logrhythm_connector.fetch_logs(
+                    query, limit, lookback_minutes=lookback_minutes,
+                ),
                 use_cache=not bypass_cache,
+                lookback_minutes=lookback_minutes,
             )
         except logrhythm_connector.LogRhythmConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -201,8 +210,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         try:
             return _cached_fetch(
                 "splunk", query, limit,
-                lambda: splunk_connector.fetch_logs(query, limit),
+                lambda: splunk_connector.fetch_logs(
+                    query, limit, lookback_minutes=lookback_minutes,
+                ),
                 use_cache=not bypass_cache,
+                lookback_minutes=lookback_minutes,
             )
         except splunk_connector.SplunkConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -220,8 +232,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         try:
             return _cached_fetch(
                 "qradar", query, limit,
-                lambda: qradar_connector.fetch_logs(query, limit),
+                lambda: qradar_connector.fetch_logs(
+                    query, limit, lookback_minutes=lookback_minutes,
+                ),
                 use_cache=not bypass_cache,
+                lookback_minutes=lookback_minutes,
             )
         except qradar_connector.QRadarConfigError as e:
             # Missing/incomplete config is a caller-fixable setup issue,
@@ -239,9 +254,15 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         try:
             return _cached_fetch(
                 "wazuh", query, limit,
-                lambda: wazuh_connector.fetch_logs(query, limit, trusted_sigma=trusted_sigma),
+                lambda: wazuh_connector.fetch_logs(
+                    query,
+                    limit,
+                    trusted_sigma=trusted_sigma,
+                    lookback_minutes=lookback_minutes,
+                ),
                 trusted_sigma=trusted_sigma,
                 use_cache=not bypass_cache,
+                lookback_minutes=lookback_minutes,
             )
         except wazuh_connector.WazuhConfigError as e:
             return {
@@ -256,8 +277,11 @@ def fetch_logs(query: str, limit: int = 25, siem_type: str | None = None,
         try:
             return _cached_fetch(
                 "elasticsearch", query, limit,
-                lambda: elasticsearch_connector.fetch_logs(query, limit),
+                lambda: elasticsearch_connector.fetch_logs(
+                    query, limit, lookback_minutes=lookback_minutes,
+                ),
                 use_cache=not bypass_cache,
+                lookback_minutes=lookback_minutes,
             )
         except (
             elasticsearch_connector.ElasticsearchConfigError,

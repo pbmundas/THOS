@@ -25,19 +25,9 @@ class ModelTarget:
 _DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
 _DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
-_AGENT_TIERS = {
-    "query_gen": "query", "indicator_deriver": "fast", "communication": "fast",
-    "chat": "fast", "detection_analysis": "fast",
-    "investigation_specialist": "reasoning",
-    "supervisor": "reasoning", "reasoning": "reasoning", "coverage_gap": "reasoning",
-    "verifier": "verifier", "detection_engineering": "coding", "guardrail": "guard",
-}
 _WORKLOAD_CLASS: ContextVar[str] = ContextVar(
     "thos_model_workload_class", default="interactive"
 )
-_SCHEDULED_REASONING_AGENTS = {
-    "reasoning", "supervisor", "coverage_gap", "investigation_specialist"
-}
 
 
 def set_model_workload(workload_class: str) -> Token:
@@ -56,7 +46,11 @@ def target_for(agent: str) -> ModelTarget:
     ``THOS_OLLAMA_FAST_HOST`` etc. A missing tier config safely falls back to
     the original OLLAMA_MODEL/OLLAMA_HOST rather than breaking hunts.
     """
-    tier = _AGENT_TIERS.get(agent, "reasoning")
+    routes = get_value("model_routing", "agents", default={})
+    default_tier = str(
+        get_value("model_routing", "default_tier", default="reasoning")
+    ).strip() or "reasoning"
+    tier = str(routes.get(agent, default_tier)) if isinstance(routes, dict) else default_tier
     suffix = tier.upper()
     runtime_model = str(get_value("models", "default_model", default="") or "").strip()
     configured_model = os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL)
@@ -65,18 +59,26 @@ def target_for(agent: str) -> ModelTarget:
     # their dedicated low-latency models so changing the default cannot
     # accidentally put the larger reasoning model on a latency-critical path.
     selected_model = configured_model if tier in {"query", "fast"} else (runtime_model or configured_model)
-    default_num_ctx = (
-        "4096" if tier == "query"
-        else ("16384" if tier == "reasoning" else "8192")
-    )
+    profile = get_value("model_routing", "profiles", tier, default={})
+    if not isinstance(profile, dict):
+        profile = {}
+    default_num_ctx = str(profile.get("num_ctx") or 8192)
+    default_num_predict = str(profile.get("num_predict") or 1024)
     host = os.environ.get(f"THOS_OLLAMA_{suffix}_HOST", _DEFAULT_HOST).rstrip("/")
     model = selected_model
     num_ctx = int(os.environ.get(f"THOS_{suffix}_NUM_CTX", default_num_ctx))
     num_predict = int(os.environ.get(
         f"THOS_{suffix}_NUM_PREDICT",
-        "256" if tier == "query" else ("2048" if tier == "reasoning" else "1024"),
+        default_num_predict,
     ))
-    if _WORKLOAD_CLASS.get() == "scheduled" and agent in _SCHEDULED_REASONING_AGENTS:
+    scheduled_agents = get_value(
+        "model_routing", "scheduled_agents", default=[]
+    )
+    if (
+        _WORKLOAD_CLASS.get() == "scheduled"
+        and isinstance(scheduled_agents, list)
+        and agent in {str(item) for item in scheduled_agents}
+    ):
         host = os.environ.get("THOS_SCHEDULED_OLLAMA_HOST", host).rstrip("/")
         model = os.environ.get("THOS_SCHEDULED_MODEL", "").strip() or model
         num_ctx = int(os.environ.get("THOS_SCHEDULED_NUM_CTX", str(num_ctx)))

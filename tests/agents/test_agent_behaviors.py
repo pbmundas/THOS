@@ -263,31 +263,53 @@ def test_log_processing_deduplicates_stable_event_identity():
     assert result["processed_logs"][0]["event_category"] == "process"
 
 
-def test_coverage_agent_marks_low_volume_and_unfiltered_fallback():
+def test_coverage_agent_does_not_use_record_count_heuristics(monkeypatch):
+    from services.coverage import gap_analysis
+
+    monkeypatch.setattr(gap_analysis.mitre, "map_technique", lambda _value: {
+        "name": "Test",
+        "data_sources": ["Process Creation"],
+    })
+
+    async def decision(**kwargs):
+        return kwargs["validator"]({
+            "overall_status": "covered",
+            "data_sources": [{
+                "data_source": "Process Creation",
+                "status": "covered",
+                "confidence": "high",
+                "reason": "The supplied record is a process event.",
+                "evidence_refs": ["record:0"],
+                "missing_requirements": [],
+            }],
+            "gaps": [],
+        })
+
+    monkeypatch.setattr(gap_analysis, "decide_json", decision)
     result = asyncio.run(coverage_gap_node({
-        "processed_logs": [{"event": "4688"}],
-        "used_fallback_unfiltered": True,
-        "files_scanned": 1,
+        "technique_id": "T0000",
+        "processed_logs": [{"event": "process"}],
+        "source_diagnostics": {"folder": {"status": "queried"}},
+        "siem_types": ["folder"],
     }))
 
-    assert len(result["coverage_gaps"]) == 2
-    assert "unfiltered telemetry" in result["coverage_gaps"][0]
-    assert "Only 1 normalized record" in result["coverage_gaps"][1]
+    assert result["coverage_assessment"]["status"] == "covered"
+    assert result["coverage_gaps"] == []
 
 
 def test_threat_intel_agent_uses_only_local_blocklist(tmp_path, monkeypatch):
     blocklist = tmp_path / "blocklist.json"
     blocklist.write_text(json.dumps({
-        "indicators": {"203.0.113.9": {"confidence": "high"}},
+        "indicators": {"8.8.8.8": {"confidence": "high"}},
     }), encoding="utf-8")
     monkeypatch.setenv("THOS_IOC_BLOCKLIST_PATH", str(blocklist))
 
     result = asyncio.run(enrich_iocs_node({
-        "processed_logs": [{"detail": "connection to 203.0.113.9"}],
+        "processed_logs": [{"detail": "connection to 8.8.8.8"}],
     }))
 
     assert result["enrichment_hits"] == [{
-        "indicator": "203.0.113.9",
+        "indicator": "8.8.8.8",
         "record_index": 0,
         "source": "local_blocklist",
         "metadata": {"confidence": "high"},

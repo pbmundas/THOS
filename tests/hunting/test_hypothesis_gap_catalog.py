@@ -44,10 +44,12 @@ def test_required_gap_catalog_does_not_duplicate_hearth_exact_techniques():
     )
 
 
-def test_new_attack_tactics_receive_risk_appropriate_severity():
-    assert hypothesis_severity({"tactic": "Initial Access"}) == "high"
-    assert hypothesis_severity({"tactic": "Stealth"}) == "high"
-    assert hypothesis_severity({"tactic": "Defense Impairment"}) == "critical"
+def test_severity_is_authored_not_inferred_from_tactic():
+    assert hypothesis_severity({"tactic": "Initial Access"}) == "unrated"
+    assert hypothesis_severity({
+        "tactic": "Initial Access",
+        "severity": "high",
+    }) == "high"
 
 
 def test_removed_on_prem_intelligence_copy_does_not_return():

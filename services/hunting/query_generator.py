@@ -11,13 +11,19 @@ from services.siem.clients import ollama_generate
 from services.siem.siem_kb import get_field_mapping
 from services.observability import cache
 from services.reasoning.model_router import target_for
+from services.runtime_config import get_value
 
 SYSTEM_PROMPT = (
-    "You are a SOC threat hunting query generation assistant. "
-    "You are given a hunting hypothesis and a mapping of normalized "
-    "field names to the exact field names used by the target SIEM. "
-    "Produce ONLY a single valid query string for that SIEM's query "
-    "language. Do not include explanation, markdown, or commentary."
+    "You are a senior SOC threat hunter generating one read-only query for "
+    "one explicitly stated investigation step. You are given the hypothesis, "
+    "the step objective, prior retrieval diagnostics when applicable, and a "
+    "mapping of normalized field names to exact target-SIEM fields. Generate "
+    "exactly one valid query in the named SIEM dialect. Use only mapped fields. "
+    "A zero-result step should broaden only the stated constraints; a noisy "
+    "step should tighten around literal entities, event categories, or the "
+    "ATT&CK technique without inventing values. Do not add a time clause because "
+    "THOS controls the bounded time window separately. Return only the query "
+    "string with no explanation, markdown, or commentary."
 )
 
 # "folder" hunts run against locally parsed log files rather than a live
@@ -26,11 +32,12 @@ SYSTEM_PROMPT = (
 # suspicious terms) that file_log_parser can substring-match against
 # every normalized record.
 FOLDER_SYSTEM_PROMPT = (
-    "You are a SOC threat hunting assistant helping search a folder of "
+    "You are a senior SOC threat hunter helping search a folder of "
     "raw log files (EVTX, syslog, CSV, CEF, JSON/ECS, XML, pcap, etc.) "
     "that have already been parsed into generic records with fields like "
     "timestamp, host, user, event, src_ip, dst_ip, and detail. "
-    "Given a hunting hypothesis, produce ONLY a comma-separated list of "
+    "Given a hunting hypothesis and one investigation-step objective, produce "
+    "ONLY a comma-separated list of "
     "3-8 short keywords or entity names (process names, event types, "
     "usernames, ports, protocols, suspicious strings) that would help "
     "find log records relevant to this hypothesis via substring "
@@ -41,91 +48,21 @@ FOLDER_SYSTEM_PROMPT = (
 FOLDER_SIEM_TYPES = {"folder", "local_folder", "file", "local"}
 
 WAZUH_SYSTEM_PROMPT = (
-    "You generate read-only OpenSearch/Elasticsearch Query DSL for security events. "
+    "You are a senior SOC threat hunter generating one read-only "
+    "OpenSearch/Elasticsearch Query DSL query for the supplied investigation "
+    "step and security-event field mapping. "
     "Return ONLY one JSON object with exactly one top-level key named query. "
-    "Use Wazuh fields such as @timestamp, agent.name, rule.id, "
-    "rule.description, rule.groups, rule.mitre.id, decoder.name, location, "
-    "full_log, data.srcip, data.dstip, data.srcuser, and data.dstuser. "
+    "Use only exact fields present in the supplied mapping or discovered field "
+    "inventory. Cover every "
+    "distinct evidence branch stated by the hypothesis that is representable "
+    "in the supplied source schema; do not reduce a behavioral hypothesis to "
+    "only its named tools or artifacts. Combine compatible branches with a "
+    "bool/should query. Use match_phrase for text fields, term/terms for exact "
+    "scalar fields, and exists for field presence. "
     "Do not use range or query_string queries, wildcard field names such as "
     "data.*, index names, size, sort, aggregations, scripts, markdown, or "
     "explanation. THOS adds the time range, target indices, and result cap."
 )
-
-WAZUH_TEXT_SEARCH_FIELDS = [
-    "full_log^3", "rule.description^2", "rule.groups", "rule.mitre.id",
-    "rule.mitre.technique", "data.command^3",
-    "data.win.eventdata.commandLine^3", "data.user_agent^3", "data.url^2",
-    "agent.name", "decoder.name", "location",
-]
-
-_FALLBACK_STOP_WORDS = {
-    "activity", "adversary", "attackers", "below", "detecting",
-    "deploying", "discovery", "executing", "execution", "identify",
-    "including", "known", "network", "performing", "service", "services",
-    "such", "their", "tools", "using", "with", "often", "utilize",
-    "powerful", "scripting", "language", "available", "windows", "system",
-    "systems", "crucial", "detailed", "provide", "presence", "attempting",
-    "baseline", "behavior", "establish", "expected", "file", "legitimate",
-    "management", "monitoring", "named", "normal", "profile", "remote",
-    "tool", "version", "writing",
-}
-
-_EXPLICIT_EVENT_ID = re.compile(r"\b(?:event\s*id|eventid)[\s:_-]*(\d{1,6})\b", re.IGNORECASE)
-_EXPLICIT_ARTIFACT = re.compile(
-    r"\b[a-zA-Z0-9_.-]+\.(?:exe|dll|ps1|bat|cmd|vbs|js|msi)\b",
-    re.IGNORECASE,
-)
-
-
-def _fallback_query(hypothesis_text: str, siem_type: str) -> str:
-    """Provide a safe, visible degraded-mode query when a local model is unavailable.
-
-    The folder connector already falls back to an unfiltered scan when these
-    terms produce no hits, so this is safer than silently returning an empty
-    query and falsely implying that an LLM query was generated.
-    """
-    terms = []
-    # Literal artifacts are the highest-value degraded-mode search terms and
-    # must not be crowded out by prose appearing earlier in the hypothesis.
-    for artifact in _EXPLICIT_ARTIFACT.findall(hypothesis_text):
-        lowered = artifact.lower()
-        if lowered not in terms:
-            terms.append(lowered)
-    for token in hypothesis_text.replace("/", " ").replace("-", " ").split():
-        cleaned = "".join(char for char in token if char.isalnum() or char == ".")
-        lowered = cleaned.lower()
-        if len(cleaned) >= 4 and lowered not in _FALLBACK_STOP_WORDS \
-                and lowered not in terms:
-            terms.append(lowered)
-        if len(terms) == 8:
-            break
-    if siem_type.lower() in FOLDER_SIEM_TYPES:
-        return ", ".join(terms)
-    if siem_type.lower() in {"wazuh", "elasticsearch"}:
-        search = " ".join(terms) or "*"
-        return json.dumps({
-            "query": {
-                "simple_query_string": {
-                    "query": search,
-                    "fields": WAZUH_TEXT_SEARCH_FIELDS,
-                    # A degraded-mode retrieval query should surface candidate
-                    # evidence for later AI analysis, not require every
-                    # extracted indicator to occur in one Wazuh document.
-                    "default_operator": "or",
-                }
-            }
-        }, separators=(",", ":"))
-    if siem_type.lower() == "splunk":
-        # The connector deterministically normalizes this to ``search *``.
-        return "*"
-    if siem_type.lower() == "qradar":
-        # AQL has no universally safe free-text field across deployments.
-        # A bounded SELECT is syntactically valid and the connector adds the
-        # configured time window and LIMIT deterministically.
-        return "SELECT * FROM events"
-    if siem_type.lower() == "logrhythm":
-        return " ".join(terms) or "*"
-    return "*"
 
 
 def _balanced_query_syntax(value: str) -> bool:
@@ -181,34 +118,24 @@ def _validate_text_query(candidate: str, siem_type: str) -> str:
     return candidate.strip()
 
 
-def _normalize_folder_query(value: str, hypothesis_text: str) -> str:
+def _normalize_folder_query(value: str) -> str:
     """Accept only a compact keyword list, never model explanation prose."""
     candidate = (value or "").strip().splitlines()[0] if value else ""
     if len(candidate) > 180 or any(marker in candidate.lower() for marker in ("here", "query", "keyword", "because", ":")):
-        return _fallback_query(hypothesis_text, "folder")
+        raise ValueError("folder query was not a compact keyword list")
     raw_terms = [term.strip().strip("'\"") for term in candidate.split(",")]
     terms = []
     for term in raw_terms:
         lowered = term.lower()
-        if lowered in _FALLBACK_STOP_WORDS:
-            continue
         if 1 < len(term) <= 48 and all(ch.isalnum() or ch in ".-_\\/" for ch in term):
             if lowered not in {existing.lower() for existing in terms}:
                 terms.append(term)
-
-    # Model keyword lists sometimes start with generic prose words. Preserve
-    # only high-signal terms, then deterministically add indicators stated
-    # explicitly in the hypothesis (event IDs and executable/script names).
-    for explicit in (
-        list(_EXPLICIT_EVENT_ID.findall(hypothesis_text))
-        + list(_EXPLICIT_ARTIFACT.findall(hypothesis_text))
-    ):
-        if explicit.lower() not in {term.lower() for term in terms}:
-            terms.append(explicit)
-    return ", ".join(terms[:8]) if terms else _fallback_query(hypothesis_text, "folder")
+    if not terms:
+        raise ValueError("folder query contained no valid search terms")
+    return ", ".join(terms)
 
 
-def _normalize_wazuh_query(value: str, hypothesis_text: str) -> str:
+def _normalize_wazuh_query(value: str) -> str:
     """Keep only a JSON query object; connector-side validation is authoritative."""
     candidate = (value or "").strip()
     if candidate.startswith("```"):
@@ -219,14 +146,14 @@ def _normalize_wazuh_query(value: str, hypothesis_text: str) -> str:
     try:
         payload = json.loads(candidate)
     except (json.JSONDecodeError, TypeError):
-        return _fallback_query(hypothesis_text, "wazuh")
+        raise ValueError("query was not valid JSON")
     if not isinstance(payload, dict):
-        return _fallback_query(hypothesis_text, "wazuh")
+        raise ValueError("query payload was not an object")
     clause = payload.get("query", payload)
     if not isinstance(clause, dict):
-        return _fallback_query(hypothesis_text, "wazuh")
-    # The connector is authoritative, but rejecting these common model errors
-    # here lets us fall back to hypothesis keywords instead of failing a hunt.
+        raise ValueError("query clause was not an object")
+    # The connector is authoritative. Reject common unsafe or unsupported
+    # model constructs; the caller retries and ultimately fails closed.
     def contains_disallowed(item):
         if isinstance(item, dict):
             for key, child in item.items():
@@ -247,13 +174,13 @@ def _normalize_wazuh_query(value: str, hypothesis_text: str) -> str:
         return False
 
     if contains_disallowed(clause):
-        return _fallback_query(hypothesis_text, "wazuh")
+        raise ValueError("query used a disallowed or ungrounded query construct")
     return json.dumps({"query": clause}, separators=(",", ":"), ensure_ascii=False)
 
 
 def validate_and_normalize_query(value: str, hypothesis_text: str,
                                  siem_type: str) -> dict:
-    """Deterministically validate a model query and retry with a safe fallback.
+    """Deterministically validate a model query without inventing a fallback.
 
     This function performs no model call. It is used both after query
     generation and immediately before execution, so reasoning-generated
@@ -266,28 +193,16 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
         if not candidate:
             raise ValueError("query generator returned an empty query")
         if dialect in FOLDER_SIEM_TYPES:
-            normalized = _normalize_folder_query(candidate, hypothesis_text)
-            if candidate and normalized == _fallback_query(hypothesis_text, "folder") \
-                    and candidate != normalized:
-                raise ValueError("folder query was not a compact keyword list")
+            normalized = _normalize_folder_query(candidate)
         elif dialect in {"wazuh", "elasticsearch"}:
-            normalized = _normalize_wazuh_query(candidate, hypothesis_text)
-            if candidate and normalized == _fallback_query(hypothesis_text, "wazuh") \
-                    and candidate != normalized:
-                raise ValueError("Wazuh query was not valid, bounded Query DSL")
+            normalized = _normalize_wazuh_query(candidate)
         elif dialect in {"splunk", "qradar", "logrhythm"}:
             normalized = _validate_text_query(candidate, dialect)
         else:
-            normalized = candidate or _fallback_query(hypothesis_text, dialect)
+            normalized = _validate_text_query(candidate, dialect)
     except ValueError as exc:
         error = str(exc)
-        normalized = _fallback_query(hypothesis_text, dialect)
-        # The deterministic retry is itself checked. A bad built-in fallback
-        # is a programming error and must never reach a live SIEM silently.
-        if dialect in {"splunk", "qradar", "logrhythm"}:
-            normalized = _validate_text_query(normalized, dialect)
-        elif dialect in {"wazuh", "elasticsearch"}:
-            json.loads(normalized)
+        normalized = ""
     return {
         "query": normalized,
         "used_fallback": error is not None,
@@ -295,7 +210,12 @@ def validate_and_normalize_query(value: str, hypothesis_text: str,
     }
 
 
-async def generate_query(hypothesis_text: str, siem_type: str = "folder") -> dict:
+async def generate_query(
+    hypothesis_text: str,
+    siem_type: str = "folder",
+    objective: str = "Retrieve direct evidence that supports or refutes the hypothesis.",
+    investigation_context: dict | None = None,
+) -> dict:
     # cache.py's own docstring calls this out as a target ("repeated SIEM
     # queries and LLM calls") but nothing called it — a hunter iterating on
     # the same hypothesis/SIEM combo redid the full LLM query-gen call
@@ -307,12 +227,21 @@ async def generate_query(hypothesis_text: str, siem_type: str = "folder") -> dic
     # The uploaded field inventory changes valid query syntax, so it is part
     # of the cache key. A schema upload invalidates only affected query-gen
     # entries without flushing unrelated hypotheses.
-    # v6 prioritizes literal artifacts in fallback retrieval and expands the
-    # explicit safe text-field allowlist; do not reuse broader v5 queries.
-    cache_version = "v6"
+    # Version query-generation behavior so cached output is invalidated when
+    # validation or prompt contracts change.
+    cache_version = "v10"
     field_signature = json.dumps(field_map, sort_keys=True, separators=(",", ":"))
     query_model = target_for("query_gen").model
-    cache_payload = f"{cache_version}|{query_model}|{siem_type}|{field_signature}|{hypothesis_text}"
+    bounded_context = json.dumps(
+        investigation_context or {},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )[:8_000]
+    cache_payload = (
+        f"{cache_version}|{query_model}|{siem_type}|{field_signature}|"
+        f"{objective}|{bounded_context}|{hypothesis_text}"
+    )
     cached_query = await asyncio.to_thread(cache.cache_get, "query_gen", cache_payload)
     if isinstance(cached_query, str) and cached_query.strip():
         validation = validate_and_normalize_query(cached_query, hypothesis_text, siem_type)
@@ -324,43 +253,85 @@ async def generate_query(hypothesis_text: str, siem_type: str = "folder") -> dic
             "query_validation_error": validation["validation_error"],
         }
 
+    validation = None
+    failures: list[str] = []
     if siem_type.lower() in FOLDER_SIEM_TYPES:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
+            f"Investigation step objective: {objective}\n"
+            f"Prior retrieval context: {bounded_context}\n\n"
             f"Normalized fields available: {field_map}\n\n"
             f"Generate the keyword list now."
         )
-        try:
-            query_text = await ollama_generate(prompt=prompt, system=FOLDER_SYSTEM_PROMPT, agent="query_gen")
-        except Exception:
-            query_text = ""
+        system_prompt = FOLDER_SYSTEM_PROMPT
     elif siem_type.lower() in {"wazuh", "elasticsearch"}:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
+            f"Investigation step objective: {objective}\n"
+            f"Prior retrieval context: {bounded_context}\n\n"
             f"{siem_type.title()} field mapping: {field_map}\n\n"
             "Generate the JSON Query DSL now."
         )
-        try:
-            query_text = await ollama_generate(
-                prompt=prompt, system=WAZUH_SYSTEM_PROMPT, agent="query_gen"
-            )
-        except Exception:
-            query_text = ""
+        system_prompt = WAZUH_SYSTEM_PROMPT
     else:
         prompt = (
             f"Hypothesis: {hypothesis_text}\n\n"
+            f"Investigation step objective: {objective}\n"
+            f"Prior retrieval context: {bounded_context}\n\n"
             f"Target SIEM: {siem_type}\n"
             f"Field mapping: {field_map}\n\n"
             f"Generate the query now."
         )
-        try:
-            query_text = await ollama_generate(prompt=prompt, system=SYSTEM_PROMPT, agent="query_gen")
-        except Exception:
-            query_text = ""
+        system_prompt = SYSTEM_PROMPT
 
-    validation = validate_and_normalize_query(query_text, hypothesis_text, siem_type)
+    query_text = ""
+    configured_attempts = int(
+        get_value("autonomy", "query_generation_attempts", default=3)
+    )
+    for attempt in range(1, max(1, min(configured_attempts, 10)) + 1):
+        attempt_prompt = prompt
+        if failures:
+            attempt_prompt += (
+                "\n\nThe previous response failed deterministic source and "
+                f"read-only validation: {failures[-1]}. Rebuild the query from "
+                "the supplied schema and objective. Do not return an availability "
+                "query, example query, explanation, or invented field."
+            )
+        try:
+            candidate = await ollama_generate(
+                prompt=attempt_prompt,
+                system=system_prompt,
+                agent="query_gen",
+            )
+        except Exception as exc:
+            failures.append(str(exc) or exc.__class__.__name__)
+            continue
+        candidate_validation = validate_and_normalize_query(
+            candidate, hypothesis_text, siem_type
+        )
+        if not candidate_validation["used_fallback"]:
+            query_text = candidate_validation["query"]
+            validation = candidate_validation
+            break
+        failures.append(
+            candidate_validation["validation_error"]
+            or "query did not pass source safety/schema validation"
+        )
+
+    if validation is None:
+        validation = {
+            "query": "",
+            "used_fallback": True,
+            "validation_error": (
+                "; ".join(failures)
+                or "query generation failed without a validated response"
+            ),
+        }
     query_text = validation["query"]
-    await asyncio.to_thread(cache.cache_set, "query_gen", cache_payload, query_text)
+    # Cache only a model-generated query that passed validation. A degraded
+    # availability search must not become the permanent answer for later hunts.
+    if not validation["used_fallback"]:
+        await asyncio.to_thread(cache.cache_set, "query_gen", cache_payload, query_text)
 
     return {
         "siem_type": siem_type,

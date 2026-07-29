@@ -38,6 +38,7 @@ volumes:
   yara_community_rules:
   yara_catalog:
   chroma_embedding_cache:
+  clamav_db:
 
 services:
 
@@ -202,7 +203,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-thos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-thos_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-thos_audit}
     # No host port binding: the password above is a weak default, so the
     # only thing actually keeping this database safe right now is that it's
@@ -234,7 +235,7 @@ services:
     # Redis has no auth by default at all, so require a password. Same
     # weak-default-with-warning pattern as the other secrets — the
     # orchestrator/mcp REDIS_URL below must include the same password.
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-thos_change_me_redis}"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     volumes:
       - redis_data:/data
     networks:
@@ -247,7 +248,7 @@ services:
           cpus: "${REDIS_CPU_LIMIT:-1}"
           memory: ${REDIS_MEM_LIMIT:-512m}
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-thos_change_me_redis}", "--no-auth-warning", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -393,8 +394,8 @@ services:
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
       CYBER_KB_MAX_DISTANCE: ${CYBER_KB_MAX_DISTANCE:-1.35}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
-      POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-thos_audit}
       MCP_PORT: 8100
       MCP_TRANSPORT: streamable-http
       # Structured JSON logs to stdout (services/observability/logging_config.py).
@@ -405,7 +406,7 @@ services:
       # every MCP tool call. Must match the orchestrator's MCP_AUTH_TOKEN
       # below. Change this in .env before deploying anywhere but a
       # trusted local dev box.
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-thos_change_me_mcp_token}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in .env}
       REPORTS_DIR: /data/reports
       THOS_RUNTIME_CONFIG: /data/runtime/config.json
       DETECTION_PROPOSALS_DIR: /data/detection_rule_proposals
@@ -465,6 +466,7 @@ services:
       # corpus before MCP starts; MCP only receives a read-only view.
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
       - sigma_queries:/data/sigma_queries:ro
+      - ./services/detection/sigma_rules:/repo/services/detection/sigma_rules:ro
       - ./services/detection/yara_rules:/data/yara-local:ro
       - yara_community_rules:/data/yara-community:ro
       - yara_catalog:/data/yara-catalog:ro
@@ -503,6 +505,7 @@ services:
     build:
       context: .
       dockerfile: services/orchestration/Dockerfile
+    image: thos-orchestrator:local
     container_name: thos-orchestrator
     restart: unless-stopped
     # No host port binding: ORCHESTRATOR_API_KEY now gates every functional
@@ -542,17 +545,21 @@ services:
       MCP_SERVER_URL: http://mcp:8100/mcp
       # Must match mcp's MCP_AUTH_TOKEN above — this is how the orchestrator
       # authenticates to the MCP server as a client.
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-thos_change_me_mcp_token}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in .env}
       # Callers of *this* service (the chat UI, or any other client) must
       # send `Authorization: Bearer <ORCHESTRATOR_API_KEY>`. Must match
       # chat-ui's ORCHESTRATOR_API_KEY below.
-      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-thos_change_me_orchestrator_key}
-      POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:-thos_change_me}@postgres:5432/${POSTGRES_DB:-thos_audit}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-thos_change_me_redis}@redis:6379/0
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:?Set ORCHESTRATOR_API_KEY in .env}
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-thos}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-thos_audit}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
       REPORTS_DIR: /data/reports
       FORENSIC_ROOT: /data/log_sources/forensic
       FORENSIC_MAX_RECORDS: ${FORENSIC_MAX_RECORDS:-50000}
       FORENSIC_MAX_DOCUMENT_TEXT: ${FORENSIC_MAX_DOCUMENT_TEXT:-2097152}
+      FORENSIC_TOOL_TIMEOUT_SECONDS: ${FORENSIC_TOOL_TIMEOUT_SECONDS:-180}
+      FORENSIC_TOOL_OUTPUT_BYTES: ${FORENSIC_TOOL_OUTPUT_BYTES:-200000}
+      FORENSIC_MAX_STATIC_FILE_BYTES: ${FORENSIC_MAX_STATIC_FILE_BYTES:-2147483648}
+      FORENSIC_STRINGS_MIN_LENGTH: ${FORENSIC_STRINGS_MIN_LENGTH:-6}
       THOS_RISK_CACHE_SECONDS: ${THOS_RISK_CACHE_SECONDS:-60}
       THOS_WAZUH_MSEARCH_BATCH_SIZE: ${THOS_WAZUH_MSEARCH_BATCH_SIZE:-8}
       THOS_WAZUH_MSEARCH_RULE_LIMIT: ${THOS_WAZUH_MSEARCH_RULE_LIMIT:-10}
@@ -592,9 +599,12 @@ services:
       - ./data/runtime:/data/runtime
       - sigmahq_rules:/repo/services/detection/sigma_rules_hq:ro
       - sigma_queries:/data/sigma_queries:ro
+      - ./services/detection/sigma_rules:/repo/services/detection/sigma_rules:ro
       - ./services/detection/yara_rules:/data/yara-local:ro
       - yara_community_rules:/data/yara-community:ro
       - yara_catalog:/data/yara-catalog:ro
+      - clamav_db:/var/lib/clamav:ro
+      - ./data/forensic_tools:/opt/forensic-tools:ro
     deploy:
       resources:
         limits:
@@ -613,6 +623,30 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    networks:
+      - thos-net
+
+  # Keeps the local ClamAV signature database current. The orchestrator mounts
+  # this volume read-only and never sends samples to ClamAV over the network.
+  clamav-updater:
+    image: thos-orchestrator:local
+    container_name: thos-clamav-updater
+    restart: unless-stopped
+    environment:
+      CLAMAV_UPDATE_INTERVAL_SECONDS: ${CLAMAV_UPDATE_INTERVAL_SECONDS:-3600}
+    command:
+      - sh
+      - -c
+      - while true; do freshclam --datadir=/var/lib/clamav || true; sleep "$${CLAMAV_UPDATE_INTERVAL_SECONDS}"; done
+    volumes:
+      - clamav_db:/var/lib/clamav
+    deploy:
+      resources:
+        limits:
+          cpus: "${CLAMAV_UPDATE_CPU_LIMIT:-0.25}"
+          # freshclam validates the full database before publishing it; that
+          # self-test can exceed 256 MiB even though steady-state use is small.
+          memory: ${CLAMAV_UPDATE_MEM_LIMIT:-1g}
     networks:
       - thos-net
 
@@ -653,15 +687,15 @@ services:
       YARA_DEFAULT_EXCLUDED_CATEGORIES: ${YARA_DEFAULT_EXCLUDED_CATEGORIES:-utils,crypto,deprecated}
       # Must match orchestrator's ORCHESTRATOR_API_KEY above — this is how
       # the chat UI authenticates to the orchestrator API as a client.
-      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-thos_change_me_orchestrator_key}
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:?Set ORCHESTRATOR_API_KEY in .env}
       # Credentials accepted by the branded SOCmate login page. Change these in
       # .env before deploying anywhere but a trusted local dev box.
       # Single-user default:
-      CHATUI_USERNAME: ${CHATUI_USERNAME:-analyst}
-      CHATUI_PASSWORD: ${CHATUI_PASSWORD:-thos_change_me}
+      CHATUI_USERNAME: ${CHATUI_USERNAME:?Set CHATUI_USERNAME or CHATUI_USERS in .env}
+      CHATUI_PASSWORD: ${CHATUI_PASSWORD:?Set CHATUI_PASSWORD in .env}
       # HMAC key for the HTTP-only analyst session cookie. Use a long random
       # value in production. Enable Secure cookies when serving through HTTPS.
-      CHATUI_SESSION_SECRET: ${CHATUI_SESSION_SECRET:-thos_change_me_session_key}
+      CHATUI_SESSION_SECRET: ${CHATUI_SESSION_SECRET:?Set CHATUI_SESSION_SECRET in .env}
       CHATUI_SESSION_TTL_SECONDS: ${CHATUI_SESSION_TTL_SECONDS:-43200}
       CHATUI_SECURE_COOKIE: ${CHATUI_SECURE_COOKIE:-0}
       # For more than one analyst login, set CHATUI_USERS instead (takes
@@ -686,8 +720,10 @@ services:
       - ./data/runtime:/data/runtime
       - ./data/threat_intel:/data/threat_intel
       - ./data/ioc_sources:/data/ioc_sources
-      - ./services/detection/sigma_rules:/data/sigma-local:ro
-      - ./services/detection/yara_rules:/data/yara-local:ro
+      # The secured Admin/SME authoring APIs are the only writers. Runtime
+      # engines receive separate read-only mounts of these same directories.
+      - ./services/detection/sigma_rules:/data/sigma-local
+      - ./services/detection/yara_rules:/data/yara-local
       - yara_community_rules:/data/yara-community:ro
       - yara_catalog:/data/yara-catalog:ro
       - sigmahq_rules:/data/sigmahq:ro

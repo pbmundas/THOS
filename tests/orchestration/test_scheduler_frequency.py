@@ -74,7 +74,7 @@ def test_scheduled_hypotheses_serialize_to_match_orchestrator_capacity(monkeypat
     assert maximum == 1
 
 
-def test_adaptive_batch_prioritizes_overdue_high_and_respects_pressure():
+def test_adaptive_batch_is_owned_by_scheduler_agent(monkeypatch):
     targets = [
         {"id": "low-new", "severity": "low"},
         {"id": "high-recent", "severity": "high"},
@@ -95,16 +95,32 @@ def test_adaptive_batch_prioritizes_overdue_high_and_respects_pressure():
         {"hypothesis_id": target["id"], "p95_duration_ms": 20 * 60_000}
         for target in targets
     ]
-    selected, plan = control_plane._adaptive_hypothesis_targets(
-        item,
-        targets,
-        duration_rows,
-        [],
-        {"queue_depth": 1, "ollama_memory_ratio": 0.85, "siem_p95_ms": 7000},
+    async def selected_by_agent(**kwargs):
+        assert kwargs["capacity"]["ollama_memory_ratio"] == 0.85
+        return [targets[2], targets[3]], {
+            "adaptive_batch_size": 2,
+            "selection_owner": "schedule_planner_model",
+        }
+
+    monkeypatch.setattr(
+        control_plane, "select_scheduled_targets", selected_by_agent
+    )
+    selected, plan = asyncio.run(
+        control_plane._adaptive_hypothesis_targets(
+            item,
+            targets,
+            duration_rows,
+            [],
+            {
+                "queue_depth": 1,
+                "ollama_memory_ratio": 0.85,
+                "siem_p95_ms": 7000,
+            },
+        )
     )
 
     assert [target["id"] for target in selected] == [
         "critical-never", "high-old",
     ]
     assert plan["adaptive_batch_size"] == 2
-    assert plan["pressure_reasons"]
+    assert plan["selection_owner"] == "schedule_planner_model"

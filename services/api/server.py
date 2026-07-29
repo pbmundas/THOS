@@ -23,6 +23,7 @@ from services.observability import cache
 from services.reporting import report
 from services.hunting.query_generator import generate_query
 from services.observability.logging_config import configure_logging
+from services.security.configuration import required_secret
 
 # As early as possible: same structured-JSON-to-stdout setup used by the
 # orchestrator (see services/observability/logging_config.py), so tool
@@ -38,19 +39,9 @@ logger = logging.getLogger(__name__)
 # call every SOC tool — it must never be reachable without credentials.
 # The orchestrator is the only intended caller; it authenticates with the
 # same shared bearer token via MCP_AUTH_TOKEN (see services/mcp/mcp_client.py).
-# A weak "_change_me" default is provided so `docker compose up` still works
-# out of the box, matching this repo's existing POSTGRES_PASSWORD pattern —
-# but it must be overridden with a real secret (e.g. `openssl rand -hex 32`)
-# before this ever runs on a network anyone else can reach.
-_DEFAULT_MCP_AUTH_TOKEN = "thos_change_me_mcp_token"
-MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", _DEFAULT_MCP_AUTH_TOKEN)
-if MCP_AUTH_TOKEN == _DEFAULT_MCP_AUTH_TOKEN:
-    logger.warning(
-        "MCP_AUTH_TOKEN is unset, using the built-in default. Set "
-        "MCP_AUTH_TOKEN to a real secret (and mirror it in the "
-        "orchestrator's MCP_AUTH_TOKEN) before exposing this service "
-        "beyond a trusted local dev network."
-    )
+# Startup fails closed unless the operator supplies a non-placeholder shared
+# token of sufficient length.
+MCP_AUTH_TOKEN = required_secret("MCP_AUTH_TOKEN")
 
 mcp = FastMCP(
     "THOS-SOC-Tools",
@@ -184,9 +175,19 @@ def siem_field_mapping(siem_type: str) -> dict:
 # Query generation (LLM-assisted, grounded in SIEM-KB)
 # ---------------------------------------------------------------
 @mcp.tool()
-async def generate_siem_query(hypothesis_text: str, siem_type: str = "folder") -> dict:
-    """Generate a concrete SIEM query for the given hypothesis text and target SIEM type."""
-    return await generate_query(hypothesis_text, siem_type)
+async def generate_siem_query(
+    hypothesis_text: str,
+    siem_type: str = "folder",
+    objective: str = "Retrieve direct evidence that supports or refutes the hypothesis.",
+    investigation_context: dict | None = None,
+) -> dict:
+    """Generate one source-specific query for a governed investigation step."""
+    return await generate_query(
+        hypothesis_text,
+        siem_type,
+        objective=objective,
+        investigation_context=investigation_context,
+    )
 
 
 # ---------------------------------------------------------------
@@ -195,7 +196,8 @@ async def generate_siem_query(hypothesis_text: str, siem_type: str = "folder") -
 @mcp.tool()
 def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
                      log_source_path: str = "", trusted_sigma: bool = False,
-                     bypass_cache: bool = False) -> dict:
+                     bypass_cache: bool = False,
+                     lookback_minutes: int | None = None) -> dict:
     """Execute a SIEM query and fetch matching log records. In 'mock' mode
     returns synthetic records. In 'wazuh' mode, searches the Wazuh
     Indexer. In 'folder' mode, parses every supported
@@ -204,7 +206,8 @@ def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
     return siem_connector.fetch_logs(query, limit, siem_type=siem_type or None,
                                       log_source_path=log_source_path,
                                       trusted_sigma=trusted_sigma,
-                                      bypass_cache=bypass_cache)
+                                      bypass_cache=bypass_cache,
+                                      lookback_minutes=lookback_minutes)
 
 
 @mcp.tool()

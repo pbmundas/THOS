@@ -10,15 +10,19 @@ const SECTIONS = [
     content: [
       "Connect and test a telemetry source in Settings. Only successfully tested live SIEMs are offered to hunts; the managed evidence folder remains available.",
       "Choose a hypothesis, confirm its ATT&CK technique and severity, then run it. The live timeline shows each agent, its purpose, and duration.",
-      "Start with the Hunt Summary and Key Evidence Highlights in the report. Treat findings as investigative leads and verify cited records before response actions.",
+      "Start with Summary and Key Evidence in the report. Treat findings as investigative leads and verify cited records before response actions.",
     ],
   },
   {
     id: "hunts", icon: DocumentMagnifyingGlassIcon, title: "Hypotheses and threat hunts", tags: "HEARTH gaps MITRE query Nmap evidence",
     content: [
-      "The hypothesis catalog combines pinned HEARTH content with THOS gap hypotheses for ATT&CK techniques not adequately represented upstream.",
-      "A hunt generates a validated source-specific query, normalizes and deduplicates telemetry, runs detection-rule and literal artifact correlation, enriches public IOCs, checks coverage, reasons over bounded evidence, verifies citations, and writes a report. Related Wazuh hunts reuse an ATT&CK-technique/time-window telemetry cache.",
-      "When detection rules, literal artifacts, local IOC matches, and deterministic behavioral signals are all zero, THOS skips expensive model reasoning and does not create an empty report. Missing or partial telemetry remains visible in hunt history.",
+      "Every catalog entry uses the same eleven-section schema: metadata, falsifiable statement and null, ATT&CK mapping, justification, scope, required data, hunting logic, outcomes, visibility gaps, knowledge capture, and references.",
+      "ATT&CK enrichment is mechanically extracted from the pinned official Enterprise v19.1 STIX release. HEARTH and analyst claims retain their attribution; missing telemetry, scope, thresholds, or references are shown as missing rather than invented.",
+      "HEARTH refreshes normalize new entries, update officially revoked mappings, preserve source Markdown, and apply a conservative same-technique duplicate gate. Equal technique IDs are not merged when their observable, telemetry path, platform, entity, or sequence differs.",
+      "Admin and SME authoring requires an exact active ATT&CK technique, null hypothesis, rationale, data sources, analytic approach, true-positive criteria, and false-positive knowledge. Duplicate submissions are rejected with the matching catalog IDs.",
+      "The human reader receives the full structured hypothesis. MCP and query agents receive a shorter deterministic profile containing verified analytics, log channels, tunable elements, and exact literals for faster, more reliable execution.",
+      "A hunt creates a structured investigation contract and a validated query for each selected telemetry source. Empty searches are retried with a governed broader technique/context query and a larger bounded time window; capped or noisy searches are tightened using the target dialect and discovered field map. Related Wazuh hunts reuse an ATT&CK-technique/time-window telemetry cache.",
+      "Every proposed, normalized, rejected, skipped, and executed retrieval attempt records its source, objective, lookback, cap, counts, and error. Only after selected-source and bounded adaptive branches are exhausted does THOS apply the evidence gate, skip expensive reasoning, and avoid creating an empty report.",
       "Wazuh high-signal fields—including rule MITRE metadata, URL, user-agent, command line, process paths, and full_log—are preserved in an evidence summary. This allows artifacts such as Nmap NSE to remain visible even when the raw event is long.",
       "A clean result is meaningful only when the coverage section says the required ATT&CK data sources were available.",
     ],
@@ -31,6 +35,15 @@ const SECTIONS = [
       "The recommended scheduled Wazuh detection-rule rotation also executes each bounded rule batch as one multi-search request and resumes from a saved cursor. Splunk retains bounded individual searches until its connector exposes an equivalent safe batch API.",
       "YARA files are compiler-validated and enabled rules are assembled into one reusable bundle. Schedule the enabled bundle once—not one scan per rule. After the first scan, only evidence modified since the previous completed run is scanned.",
       "Detection proposals in hunt reports are experimental drafts. THOS does not automatically deploy or contain; use your normal detection change-control process.",
+    ],
+  },
+  {
+    id: "forensics", icon: DocumentMagnifyingGlassIcon, title: "Forensic analysis tools", tags: "forensic capa floss exiftool clamav strings pe registry disk memory volatility",
+    content: [
+      "Every upload is hashed, preserved read-only, classified from file content, and routed only to applicable static analyzers. THOS never executes a submitted sample and never invokes a tool through a command shell.",
+      "The installed tool set is YARA, libmagic file, GNU strings, ExifTool, ClamAV, pefile, capa with pinned rules, FLOSS, pypdf, oletools, Volatility 3, libewf tools, The Sleuth Kit, and RegRipper.",
+      "The File and Memory Analysis tab accepts executables, documents, registry hives, disk images, full-memory images, and process dumps. Expand each result to review tool status, duration, structured output, errors, truncation, and safety limits.",
+      "The Forensic Planning Agent selects applicable installed tools for each artifact and may select a bounded second pass after reviewing first-pass facts.",
     ],
   },
   {
@@ -49,6 +62,7 @@ const SECTIONS = [
       "Core hunt execution can remain internal. Allow outbound HTTPS only for features you enable, and use a TLS-inspecting proxy only when its CA is trusted inside the containers.",
       "Rule and knowledge refresh: github.com and codeload.github.com for THORCollective/HEARTH, the community detection-rule corpus, and Yara-Rules/rules. Git operations may also use objects.githubusercontent.com and raw.githubusercontent.com.",
       "Built-in IOC feeds: openphish.com, feodotracker.abuse.ch, check.torproject.org, feeds.dshield.org, and raw.githubusercontent.com. Custom feeds require the hostname configured in Settings.",
+      "Forensic updates: database.clamav.net over HTTPS for ClamAV signatures. Building the image also retrieves pinned capa rules from github.com/codeload.github.com.",
       "Model downloads, when performed, require Ollama's configured model registry (normally registry.ollama.ai). Inference itself uses the internal Ollama service and needs no Internet access.",
       "Telemetry connections are deployment-specific and normally stay private: Wazuh Indexer or Elasticsearch HTTPS 9200, Splunk management HTTPS 8089, QRadar HTTPS 443, and LogRhythm Web Console/Search API HTTPS 8505. Allow the exact configured hosts, not whole networks.",
       "Also permit internal DNS and NTP. Optional API integrations require outbound HTTPS to only the endpoint entered for that connector. No unsolicited inbound Internet access is required; publish the UI through your authenticated reverse proxy if remote analysts need access.",
@@ -59,9 +73,9 @@ const SECTIONS = [
     id: "operations", icon: CircleStackIcon, title: "Data, cases, reports, and troubleshooting", tags: "case report audit storage error timeout",
     content: [
       "Verification failures or degraded reasoning can create an analyst-review case. There is no separate gated action workflow.",
-      "The Risks page is generated by the deterministic Risk Analysis Agent. It includes only verifier-supported hunt findings and detections with matched events, consolidates repeated entity/risk pairs, and links every item back to the originating report or detection.",
-      "Risk scores range from 0-100 and combine source severity, evidence strength, and event volume. Scores prioritize review; they do not authorize containment or prove malicious intent.",
-      "Reports retain executed queries, ingestion diagnostics, citations, representative evidence, agent timing, coverage gaps, recommendations, and draft rules.",
+      "The Risks page is generated by the Risk Analysis Agent. It includes only verifier-supported hunt findings and detections with matched events and links every item back to the originating report or detection.",
+      "Risk scores range from 0-100 and are assigned by the evidence-bounded Risk Analysis Agent. Scores prioritize review; they do not authorize containment or prove malicious intent.",
+      "Hunt reports contain only investigation content: hypothesis and scope, retrieval results and queries, evidence and correlation, coverage gaps, findings, recommendations, and draft detection logic. Platform audit, model, cache, case, and workflow details stay in operational views rather than the report.",
       "Use the Reports time-period controls to select all time or the last 1-31 days, 1-12 months, or 1-10 years.",
       "If evidence exists in the SIEM but not in a report, compare the executed query, total live matches, deduplicated count, coverage matrix, and Key Evidence Highlights. Confirm the source clock, lookback window, decoder fields, and discovered schema.",
       "For repeated timeouts, lower the per-run hypothesis or detection-rule batch size before increasing concurrency. More simultaneous model jobs usually increase latency and memory pressure on a single inference host.",
@@ -92,7 +106,7 @@ const FAQS = [
   },
   {
     q: "What are the main THOS capabilities?",
-    a: "THOS provides hypothesis-driven hunts, schema-aware SIEM retrieval, normalized evidence processing, deterministic detection-rule and YARA evaluation, IOC correlation, ATT&CK coverage analysis, forensic intake and timelines, evidence-cited reports, actionable risk correlation, scheduled operations, audit logs, and read-only AI-assisted investigation.",
+    a: "THOS provides hypothesis-driven hunts, schema-aware SIEM retrieval, normalized evidence processing, deterministic detection-rule and YARA evaluation, IOC correlation, ATT&CK coverage analysis, routed static forensics, chain-of-custody timelines, evidence-cited reports, actionable risk correlation, scheduled operations, audit logs, and read-only AI-assisted investigation.",
     tags: "features capabilities hunt forensic risk reports yara ioc attack",
   },
   {
@@ -102,7 +116,7 @@ const FAQS = [
   },
   {
     q: "Which Internet domains should be allowed?",
-    a: "Allow only enabled features: github.com, codeload.github.com, objects.githubusercontent.com, and raw.githubusercontent.com for reviewed knowledge and rule refreshes; openphish.com, feodotracker.abuse.ch, check.torproject.org, feeds.dshield.org, and raw.githubusercontent.com for built-in IOC feeds; and registry.ollama.ai only for model downloads. Custom feeds and API integrations additionally require their explicitly configured hostnames.",
+    a: "Allow only enabled features: github.com, codeload.github.com, objects.githubusercontent.com, and raw.githubusercontent.com for reviewed knowledge, forensic rules, and rule refreshes; openphish.com, feodotracker.abuse.ch, check.torproject.org, feeds.dshield.org, and raw.githubusercontent.com for built-in IOC feeds; database.clamav.net for malware-signature updates; and registry.ollama.ai only for model downloads. Custom feeds and API integrations additionally require their explicitly configured hostnames.",
     tags: "domains allowlist firewall internet github feeds registry",
   },
   {
@@ -116,14 +130,29 @@ const FAQS = [
     tags: "offline air gap internet mirror",
   },
   {
+    q: "Which forensic tools are installed?",
+    a: "The forensic worker includes YARA, libmagic file, GNU strings, ExifTool, ClamAV, pefile, capa, FLOSS, pypdf, oletools, Volatility 3, libewf tools, The Sleuth Kit, and RegRipper. Forensics shows only tools that are installed and ready; ClamAV appears after its signature database is initialized.",
+    tags: "forensic tools installed yara capa floss volatility regripper sleuthkit",
+  },
+  {
+    q: "Does forensic analysis execute or upload a suspicious file?",
+    a: "No. THOS passes a preserved read-only path only to installed static parsers using fixed argument arrays, no shell, per-tool timeouts, and output limits. There is no sample-upload operation.",
+    tags: "forensic execute upload sample safety static hash",
+  },
+  {
     q: "What actions will THOS not perform automatically?",
     a: "THOS does not isolate hosts, block network traffic, delete evidence, deploy a live detection, or assert compromise or attribution without evidence. It produces evidence-bounded analysis and recommendations for analyst-controlled response and normal change control.",
     tags: "limitations containment blocking deploy safety",
   },
   {
     q: "What happens when a hunt finds no evidence?",
-    a: "The deterministic evidence-screening gate stops the hunt before model reasoning, verification, communication, and report generation. Hunt history records the no-evidence outcome and any telemetry-coverage limitations; absence of evidence is not represented as proof of a clean environment.",
+    a: "THOS first queries every selected source, broadens a zero-result primary search with governed ATT&CK/literal context, and expands the bounded time window. After those retrieval branches are exhausted, the deterministic evidence-screening gate stops model reasoning, verification, communication, and report generation. Hunt history retains the complete attempt ledger and coverage limitations; absence of evidence is never proof of a clean environment.",
     tags: "no evidence negative screening report reasoning",
+  },
+  {
+    q: "Does THOS create more than one query during a hunt?",
+    a: "Yes when evidence conditions require it. THOS starts with one high-precision query per selected source, then can broaden an empty result, tighten a capped or noisy result, or request one dialect-validated adjacent-activity pivot from reasoning. Time windows and result caps are controlled separately from query text, duplicate source/query/window attempts are rejected, and every attempt is auditable.",
+    tags: "multiple queries iterative adaptive broaden tighten lookback noise source",
   },
   {
     q: "Can I bookmark or share a THOS page URL?",

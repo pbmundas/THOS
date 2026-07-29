@@ -42,6 +42,27 @@ def test_attack_coverage_reports_untested_required_telemetry(monkeypatch):
         "name": "Network Service Discovery",
         "data_sources": ["Network Traffic", "Process Creation"],
     })
+    async def coverage_decision(**kwargs):
+        return kwargs["validator"]({
+            "overall_status": "partial",
+            "data_sources": [{
+                "data_source": "Network Traffic",
+                "status": "partial",
+                "confidence": "medium",
+                "reason": "No network record was supplied.",
+                "evidence_refs": [],
+                "missing_requirements": ["Network sensor events"],
+            }, {
+                "data_source": "Process Creation",
+                "status": "covered",
+                "confidence": "high",
+                "reason": "A process record was supplied.",
+                "evidence_refs": ["record:0"],
+                "missing_requirements": [],
+            }],
+            "gaps": ["Network Traffic telemetry was not demonstrated."],
+        })
+    monkeypatch.setattr(gap_analysis, "decide_json", coverage_decision)
 
     result = asyncio.run(gap_analysis.coverage_gap_node({
         "technique_id": "T1046",
@@ -60,26 +81,52 @@ def test_attack_coverage_reports_untested_required_telemetry(monkeypatch):
 
 
 def test_adaptive_supervisor_can_request_one_nonduplicate_refinement(monkeypatch):
-    async def fake_generate(*_args, **_kwargs):
-        return json.dumps({
+    async def fake_decision(**kwargs):
+        return kwargs["validator"]({
             "action": "refine_query",
-            "follow_up_query": "event_category:network AND dst_port:*",
-            "reason": "Process telemetry exists but required network telemetry was not tested.",
+            "objective": "Retrieve direct network evidence.",
+            "source": "elasticsearch",
+            "lookback_minutes": 1440,
+            "limit": 25,
+            "reason": "The user-selected source has not yet been investigated.",
         })
 
-    monkeypatch.setattr(supervisor, "generate", fake_generate)
+    async def fake_call_tool(*_args, **_kwargs):
+        return {
+            "query": json.dumps({
+                "query": {"term": {"event.category": "network"}},
+            }),
+            "query_used_fallback": False,
+            "query_validation_error": None,
+        }
+
+    monkeypatch.setattr(supervisor, "decide_json", fake_decision)
+    monkeypatch.setattr(supervisor, "call_tool", fake_call_tool)
     result = asyncio.run(supervisor.adaptive_replan_node({
         "adaptive_replans": 0,
-        "max_adaptive_replans": 1,
+        "max_adaptive_replans": 4,
+        "siem_type": "splunk",
+        "siem_types": ["splunk", "elasticsearch"],
+        "pending_query_plan": [{
+            "source": "elasticsearch",
+            "objective": "Retrieve direct network evidence.",
+        }],
         "query": "event:4688",
-        "executed_queries": ["event:4688"],
+        "active_query_source": "splunk",
+        "last_record_count": 1,
+        "last_total_hits": 1,
+        "source_diagnostics": {"splunk": {"status": "queried"}},
+        "executed_query_keys": [],
         "processed_logs": [{}],
         "coverage_assessment": {"status": "partial"},
     }))
 
     assert result["replan_action"] == "refine_query"
     assert result["adaptive_replans"] == 1
-    assert result["follow_up_query"] == "event_category:network AND dst_port:*"
+    assert json.loads(result["follow_up_query"]) == {
+        "query": {"term": {"event.category": "network"}},
+    }
+    assert result["follow_up_source"] == "elasticsearch"
 
 
 def test_yara_catalog_and_rule_selection_are_locally_bounded(tmp_path, monkeypatch):

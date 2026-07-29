@@ -52,6 +52,7 @@ from services.reasoning.model_router import (
 )
 from services.risk.risk_agent import analyze_actionable_risks
 from services.detection.detection_analysis_agent import analyze_detection
+from services.security.configuration import required_secret
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -73,14 +74,7 @@ REPORTS_DIR = Path(os.environ.get("REPORTS_DIR", "/data/reports"))
 # loud-warning pattern as MCP_AUTH_TOKEN below — works out of the box for
 # local dev, must be overridden with a real secret before this is
 # reachable by anyone else.
-_DEFAULT_ORCHESTRATOR_API_KEY = "thos_change_me_orchestrator_key"
-ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", _DEFAULT_ORCHESTRATOR_API_KEY)
-if ORCHESTRATOR_API_KEY == _DEFAULT_ORCHESTRATOR_API_KEY:
-    logger.warning(
-        "ORCHESTRATOR_API_KEY is unset, using the built-in default. Set a "
-        "real secret (and mirror it in the chat-ui's ORCHESTRATOR_API_KEY) "
-        "before exposing this service beyond a trusted local dev network."
-    )
+ORCHESTRATOR_API_KEY = required_secret("ORCHESTRATOR_API_KEY")
 
 
 async def require_api_key(authorization: str = Header(default="")):
@@ -99,7 +93,10 @@ async def require_api_key(authorization: str = Header(default="")):
 # starve everyone else's budget; both knobs are env-configurable per deploy.
 HUNT_RATE_LIMIT = int(os.environ.get("HUNT_RATE_LIMIT_PER_WINDOW", "10"))
 HUNT_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("HUNT_RATE_LIMIT_WINDOW_SECONDS", "60"))
-MAX_REASONING_FOLLOWUPS = int(os.environ.get("MAX_REASONING_FOLLOWUPS", "1"))
+MAX_REASONING_FOLLOWUPS = int(os.environ.get(
+    "MAX_REASONING_FOLLOWUPS",
+    str(get_value("autonomy", "max_reasoning_followups", default=2)),
+))
 
 
 async def _enforce_hunt_rate_limit(hunter_name: str):
@@ -203,15 +200,18 @@ class HuntRequest(BaseModel):
     hypothesis_tactic: str = ""
     hypothesis_technique: str = ""
     siem_type: str = "folder"
+    siem_types: list[str] = Field(default_factory=list, max_length=16)
     # Only used when siem_type == "folder": local directory containing
     # log artifacts (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) to
     # hunt against instead of a live SIEM API.
     log_source_path: str | None = None
     max_iterations: int = Field(
-        default_factory=lambda: max(1, min(5, int(get_value("general", "default_iterations", default=1)))),
+        default_factory=lambda: max(1, min(5, int(get_value("general", "default_iterations", default=2)))),
         ge=1,
         le=5,
     )
+    lookback_minutes: int | None = Field(default=None, ge=1, le=525600)
+    max_lookback_minutes: int = Field(default=10080, ge=60, le=525600)
     # "1" = Executive cover page (plain-language, for management/compliance)
     # "2" = SOC Analyst cover panel (technique/tactic/ingestion-stats table)
     cover_style: str = "1"
@@ -305,26 +305,78 @@ class ForensicAnalyzeRequest(BaseModel):
     examiner: str = Field(min_length=1, max_length=128)
 
 
+class ForensicStaticScanRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+    artifact_type: str = Field(
+        default="suspicious_file",
+        pattern="^(evidence|suspicious_file|memory_dump|process_dump)$",
+    )
+
+
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
+    sources = list(dict.fromkeys(
+        str(source).strip().lower()
+        for source in ([req.siem_type, *req.siem_types])
+        if str(source).strip()
+    )) or ["folder"]
     return {
         "hunt_id": hunt_id,
         "hunt_started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "hunter_name": req.hunter_name,
         "siem_type": req.siem_type,
+        "siem_types": sources,
         "log_source_path": req.log_source_path,
         "hypothesis_id": req.hypothesis_id,
         "hypothesis_text": req.hypothesis_text or "",
         "hypothesis_tactic": req.hypothesis_tactic,
         "hypothesis_technique": req.hypothesis_technique,
         "logs": [],
+        "query_plan": [],
+        "pending_query_plan": [],
+        "executed_query_keys": [],
+        "retrieval_attempts": [],
+        "source_diagnostics": {},
+        "retrieval_exhausted": False,
+        "hunt_completeness": {},
+        "active_lookback_minutes": req.lookback_minutes,
         "iteration": 0,
         "max_iterations": req.max_iterations,
         "need_more_logs": False,
         "executed_queries": [],
         "max_reasoning_followups": max(0, MAX_REASONING_FOLLOWUPS),
         "adaptive_replans": 0,
-        "max_adaptive_replans": 1,
+        "max_adaptive_replans": max(
+            1,
+            int(
+                os.environ.get(
+                    "THOS_MAX_ADAPTIVE_REPLANS",
+                    str(
+                        get_value(
+                            "autonomy", "max_adaptive_replans", default=8
+                        )
+                    ),
+                )
+            ),
+        ),
         "replan_history": [],
+        "replan_decision_owner": None,
+        "zero_result_expansions": 0,
+        "noise_refinements": 0,
+        "max_lookback_minutes": req.max_lookback_minutes,
+        "max_query_limit": max(
+            1,
+            int(
+                os.environ.get(
+                    "THOS_MAX_QUERY_LIMIT",
+                    str(
+                        get_value(
+                            "autonomy", "max_query_limit", default=2000
+                        )
+                    ),
+                )
+            ),
+        ),
         "enrichment": {},
         "cover_style": req.cover_style,
         "workload_class": req.workload_class,
@@ -361,7 +413,7 @@ async def operations_dashboard(hours: int = 24):
 async def actionable_risks(limit: int = 500, hours: int = 0):
     bounded_limit = max(1, min(limit, 2000))
     bounded_hours = max(1, min(hours, 24 * 365 * 10)) if hours else 0
-    cache_payload = f"v1|limit={bounded_limit}|hours={bounded_hours}"
+    cache_payload = f"v2-agent|limit={bounded_limit}|hours={bounded_hours}"
     cached = await asyncio.to_thread(cache.cache_get, "actionable_risks", cache_payload)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
         return {**cached, "cache_hit": True}
@@ -369,15 +421,29 @@ async def actionable_risks(limit: int = 500, hours: int = 0):
         audit.risk_source_hunts(),
         audit.risk_source_detections(),
     )
-    result = await asyncio.to_thread(
-        analyze_actionable_risks,
+    result = await analyze_actionable_risks(
         hunts,
         detections,
         REPORTS_DIR,
         bounded_limit,
         bounded_hours or None,
     )
-    ttl = max(10, min(int(os.environ.get("THOS_RISK_CACHE_SECONDS", "60")), 600))
+    ttl = max(
+        10,
+        min(
+            int(
+                os.environ.get(
+                    "THOS_RISK_CACHE_SECONDS",
+                    str(
+                        get_value(
+                            "autonomy", "risk_cache_seconds", default=60
+                        )
+                    ),
+                )
+            ),
+            600,
+        ),
+    )
     await asyncio.to_thread(
         cache.cache_set, "actionable_risks", cache_payload, result, ttl
     )
@@ -493,6 +559,64 @@ async def forensic_cases(limit: int = 100):
     return await audit.list_forensic_cases(limit)
 
 
+@app.get("/forensics/tools", dependencies=[Depends(require_api_key)])
+async def forensic_tools():
+    from services.forensics.tools import tool_status
+
+    return await asyncio.to_thread(tool_status)
+
+
+@app.post("/forensics/static-scan", dependencies=[Depends(require_api_key)])
+async def forensic_static_scan(request: ForensicStaticScanRequest):
+    from services.forensics.analysis import sha256_file
+    from services.forensics.planner import plan_forensic_tools
+    from services.forensics.tools import run_static_triage
+
+    root = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic")).resolve()
+    target = Path(request.path).resolve()
+    if not target.is_file() or root not in target.parents:
+        raise HTTPException(
+            status_code=422,
+            detail="forensic artifact path is outside the managed evidence root",
+        )
+    actual_hash = await asyncio.to_thread(sha256_file, target)
+    if not secrets.compare_digest(actual_hash.lower(), request.sha256.lower()):
+        raise HTTPException(status_code=409, detail="forensic artifact integrity mismatch")
+    derived = target.parent / "_thos_derived"
+    derived.mkdir(mode=0o750, exist_ok=True)
+    evidence_id = f"static-{actual_hash[:16]}"
+    verified = {
+        "case_id": evidence_id,
+        "case_dir": str(target.parent),
+        "evidence": [{
+            "evidence_id": evidence_id,
+            "original_name": target.name,
+            "stored_name": target.name,
+            "path": str(target),
+            "size_bytes": target.stat().st_size,
+            "sha256": actual_hash,
+            "artifact_type": request.artifact_type,
+        }],
+    }
+    plan = await plan_forensic_tools(verified)
+    artifact_plan = next(
+        (
+            item.get("tools") or []
+            for item in plan.get("artifacts") or []
+            if item.get("evidence_id") == evidence_id
+        ),
+        [],
+    )
+    return await asyncio.to_thread(
+        run_static_triage,
+        target,
+        sha256=actual_hash,
+        artifact_type=request.artifact_type,
+        derived_dir=derived,
+        tool_plan=artifact_plan,
+    )
+
+
 @app.get("/forensics/{case_id}", dependencies=[Depends(require_api_key)])
 async def forensic_case(case_id: str):
     result = await audit.get_forensic_case(case_id)
@@ -519,6 +643,11 @@ async def analyze_scheduled_sigma_detection(run_id: str):
     if isinstance(cached, dict) and cached.get("analysis_lines"):
         return {**cached, "cached": True}
     result = await analyze_detection(detection)
+    if result.get("generation_mode") != "local_model":
+        raise HTTPException(
+            status_code=503,
+            detail=result.get("error") or "detection analysis model unavailable",
+        )
     saved = await audit.save_sigma_ai_analysis(run_id, result)
     if saved is None:
         raise HTTPException(status_code=503, detail="could not persist detection analysis")
@@ -1015,6 +1144,10 @@ def _audit_outcome(state: dict) -> dict:
         "reasoning_attempts": state.get("reasoning_attempts", 0),
         "reasoning_error": state.get("reasoning_error"),
         "reasoning_skip_reason": state.get("reasoning_skip_reason"),
+        "hunt_completeness": state.get("hunt_completeness") or {},
+        "retrieval_attempt_count": len(state.get("retrieval_attempts") or []),
+        "source_diagnostics": state.get("source_diagnostics") or {},
+        "selected_sources": state.get("siem_types") or [state.get("siem_type")],
         "sigmahq_rules_evaluated": enrichment.get("sigmahq_rules_evaluated", 0),
         "sigma_rules_evaluated": enrichment.get("sigma_rules_evaluated", 0),
         "records_analyzed": len(state.get("processed_logs") or []),
@@ -1070,18 +1203,19 @@ async def run_hunt(req: HuntRequest):
                 )
                 return {"hunt_id": hunt_id, "error": str(e), "state": final_state}
 
-            if final_state.get("reasoning_failed"):
-                failure = final_state.get("error") or "reasoning failed after three attempts"
+            if final_state.get("reasoning_failed") or final_state.get("verification_failed"):
+                stage = "reasoning" if final_state.get("reasoning_failed") else "verifier"
+                failure = final_state.get("error") or f"{stage} failed"
                 await audit.log_tool_error(
                     hunt_id,
-                    "reasoning",
+                    stage,
                     failure,
                     {"attempts": final_state.get("reasoning_attempts", 3)},
                 )
                 await audit.log_hunt_complete(
-                    hunt_id, "failed", "reasoning", failure, _audit_outcome(final_state),
+                    hunt_id, "failed", stage, failure, _audit_outcome(final_state),
                 )
-                logger.error("hunt stopped without report: %s", failure, extra={"node": "reasoning"})
+                logger.error("hunt stopped without report: %s", failure, extra={"node": stage})
                 return final_state
 
             await audit.log_hunt_complete(
@@ -1202,14 +1336,15 @@ async def run_hunt_stream(req: HuntRequest):
                 await publish({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state})
                 return
 
-            if final_state.get("reasoning_failed"):
-                failure = final_state.get("error") or "reasoning and deterministic fallback failed"
+            if final_state.get("reasoning_failed") or final_state.get("verification_failed"):
+                stage = "reasoning" if final_state.get("reasoning_failed") else "verifier"
+                failure = final_state.get("error") or f"{stage} failed"
                 await audit.log_tool_error(
-                    hunt_id, "reasoning", failure,
+                    hunt_id, stage, failure,
                     {"attempts": final_state.get("reasoning_attempts", 3)},
                 )
                 await audit.log_hunt_complete(
-                    hunt_id, "failed", "reasoning", failure, _audit_outcome(final_state),
+                    hunt_id, "failed", stage, failure, _audit_outcome(final_state),
                 )
                 terminal_recorded = True
                 await publish({"event": "error", "error": failure})

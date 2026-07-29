@@ -30,17 +30,22 @@ from services.integrations.catalog import (
     SECRET_SETTING_NAMES,
     public_catalog,
 )
-from services.runtime_config import read_config, write_config
+from services.runtime_config import get_value, read_config, write_config
+from services.scheduling.planner import select_scheduled_targets
+from services.security.configuration import required_secret
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://orchestrator:8200").rstrip("/")
-ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "thos_change_me_orchestrator_key")
+ORCHESTRATOR_API_KEY = required_secret("ORCHESTRATOR_API_KEY")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
 SIGMAHQ_DIR = Path(os.environ.get("SIGMAHQ_UI_RULES_DIR", "/data/sigmahq"))
 SIGMA_LOCAL_DIR = Path(os.environ.get("SIGMA_LOCAL_UI_RULES_DIR", "/data/sigma-local"))
-YARA_RULES_DIR = Path(os.environ.get("YARA_RULES_DIR", "/data/yara-rules"))
+YARA_RULES_DIR = Path(os.environ.get(
+    "YARA_LOCAL_RULES_DIR",
+    os.environ.get("YARA_RULES_DIR", "/data/yara-local"),
+))
 _UPSTREAM_HEADERS = {"Authorization": f"Bearer {ORCHESTRATOR_API_KEY}"}
 ALL_FEATURES = (
     "hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings",
@@ -222,7 +227,7 @@ async def _upstream(method: str, path: str, **kwargs):
 
 class GeneralSettings(BaseModel):
     default_model: str = ""
-    default_iterations: int = Field(default=1, ge=1, le=5)
+    default_iterations: int = Field(default=2, ge=1, le=5)
     default_siem: str = Field(default="folder", min_length=1, max_length=128)
 
 
@@ -257,6 +262,10 @@ class RuleToggle(BaseModel):
     enabled: bool
 
 
+class RuleAuthoringRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=250_000)
+
+
 class YaraScanRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
     recursive: bool = True
@@ -275,6 +284,7 @@ class ScheduleRequest(BaseModel):
     days: list[int] = Field(default_factory=lambda: list(range(7)))
     enabled: bool = True
     siem_type: str = Field(default="folder", min_length=1, max_length=128)
+    siem_types: list[str] = Field(default_factory=list, max_length=16)
     log_source_path: str | None = None
 
 
@@ -422,7 +432,7 @@ async def general_settings(request: Request):
     config = read_config()
     return {
         "default_model": config["models"].get("default_model", ""),
-        "default_iterations": config["general"].get("default_iterations", 1),
+        "default_iterations": config["general"].get("default_iterations", 2),
         "default_siem": telemetry_sources(config)["default"],
         "timezone": os.environ.get("TZ") or str(datetime.now().astimezone().tzinfo),
     }
@@ -1063,6 +1073,8 @@ def _sigma_catalog() -> list[dict[str, Any]]:
                     "severity": str(raw.get("level", "medium")).lower(),
                     "status": str(raw.get("status", "stable")), "source": source,
                     "tags": [str(tag) for tag in raw.get("tags", [])],
+                    "editable": source == "Local",
+                    "path": str(path) if source == "Local" else "",
                 })
     return results
 
@@ -1077,6 +1089,92 @@ def _yara_catalog_summary() -> dict[str, Any]:
     from services.detection import yara_engine
 
     return yara_engine.catalog_summary()
+
+
+def _atomic_rule_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content.rstrip() + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _validated_detection_rule(
+    content: str, expected_id: str | None = None,
+) -> tuple[str, str]:
+    try:
+        payload = yaml.safe_load(content)
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid detection-rule YAML: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Detection rule must be one YAML object")
+    if not str(payload.get("title") or "").strip():
+        raise HTTPException(status_code=422, detail="Detection rule requires a title")
+    if not isinstance(payload.get("logsource"), dict) or not payload["logsource"]:
+        raise HTTPException(status_code=422, detail="Detection rule requires a logsource mapping")
+    detection = payload.get("detection")
+    if not isinstance(detection, dict) or not detection.get("condition"):
+        raise HTTPException(status_code=422, detail="Detection rule requires detection selections and a condition")
+    rule_id = str(payload.get("id") or uuid.uuid4()).strip()
+    if expected_id and rule_id != expected_id:
+        raise HTTPException(status_code=422, detail="A rule ID cannot be changed while editing")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{3,128}", rule_id):
+        raise HTTPException(status_code=422, detail="Rule ID must use 3-128 letters, numbers, dots, underscores, or hyphens")
+    level = str(payload.get("level") or "medium").lower()
+    if level not in {"informational", "low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=422, detail="Unsupported detection-rule severity")
+    payload.update({
+        "id": rule_id,
+        "level": level,
+        "status": str(payload.get("status") or "experimental"),
+    })
+    return rule_id, yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+
+
+def _local_detection_rule(rule_id: str) -> Path | None:
+    for item in _sigma_catalog():
+        if item["id"] == rule_id and item.get("editable") and item.get("path"):
+            return Path(item["path"])
+    return None
+
+
+def _validated_yara_rule(
+    content: str, expected_id: str | None = None,
+) -> tuple[str, str]:
+    public_rules = re.findall(
+        r"(?m)^\s*(?!private\s)(?:global\s+)?rule\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+        content,
+    )
+    if len(public_rules) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="A managed YARA file must contain exactly one non-private rule",
+        )
+    rule_id = public_rules[0]
+    if expected_id and rule_id != expected_id:
+        raise HTTPException(status_code=422, detail="A YARA rule name cannot be changed while editing")
+    try:
+        import yara
+
+        yara.compile(
+            source=content,
+            externals={"filename": "", "filepath": "", "extension": ""},
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="YARA compiler is unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"YARA compilation failed: {exc}") from exc
+    return rule_id, content.rstrip() + "\n"
+
+
+def _local_yara_rule(rule_id: str) -> Path | None:
+    for item in _yara_catalog():
+        if (
+            item["id"] == rule_id
+            and item.get("category") == "local"
+            and item.get("path")
+        ):
+            return Path(str(item["path"]))
+    return None
 
 
 @router.get("/settings/sigma")
@@ -1107,6 +1205,51 @@ async def sigma_rules(
     }
 
 
+@router.post("/settings/sigma/authoring", status_code=201)
+async def create_detection_rule(
+    payload: RuleAuthoringRequest, request: Request,
+):
+    require_feature(request, "settings", sme_only=True)
+    rule_id, normalized = _validated_detection_rule(payload.content)
+    if any(item["id"] == rule_id for item in _sigma_catalog()):
+        raise HTTPException(status_code=409, detail="A detection rule with this ID already exists")
+    path = SIGMA_LOCAL_DIR / f"{rule_id}.yml"
+    _atomic_rule_write(path, normalized)
+    return {
+        "id": rule_id,
+        "editable": True,
+        "content": normalized,
+        "created_by": request.state.analyst,
+    }
+
+
+@router.get("/settings/sigma/authoring/{rule_id}")
+async def get_detection_rule_for_edit(rule_id: str, request: Request):
+    require_feature(request, "settings", sme_only=True)
+    path = _local_detection_rule(rule_id)
+    if not path:
+        raise HTTPException(status_code=403, detail="Only locally managed detection rules can be edited")
+    return {"id": rule_id, "editable": True, "content": path.read_text(encoding="utf-8")}
+
+
+@router.put("/settings/sigma/authoring/{rule_id}")
+async def update_detection_rule(
+    rule_id: str, payload: RuleAuthoringRequest, request: Request,
+):
+    require_feature(request, "settings", sme_only=True)
+    path = _local_detection_rule(rule_id)
+    if not path:
+        raise HTTPException(status_code=403, detail="Only locally managed detection rules can be edited")
+    _, normalized = _validated_detection_rule(payload.content, expected_id=rule_id)
+    _atomic_rule_write(path, normalized)
+    return {
+        "id": rule_id,
+        "editable": True,
+        "content": normalized,
+        "updated_by": request.state.analyst,
+    }
+
+
 @router.put("/settings/sigma/{rule_id}")
 async def toggle_sigma(rule_id: str, payload: RuleToggle, request: Request):
     require_feature(request, "settings", sme_only=True)
@@ -1126,6 +1269,8 @@ async def yara_rules(
     require_feature(request, "settings", sme_only=True)
     needle = query.strip().lower()
     rules = _yara_catalog()
+    for rule in rules:
+        rule["editable"] = rule.get("category") == "local"
     if needle:
         rules = [
             rule for rule in rules
@@ -1151,6 +1296,51 @@ async def yara_rules(
         "page_size": page_size,
         "schedules": read_config()["yara"].get("schedules", []),
         "catalog": _yara_catalog_summary(),
+    }
+
+
+@router.post("/settings/yara/authoring", status_code=201)
+async def create_yara_rule(
+    payload: RuleAuthoringRequest, request: Request,
+):
+    require_feature(request, "settings", sme_only=True)
+    rule_id, normalized = _validated_yara_rule(payload.content)
+    if any(item["id"] == rule_id for item in _yara_catalog()):
+        raise HTTPException(status_code=409, detail="A YARA rule with this name already exists")
+    path = YARA_RULES_DIR / f"{rule_id}.yar"
+    _atomic_rule_write(path, normalized)
+    return {
+        "id": rule_id,
+        "editable": True,
+        "content": normalized,
+        "created_by": request.state.analyst,
+    }
+
+
+@router.get("/settings/yara/authoring/{rule_id}")
+async def get_yara_rule_for_edit(rule_id: str, request: Request):
+    require_feature(request, "settings", sme_only=True)
+    path = _local_yara_rule(rule_id)
+    if not path:
+        raise HTTPException(status_code=403, detail="Only locally managed YARA rules can be edited")
+    return {"id": rule_id, "editable": True, "content": path.read_text(encoding="utf-8")}
+
+
+@router.put("/settings/yara/authoring/{rule_id}")
+async def update_yara_rule(
+    rule_id: str, payload: RuleAuthoringRequest, request: Request,
+):
+    require_feature(request, "settings", sme_only=True)
+    path = _local_yara_rule(rule_id)
+    if not path:
+        raise HTTPException(status_code=403, detail="Only locally managed YARA rules can be edited")
+    _, normalized = _validated_yara_rule(payload.content, expected_id=rule_id)
+    _atomic_rule_write(path, normalized)
+    return {
+        "id": rule_id,
+        "editable": True,
+        "content": normalized,
+        "updated_by": request.state.analyst,
     }
 
 
@@ -1195,35 +1385,12 @@ def _schedule_collection(config: dict, kind: str) -> list[dict]:
     return config[kind].setdefault("schedules", [])
 
 
-_HYPOTHESIS_SEVERITY_BY_TACTIC = {
-    "reconnaissance": "low",
-    "resource development": "low",
-    "initial access": "high",
-    "discovery": "medium",
-    "collection": "medium",
-    "execution": "high",
-    "persistence": "high",
-    "privilege escalation": "high",
-    "defense evasion": "high",
-    "stealth": "high",
-    "defense impairment": "critical",
-    "credential access": "critical",
-    "lateral movement": "high",
-    "command and control": "high",
-    "exfiltration": "critical",
-    "impact": "critical",
-}
-
-
 def hypothesis_severity(item: dict[str, Any]) -> str:
-    """Return the canonical severity type used by every hypothesis view."""
+    """Return authored/agent-assigned severity without tactic inference."""
     explicit = str(item.get("severity", "")).strip().lower()
     if explicit in {"low", "medium", "high", "critical"}:
         return explicit
-    return _HYPOTHESIS_SEVERITY_BY_TACTIC.get(
-        str(item.get("tactic", "")).strip().lower(),
-        "medium",
-    )
+    return "unrated"
 
 
 async def _hypothesis_schedule_targets(target_ids: list[str], severity: str | None) -> list[dict[str, Any]]:
@@ -1270,7 +1437,12 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
     require_feature(request, "settings", sme_only=True)
     if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
-    if not is_active_telemetry_source(payload.siem_type):
+    schedule_sources = list(dict.fromkeys(
+        source.strip().lower()
+        for source in ([payload.siem_type, *payload.siem_types])
+        if source.strip()
+    ))
+    if any(not is_active_telemetry_source(source) for source in schedule_sources):
         raise HTTPException(status_code=422, detail="Schedules require an active, successfully tested telemetry source")
     if any(day < 0 or day > 6 for day in payload.days):
         raise HTTPException(status_code=422, detail="days must use 0=Monday through 6=Sunday")
@@ -1282,6 +1454,7 @@ async def create_schedule(kind: str, payload: ScheduleRequest, request: Request)
         "id": uuid.uuid4().hex[:12],
         "kind": kind,
         **payload.model_dump(),
+        "siem_types": schedule_sources,
         "last_run_key": "",
         "last_status": "never",
         "next_target_index": 0,
@@ -1360,7 +1533,12 @@ async def update_schedule(
     require_feature(request, "settings", sme_only=True)
     if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
-    if not is_active_telemetry_source(payload.siem_type):
+    schedule_sources = list(dict.fromkeys(
+        source.strip().lower()
+        for source in ([payload.siem_type, *payload.siem_types])
+        if source.strip()
+    ))
+    if any(not is_active_telemetry_source(source) for source in schedule_sources):
         raise HTTPException(
             status_code=422,
             detail="Schedules require an active, successfully tested telemetry source",
@@ -1397,6 +1575,7 @@ async def update_schedule(
         "days": sorted(set(payload.days)),
         "enabled": payload.enabled,
         "siem_type": payload.siem_type,
+        "siem_types": schedule_sources,
         "log_source_path": payload.log_source_path,
     })
     write_config(config)
@@ -1432,13 +1611,11 @@ async def apply_recommended_schedules(request: Request):
         *(upstream if isinstance(upstream, list) else []),
         *config.get("custom_hypotheses", []),
     ]
-    by_severity: dict[str, list[str]] = {
-        "critical": [], "high": [], "medium": [], "low": [],
-    }
-    for hypothesis in catalog:
-        hypothesis_id = str(hypothesis.get("id") or "")
-        if hypothesis_id:
-            by_severity[hypothesis_severity(hypothesis)].append(hypothesis_id)
+    hypothesis_ids = [
+        str(hypothesis.get("id"))
+        for hypothesis in catalog
+        if hypothesis.get("id")
+    ]
 
     # Reapplying updates the managed recommendation without touching schedules
     # the operator created manually.
@@ -1449,30 +1626,26 @@ async def apply_recommended_schedules(request: Request):
         ]
 
     created: list[dict[str, Any]] = []
-    severity_plan = {
-        # 16 hunts/day ~= 5h20 at the measured 20-minute true-positive rate.
-        # Each tuple is anchor, initial batch, maintenance window, hard cap.
-        "critical": ("00:30", 3, 60, 6),
-        "high": ("01:40", 8, 160, 16),
-        "medium": ("04:30", 4, 80, 8),
-        "low": ("06:00", 1, 20, 2),
-    }
-    for severity, (anchor, batch_size, window_minutes, batch_max) in severity_plan.items():
-        ids = by_severity[severity]
-        if not ids:
-            continue
-        targets = await _hypothesis_schedule_targets(ids, severity)
+    if hypothesis_ids:
+        targets = await _hypothesis_schedule_targets(hypothesis_ids, None)
         item = {
             "id": uuid.uuid4().hex[:12],
             "kind": "hypothesis",
-            "target_id": ids[0],
-            "target_ids": ids,
+            "target_id": hypothesis_ids[0],
+            "target_ids": hypothesis_ids,
             "hypothesis_targets": targets,
-            "target_count": len(ids),
-            "schedule_scope": "severity",
-            "severity": severity,
-            "title": f"{severity.title()} severity rotation ({len(ids)} hypotheses)",
-            "time": anchor,
+            "target_count": len(hypothesis_ids),
+            "schedule_scope": "catalog",
+            "severity": "all",
+            "title": (
+                "Autonomous hypothesis catalog "
+                f"({len(hypothesis_ids)} hypotheses)"
+            ),
+            "time": str(
+                get_value(
+                    "scheduler", "maintenance_start", default="00:30"
+                )
+            ),
             "frequency": "daily",
             "interval": 1,
             "days": list(range(7)),
@@ -1482,9 +1655,21 @@ async def apply_recommended_schedules(request: Request):
                 os.environ.get("LOG_SOURCE_DIR", "/data/log_sources")
                 if siem_type == "folder" else None
             ),
-            "run_batch_size": batch_size,
-            "run_batch_max": batch_max,
-            "maintenance_window_minutes": window_minutes,
+            "run_batch_size": 1,
+            "run_batch_max": int(
+                get_value(
+                    "scheduler",
+                    "maximum_hypotheses_per_window",
+                    default=24,
+                )
+            ),
+            "maintenance_window_minutes": int(
+                get_value(
+                    "scheduler",
+                    "maintenance_window_minutes",
+                    default=360,
+                )
+            ),
             "next_target_index": 0,
             "last_run_key": "",
             "last_status": "never",
@@ -1502,7 +1687,11 @@ async def apply_recommended_schedules(request: Request):
             "title": "All schema-compatible detection rules (rotating batch)",
             "schedule_scope": "catalog",
             "severity": "all",
-            "time": "23:00",
+            "time": str(
+                get_value(
+                    "scheduler", "detection_start", default="23:00"
+                )
+            ),
             "frequency": "daily",
             "interval": 1,
             "days": list(range(7)),
@@ -1525,7 +1714,11 @@ async def apply_recommended_schedules(request: Request):
         "title": "All enabled YARA rules (incremental compiled bundle)",
         "schedule_scope": "catalog",
         "severity": "all",
-        "time": "22:00",
+        "time": str(
+            get_value(
+                "scheduler", "file_scan_start", default="22:00"
+            )
+        ),
         "frequency": "daily",
         "interval": 1,
         "days": list(range(7)),
@@ -1545,7 +1738,7 @@ async def apply_recommended_schedules(request: Request):
     return {
         "created": created,
         "count": len(created),
-        "hypothesis_count": sum(len(value) for value in by_severity.values()),
+        "hypothesis_count": len(hypothesis_ids),
         "sigma_scheduled": bool(live_sigma_siem),
         "yara_scheduled": True,
         "timezone": str(datetime.now().astimezone().tzinfo),
@@ -1936,11 +2129,6 @@ def _duration_percentiles(values: list[int]) -> dict[str, int]:
     }
 
 
-def _datetime_rank(value: Any) -> float:
-    parsed = _parse_local_datetime(value)
-    return parsed.timestamp() if parsed else 0.0
-
-
 async def _scheduler_capacity_snapshot(item: dict[str, Any]) -> dict[str, Any]:
     """Collect bounded, best-effort pressure signals used to shrink a batch."""
     active_count = 0
@@ -2007,15 +2195,14 @@ async def _scheduler_capacity_snapshot(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _adaptive_hypothesis_targets(
+async def _adaptive_hypothesis_targets(
     item: dict[str, Any],
     all_targets: list[dict[str, Any]],
     duration_rows: list[dict[str, Any]],
     last_run_rows: list[dict[str, Any]],
     capacity: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Prioritize overdue risk and fit predicted p95 work into the window."""
-    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    """Delegate target ordering and load balancing to the scheduler agent."""
     target_history = item.get("target_run_history") or {}
     last_runs = {
         str(row.get("hypothesis_id")): row.get("last_ran_at")
@@ -2027,99 +2214,51 @@ def _adaptive_hypothesis_targets(
     }
     default_duration_ms = max(
         60_000,
-        int(os.environ.get("THOS_DEFAULT_HYPOTHESIS_DURATION_MS", "1200000")),
-    )
-
-    def severity(target: dict[str, Any]) -> str:
-        return str(target.get("severity") or item.get("severity") or "medium").lower()
-
-    def last_completed(target: dict[str, Any]) -> Any:
-        target_id = str(target.get("id") or "")
-        return (
-            (target_history.get(target_id) or {}).get("last_completed_at")
-            or last_runs.get(target_id)
-        )
-
-    # Critical/high work is always placed ahead of lower-risk work, and the
-    # oldest/never-run hypothesis wins within each severity.
-    ordered = sorted(
-        all_targets,
-        key=lambda target: (
-            severity_rank.get(severity(target), 4),
-            _datetime_rank(last_completed(target)),
-            str(target.get("id") or ""),
+        int(
+            get_value(
+                "scheduler",
+                "unobserved_hypothesis_duration_ms",
+                default=1200000,
+            )
         ),
     )
+
     maintenance_minutes = max(
-        1, int(item.get("maintenance_window_minutes") or 60)
+        1,
+        int(
+            item.get("maintenance_window_minutes")
+            or get_value(
+                "scheduler", "maintenance_window_minutes", default=60
+            )
+        ),
     )
-    window_ms = maintenance_minutes * 60_000
     configured = max(1, int(item.get("run_batch_size") or 1))
-    max_batch = max(
+    maximum_targets = max(
         configured,
         min(
-            len(ordered),
-            int(item.get("run_batch_max") or os.environ.get(
-                "THOS_ADAPTIVE_HYPOTHESIS_BATCH_MAX", "16"
-            )),
+            len(all_targets),
+            int(
+                item.get("run_batch_max")
+                or get_value(
+                    "scheduler",
+                    "maximum_hypotheses_per_window",
+                    default=24,
+                )
+            ),
         ),
     )
-    selected: list[dict[str, Any]] = []
-    predicted_ms = 0
-    estimates: dict[str, int] = {}
-    for target in ordered:
-        target_id = str(target.get("id") or "")
-        estimate = max(
-            1,
-            int((durations.get(target_id) or {}).get("p95_duration_ms")
-                or (target_history.get(target_id) or {}).get("p95_duration_ms")
-                or default_duration_ms),
-        )
-        estimates[target_id] = estimate
-        if selected and predicted_ms + estimate > window_ms:
-            continue
-        selected.append(target)
-        predicted_ms += estimate
-        if len(selected) >= max_batch:
-            break
-    if not selected and ordered:
-        selected = [ordered[0]]
-        predicted_ms = estimates.get(str(ordered[0].get("id") or ""), default_duration_ms)
-
-    pressure_reasons: list[str] = []
-    reduction = 1.0
-    memory_ratio = float(capacity.get("ollama_memory_ratio") or 0)
-    if memory_ratio >= float(os.environ.get("THOS_OLLAMA_MEMORY_CRITICAL_RATIO", "0.95")):
-        reduction = min(reduction, 0.25)
-        pressure_reasons.append("Ollama memory critical")
-    elif memory_ratio >= float(os.environ.get("THOS_OLLAMA_MEMORY_HIGH_RATIO", "0.80")):
-        reduction = min(reduction, 0.5)
-        pressure_reasons.append("Ollama memory high")
-    if int(capacity.get("siem_p95_ms") or 0) >= int(
-        os.environ.get("THOS_SIEM_LATENCY_HIGH_MS", "5000")
-    ):
-        reduction = min(reduction, 0.5)
-        pressure_reasons.append("SIEM latency high")
-    if int(capacity.get("queue_depth") or 0) >= int(
-        os.environ.get("THOS_HUNT_QUEUE_HIGH", "1")
-    ):
-        reduction = min(reduction, 0.5)
-        pressure_reasons.append("hunt queue occupied")
-    if selected and reduction < 1:
-        selected = selected[:max(1, int(len(selected) * reduction))]
-        predicted_ms = sum(
-            estimates.get(str(target.get("id") or ""), default_duration_ms)
-            for target in selected
-        )
-    return selected, {
-        "maintenance_window_minutes": maintenance_minutes,
-        "predicted_p95_duration_ms": predicted_ms,
-        "configured_batch_size": configured,
-        "adaptive_batch_size": len(selected),
-        "capacity": capacity,
-        "pressure_reasons": pressure_reasons,
-        "selection_order": "severity_then_oldest_last_run",
-    }
+    selected, plan = await select_scheduled_targets(
+        targets=all_targets,
+        durations=durations,
+        last_runs=last_runs,
+        target_history=target_history,
+        capacity=capacity,
+        maintenance_window_minutes=maintenance_minutes,
+        maximum_targets=maximum_targets,
+        default_duration_ms=default_duration_ms,
+    )
+    plan["configured_batch_size"] = configured
+    return selected, plan
 
 
 async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
@@ -2254,7 +2393,7 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
             except Exception:  # noqa: BLE001 - use local rolling history
                 duration_rows, last_run_rows = [], []
             capacity = await _scheduler_capacity_snapshot(item)
-            targets, adaptive_plan = _adaptive_hypothesis_targets(
+            targets, adaptive_plan = await _adaptive_hypothesis_targets(
                 item,
                 all_targets,
                 duration_rows if isinstance(duration_rows, list) else [],
@@ -2266,39 +2405,12 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
                 "hunter_name": "scheduler",
                 "siem_type": item.get("siem_type", "folder"),
                 "log_source_path": item.get("log_source_path"),
-                "max_iterations": int(read_config()["general"].get("default_iterations", 1)),
+                "max_iterations": int(read_config()["general"].get("default_iterations", 2)),
+                "siem_types": item.get("siem_types") or [item.get("siem_type", "folder")],
                 "cover_style": "2",
                 "workload_class": "scheduled",
             }
             for offset, target in enumerate(targets, start=1):
-                if offset > 1:
-                    live_capacity = await _scheduler_capacity_snapshot({
-                        **item,
-                        "recent_siem_duration_ms": recent_siem[-50:],
-                    })
-                    high_memory = float(
-                        live_capacity.get("ollama_memory_ratio") or 0
-                    ) >= float(os.environ.get(
-                        "THOS_OLLAMA_MEMORY_HIGH_RATIO", "0.80"
-                    ))
-                    high_siem = int(
-                        live_capacity.get("siem_p95_ms") or 0
-                    ) >= int(os.environ.get(
-                        "THOS_SIEM_LATENCY_HIGH_MS", "5000"
-                    ))
-                    queued = int(
-                        live_capacity.get("queue_depth") or 0
-                    ) >= int(os.environ.get("THOS_HUNT_QUEUE_HIGH", "1"))
-                    if high_memory or high_siem or queued:
-                        adaptive_plan["runtime_capacity"] = live_capacity
-                        adaptive_plan["runtime_reduced_after"] = offset - 1
-                        adaptive_plan["pressure_reasons"] = sorted(set([
-                            *adaptive_plan.get("pressure_reasons", []),
-                            *(["Ollama memory high"] if high_memory else []),
-                            *(["SIEM latency high"] if high_siem else []),
-                            *(["hunt queue occupied"] if queued else []),
-                        ]))
-                        break
                 target_started = time_module.perf_counter()
                 payload = {
                     **base_payload,

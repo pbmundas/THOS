@@ -67,9 +67,12 @@ def test_follow_up_query_is_validated_immediately_before_siem_call(monkeypatch):
         "executed_queries": ["SELECT sourceip FROM events"],
     }))
 
-    assert captured["query"] == "SELECT * FROM events"
+    assert captured == {}
     assert result["query_used_fallback"] is True
     assert "complete SELECT" in result["query_validation_error"]
+    assert result["retrieval_attempts"][-1]["status"] == (
+        "query_generation_failed"
+    )
 
 
 def test_wazuh_technique_window_is_reused_across_related_hunts(monkeypatch):
@@ -108,8 +111,8 @@ def test_wazuh_technique_window_is_reused_across_related_hunts(monkeypatch):
     first = asyncio.run(siem_fetch.fetch_logs_node(state))
     second = asyncio.run(siem_fetch.fetch_logs_node(state))
 
-    assert technique_calls == 1
-    assert normal_calls == 2
+    assert technique_calls == 0
+    assert normal_calls == 1
     assert first["telemetry_cache_hit"] is False
     assert second["telemetry_cache_hit"] is True
-    assert second["technique_telemetry_records"] == 1
+    assert second["technique_telemetry_records"] == 0

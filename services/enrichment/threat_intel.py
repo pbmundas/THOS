@@ -4,23 +4,22 @@ import os
 from services.orchestration.state import HuntState
 from services.enrichment import ioc_management
 
-_PRIVATE_NETWORKS = tuple(
-    ipaddress.ip_network(value) for value in (
-        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-        "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fe80::/10", "fc00::/7",
-    )
-)
+def _suppress_non_global_indicator(value: str) -> bool:
+    """Suppress non-public addresses unless an operator explicitly opts in.
 
-
-def _suppress_private_indicator(value: str) -> bool:
-    if os.environ.get("THOS_IOC_MATCH_PRIVATE", "").strip().lower() in {"1", "true", "yes"}:
+    ``ipaddress.is_global`` covers private, loopback, link-local, multicast,
+    reserved, unspecified, documentation and other non-routable ranges. This
+    avoids maintaining an incomplete hand-written network list.
+    """
+    if os.environ.get("THOS_IOC_MATCH_NON_GLOBAL", "").strip().lower() in {
+        "1", "true", "yes"
+    }:
         return False
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
         return False
-    return any(address in network for network in _PRIVATE_NETWORKS
-               if address.version == network.version)
+    return not address.is_global
 
 
 async def enrich_iocs_node(state: HuntState) -> dict:
@@ -43,10 +42,13 @@ async def enrich_iocs_node(state: HuntState) -> dict:
         observed = ioc_management.extract_indicators(text.encode("utf-8"), "record.json")
         for indicator_type, values in observed.items():
             for value in values:
-                # Public reputation feeds often include broad bogon/private
-                # ranges. Treating an internal RFC1918 address as malicious
-                # solely because of that overlap creates noisy false positives.
-                if indicator_type in {"ipv4", "ipv6"} and _suppress_private_indicator(value):
+                # Public feeds sometimes contain broad bogon ranges. A
+                # non-global address is not threat evidence solely because it
+                # overlaps one of those ranges.
+                if (
+                    indicator_type in {"ipv4", "ipv6"}
+                    and _suppress_non_global_indicator(value)
+                ):
                     continue
                 metadata = blocklist.get(value.lower())
                 matched = value

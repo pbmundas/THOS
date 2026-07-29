@@ -232,13 +232,19 @@ def discover_fields() -> list[dict[str, Any]]:
     return fields
 
 
-def fetch_logs(query: str, limit: int = 25, **_ignored) -> dict:
+def fetch_logs(
+    query: str,
+    limit: int = 25,
+    lookback_minutes: int | None = None,
+    **_ignored,
+) -> dict:
     cfg = _get_config()
     bounded_limit = max(1, min(int(limit), cfg["max_results"]))
+    effective_lookback = max(1, int(lookback_minutes or cfg["lookback_minutes"]))
     payload = _request(
         cfg, "POST", "_search",
         params={"ignore_unavailable": "true", "allow_no_indices": "true"},
-        json=_build_body(query, cfg["lookback_minutes"], bounded_limit),
+        json=_build_body(query, effective_lookback, bounded_limit),
     )
     failures = ((payload.get("_shards") or {}).get("failures") or [])
     if failures:
@@ -255,6 +261,7 @@ def fetch_logs(query: str, limit: int = 25, **_ignored) -> dict:
         "query": query,
         "record_count": len(records),
         "total_hits": int(total_value or 0),
+        "lookback_minutes": effective_lookback,
         "indices": cfg["index_pattern"],
         "logs": records,
     }

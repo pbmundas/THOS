@@ -45,14 +45,15 @@ def test_detection_analysis_uses_one_fast_tier_model_call(monkeypatch):
     assert result["detection_uid"].startswith("DET-")
 
 
-def test_detection_analysis_falls_back_to_seven_evidence_bounded_lines(monkeypatch):
+def test_detection_analysis_fails_closed_when_model_is_unavailable(monkeypatch):
     async def unavailable(*_args, **_kwargs):
         raise RuntimeError("model busy")
 
     monkeypatch.setattr(agent, "generate", unavailable)
     result = asyncio.run(agent.analyze_detection(_detection()))
 
-    assert len(result["analysis_lines"]) == 7
-    assert result["generation_mode"] == "deterministic_fallback"
-    assert result["confidence"] == "medium"
-    assert result["evidence_refs"] == ["wazuh:1"]
+    assert result["analysis_lines"] == []
+    assert result["generation_mode"] == "model_failed"
+    assert result["confidence"] == "unavailable"
+    assert result["evidence_refs"] == []
+    assert "not generated" in result["error"]

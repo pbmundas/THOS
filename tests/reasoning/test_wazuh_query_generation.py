@@ -1,74 +1,33 @@
 import json
 
 from services.hunting.query_generator import (
-    _fallback_query,
     _normalize_folder_query,
     _normalize_wazuh_query,
     validate_and_normalize_query,
 )
 
 
-def test_wazuh_fallback_is_valid_query_dsl():
-    query = _fallback_query("Suspicious Nmap reconnaissance activity", "wazuh")
-    payload = json.loads(query)
-
-    assert "query" in payload
-    assert payload["query"]["simple_query_string"]["default_operator"] == "or"
-    assert "data.*" not in payload["query"]["simple_query_string"]["fields"]
-
-
-def test_wazuh_fallback_keeps_concrete_h111_indicator():
-    query = _fallback_query(
-        "An adversary is performing network service discovery by deploying "
-        "port scanning tools such as Advanced IP Scanner, SoftPerfect Network "
-        "Scanner, or nmap to identify accessible services",
-        "wazuh",
-    )
-
-    search = json.loads(query)["query"]["simple_query_string"]["query"]
-
-    assert "nmap" in search.split()
-    assert "adversary" not in search.split()
-
-
-def test_wazuh_fallback_prioritizes_literal_artifact_over_generic_prose():
-    query = _fallback_query(
-        'AnyDesk remote monitoring tool not writing a file named "gcapi.dll"',
-        "wazuh",
-    )
-
-    search = json.loads(query)["query"]["simple_query_string"]["query"].split()
-
-    assert search[0] == "gcapi.dll"
-    assert "tool" not in search
-    assert "file" not in search
-
-
-def test_wazuh_normalizer_discards_model_control_of_size_and_sort():
+def test_wazuh_normalizer_removes_model_control_of_size_and_sort():
     candidate = json.dumps({
         "size": 50000,
         "sort": [{"rule.level": "asc"}],
         "query": {"match": {"rule.groups": "purple_team"}},
     })
-    payload = json.loads(_normalize_wazuh_query(candidate, "reconnaissance"))
+    payload = json.loads(_normalize_wazuh_query(candidate))
 
     assert payload == {"query": {"match": {"rule.groups": "purple_team"}}}
 
 
-def test_wazuh_normalizer_falls_back_on_non_json_model_output():
-    query = _normalize_wazuh_query("Here is your query: ...", "Nmap scan")
-    assert "simple_query_string" in json.loads(query)["query"]
+def test_invalid_wazuh_model_output_is_not_replaced_with_a_fake_query():
+    try:
+        _normalize_wazuh_query("not JSON")
+    except ValueError as exc:
+        assert "valid JSON" in str(exc)
+    else:
+        raise AssertionError("invalid model output was accepted")
 
 
-def test_wazuh_normalizer_falls_back_on_model_range():
-    candidate = '{"query":{"range":{"@timestamp":{"gte":"adversary"}}}}'
-
-    query = _normalize_wazuh_query(candidate, "Nmap scan")
-
-    assert "simple_query_string" in json.loads(query)["query"]
-
-
-def test_wazuh_normalizer_falls_back_on_wildcard_fields():
+def test_wazuh_wildcard_field_is_rejected():
     candidate = json.dumps({
         "query": {
             "simple_query_string": {
@@ -77,19 +36,22 @@ def test_wazuh_normalizer_falls_back_on_wildcard_fields():
             }
         }
     })
+    try:
+        _normalize_wazuh_query(candidate)
+    except ValueError as exc:
+        assert "disallowed" in str(exc)
+    else:
+        raise AssertionError("wildcard field was accepted")
 
-    query = _normalize_wazuh_query(candidate, "Nmap scan")
 
-    assert "data.*" not in json.loads(query)["query"]["simple_query_string"]["fields"]
-
-
-def test_qradar_invalid_model_output_retries_with_valid_read_only_aql():
+def test_qradar_incomplete_query_is_rejected_not_replaced():
     result = validate_and_normalize_query(
-        "WHERE Process Name = 'powershell.exe'", "PowerShell execution", "qradar"
+        "WHERE Process Name = 'powershell.exe'",
+        "PowerShell execution",
+        "qradar",
     )
 
-    assert result["query"] == "SELECT * FROM events"
-    assert result["used_fallback"] is True
+    assert result["query"] == ""
     assert "complete SELECT" in result["validation_error"]
 
 
@@ -98,15 +60,11 @@ def test_splunk_state_changing_command_is_never_executed():
         "index=main | delete", "Suspicious PowerShell", "splunk"
     )
 
-    assert result["query"] == "*"
-    assert "delete" not in result["query"]
-    assert result["used_fallback"] is True
+    assert result["query"] == ""
+    assert "state-changing" in result["validation_error"]
 
 
-def test_folder_query_removes_generic_prose_and_keeps_explicit_indicators():
-    result = _normalize_folder_query(
-        "often, utilize, powershell, powerful, language, available, windows",
-        "Detect powershell.exe activity using Event ID 4104",
-    )
+def test_folder_normalizer_keeps_agent_supplied_literal_tokens():
+    result = _normalize_folder_query("powershell, 4104, powershell.exe")
 
     assert result == "powershell, 4104, powershell.exe"

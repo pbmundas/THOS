@@ -13,6 +13,8 @@ class HuntState(TypedDict, total=False):
     hunt_id: str
     hunter_name: str
     siem_type: str
+    siem_types: List[str]
+    source_priority: List[str]
     # Only used when siem_type is "folder" — local directory of log
     # artifacts (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) to hunt
     # against instead of a live SIEM API.
@@ -22,6 +24,10 @@ class HuntState(TypedDict, total=False):
     # Set by hypothesis node
     hypothesis_id: Optional[str]
     hypothesis_text: Optional[str]
+    hypothesis_title: Optional[str]
+    hypothesis_severity: Optional[str]
+    hypothesis_category: Optional[str]
+    investigation_requirements: Dict[str, Any]
     hypothesis_tactic: Optional[str]
     hypothesis_technique: Optional[str]
     technique_id: Optional[str]
@@ -30,9 +36,21 @@ class HuntState(TypedDict, total=False):
 
     # Set by query_generator node
     query: Optional[str]
+    query_plan: List[Dict[str, Any]]
+    pending_query_plan: List[Dict[str, Any]]
+    active_query_source: Optional[str]
+    active_query: Optional[str]
+    active_query_objective: Optional[str]
+    active_lookback_minutes: Optional[int]
+    active_query_limit: Optional[int]
     query_used_fallback: bool
     query_validation_error: Optional[str]
     executed_queries: List[str]
+    executed_query_keys: List[str]
+    retrieval_attempts: List[Dict[str, Any]]
+    source_diagnostics: Dict[str, Any]
+    retrieval_exhausted: bool
+    hunt_completeness: Dict[str, Any]
     max_reasoning_followups: int
 
     # Set by supervisor / guardrail / verifier agents
@@ -43,10 +61,16 @@ class HuntState(TypedDict, total=False):
     adaptive_replans: int
     max_adaptive_replans: int
     replan_action: Optional[str]
+    replan_decision_owner: Optional[str]
     replan_history: List[Dict[str, Any]]
+    zero_result_expansions: int
+    noise_refinements: int
+    max_lookback_minutes: int
+    max_query_limit: int
     guardrail_result: Dict[str, Any]
     reasoning_logs: List[Dict[str, Any]]
     verifier_result: Dict[str, Any]
+    verification_failed: bool
     analyst_review_required: bool
     review_reason: Optional[str]
 
@@ -59,7 +83,6 @@ class HuntState(TypedDict, total=False):
     case_id: Optional[str]
     coverage_gaps: List[str]
     coverage_assessment: Dict[str, Any]
-    anomaly_scores: List[Dict[str, Any]]
     hunt_memory: List[Dict[str, Any]]
     communication_summary: Optional[str]
 
@@ -67,6 +90,8 @@ class HuntState(TypedDict, total=False):
     logs: List[Dict[str, Any]]
     record_count: int
     total_hits: Optional[int]
+    last_record_count: int
+    last_total_hits: Optional[int]
     files_scanned: Optional[int]
     total_parsed: Optional[int]
     used_fallback_unfiltered: Optional[bool]
@@ -106,6 +131,10 @@ class HuntState(TypedDict, total=False):
     negative_screening_counts: Dict[str, int]
     need_more_logs: bool
     follow_up_query: Optional[str]
+    follow_up_source: Optional[str]
+    follow_up_lookback_minutes: Optional[int]
+    follow_up_limit: Optional[int]
+    follow_up_objective: Optional[str]
 
     # Set by report node
     report_path: Optional[str]

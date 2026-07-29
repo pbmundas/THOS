@@ -18,8 +18,80 @@ CONFIG_PATH = Path(os.environ.get("THOS_RUNTIME_CONFIG", "/data/runtime/config.j
 _LOCK = threading.RLock()
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "general": {"default_iterations": 1, "default_siem": "folder"},
+    "general": {"default_iterations": 2, "default_siem": "folder"},
     "models": {"default_model": ""},
+    "model_routing": {
+        "default_tier": "reasoning",
+        "agents": {
+            "query_gen": "query",
+            "indicator_deriver": "fast",
+            "evidence_selector": "reasoning",
+            "communication": "fast",
+            "chat": "fast",
+            "detection_analysis": "fast",
+            "investigation_specialist": "reasoning",
+            "supervisor": "reasoning",
+            "reasoning": "reasoning",
+            "coverage_gap": "reasoning",
+            "risk_analysis": "reasoning",
+            "forensic_planner": "reasoning",
+            "forensic_analysis": "reasoning",
+            "schedule_planner": "reasoning",
+            "hypothesis_prioritizer": "reasoning",
+            "verifier": "verifier",
+            "detection_engineering": "coding",
+            "guardrail": "guard",
+        },
+        "scheduled_agents": [
+            "reasoning",
+            "supervisor",
+            "evidence_selector",
+            "coverage_gap",
+            "investigation_specialist",
+            "risk_analysis",
+            "forensic_planner",
+            "forensic_analysis",
+            "schedule_planner",
+            "hypothesis_prioritizer",
+        ],
+        "profiles": {
+            "query": {"num_ctx": 8192, "num_predict": 1024},
+            "fast": {"num_ctx": 8192, "num_predict": 1024},
+            "reasoning": {"num_ctx": 16384, "num_predict": 4096},
+            "verifier": {"num_ctx": 8192, "num_predict": 2048},
+            "coding": {"num_ctx": 16384, "num_predict": 4096},
+            "guard": {"num_ctx": 8192, "num_predict": 1024},
+        },
+    },
+    "autonomy": {
+        "decision_attempts": 3,
+        "reasoning_attempts": 3,
+        "query_generation_attempts": 3,
+        "max_adaptive_replans": 8,
+        "max_reasoning_followups": 2,
+        "max_lookback_minutes": 10080,
+        "max_query_limit": 2000,
+        "default_live_query_limit": 100,
+        "default_folder_query_limit": 1000,
+        "risk_cache_seconds": 60,
+        "risk_batch_size": 40,
+        "evidence_selection_record_cap": 500,
+    },
+    "forensics": {
+        "tool_timeout_seconds": 180,
+        "tool_output_bytes": 200000,
+        "max_static_file_bytes": 2147483648,
+        "strings_min_length": 6,
+        "capa_rules_dir": "",
+    },
+    "scheduler": {
+        "maintenance_start": "00:30",
+        "maintenance_window_minutes": 360,
+        "maximum_hypotheses_per_window": 24,
+        "unobserved_hypothesis_duration_ms": 1200000,
+        "detection_start": "23:00",
+        "file_scan_start": "22:00",
+    },
     "sigma": {"disabled_rule_ids": [], "schedules": []},
     "yara": {"disabled_rule_ids": [], "schedules": []},
     "hypothesis_schedules": [],
@@ -44,14 +116,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-def _merge_defaults(value: dict[str, Any]) -> dict[str, Any]:
-    merged = copy.deepcopy(DEFAULT_CONFIG)
+def _deep_merge(defaults: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(defaults)
     for key, item in (value or {}).items():
         if isinstance(item, dict) and isinstance(merged.get(key), dict):
-            merged[key].update(item)
+            merged[key] = _deep_merge(merged[key], item)
         else:
-            merged[key] = item
+            merged[key] = copy.deepcopy(item)
     return merged
+
+
+def _merge_defaults(value: dict[str, Any]) -> dict[str, Any]:
+    return _deep_merge(DEFAULT_CONFIG, value or {})
 
 
 def read_config() -> dict[str, Any]:

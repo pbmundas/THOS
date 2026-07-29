@@ -8,34 +8,22 @@ low-confidence inference as a verified fact.
 from __future__ import annotations
 
 from collections import Counter
+from functools import lru_cache
 import json
+from pathlib import Path
 import re
 from typing import Any
 
 
-WINDOWS_EVENT_IDS = {
-    "4624", "4625", "4634", "4648", "4672", "4688", "4689", "4697", "4698",
-    "4720", "4728", "4732", "4768", "4769", "4771", "4776", "7045", "4103",
-    "4104", "1102",
-}
+_CATALOG_PATH = Path(__file__).with_name("data") / "attribution_catalog.json"
 
-FINGERPRINTS = [
-    (re.compile(r"\b(crowdstrike|falcon)\b", re.I), "CrowdStrike", "Falcon", "endpoint"),
-    (re.compile(r"\b(sentinelone|deep visibility)\b", re.I), "SentinelOne", "SentinelOne", "endpoint"),
-    (re.compile(r"\b(cortex xdr|xdr_data|palo alto)\b", re.I), "Palo Alto Networks", "Cortex / PAN-OS", "firewall"),
-    (re.compile(r"\b(carbon black|cb defense|cb response)\b", re.I), "Broadcom", "Carbon Black", "endpoint"),
-    (re.compile(r"\b(microsoft defender|defender for endpoint|mdatp|advanced hunting)\b", re.I), "Microsoft", "Defender XDR", "endpoint"),
-    (re.compile(r"\b(sysmon|microsoft-windows-sysmon)\b", re.I), "Microsoft", "Sysmon", "endpoint"),
-    (re.compile(r"\b(suricata|eve\.json)\b", re.I), "Open Information Security Foundation", "Suricata", "ids"),
-    (re.compile(r"\b(zeek|conn\.log|dns\.log|http\.log)\b", re.I), "Zeek Project", "Zeek", "network"),
-    (re.compile(r"\b(okta|system\.log)\b", re.I), "Okta", "Okta", "identity"),
-    (re.compile(r"\b(cloudtrail|guardduty|aws\.)\b", re.I), "Amazon Web Services", "AWS Security", "cloud"),
-    (re.compile(r"\b(azureactivity|entra|aad sign-?in)\b", re.I), "Microsoft", "Azure / Entra", "cloud"),
-    (re.compile(r"\b(fortigate|fortinet)\b", re.I), "Fortinet", "FortiGate", "firewall"),
-    (re.compile(r"\b(check point|checkpoint)\b", re.I), "Check Point", "Security Gateway", "firewall"),
-    (re.compile(r"\b(cisco asa|firepower|ftd)\b", re.I), "Cisco", "Firewall", "firewall"),
-    (re.compile(r"\b(zscaler|web proxy|proxy)\b", re.I), "Unknown", "Web Proxy", "proxy"),
-]
+
+@lru_cache(maxsize=1)
+def _catalog() -> dict:
+    loaded = json.loads(_CATALOG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise RuntimeError("telemetry attribution catalog must contain an object")
+    return loaded
 
 
 def _nested(record: dict, *paths: str):
@@ -53,20 +41,9 @@ def _nested(record: dict, *paths: str):
 
 def _event_category(event: str, text: str, device_type: str) -> str:
     lowered = f"{event} {text}".lower()
-    if any(marker in lowered for marker in ("process", "4688", "sysmon event id 1", "commandline")):
-        return "process"
-    if any(marker in lowered for marker in ("login", "logon", "auth", "4624", "4625", "signin")):
-        return "authentication"
-    if any(marker in lowered for marker in ("dns", "domain query")):
-        return "dns"
-    if any(marker in lowered for marker in ("file", "hash", "malware", "quarantine")):
-        return "file"
-    if any(marker in lowered for marker in ("registry", "reg_key", "regvalue")):
-        return "registry"
-    if any(marker in lowered for marker in ("network", "connection", "flow", "src_ip", "dst_ip")):
-        return "network"
-    if any(marker in lowered for marker in ("email", "mail", "phish")):
-        return "email"
+    for rule in _catalog().get("event_categories", []):
+        if any(str(marker).lower() in lowered for marker in rule.get("markers", [])):
+            return str(rule.get("category") or "security_event")
     if device_type == "cloud":
         return "cloud_control"
     return "security_event"
@@ -93,21 +70,26 @@ def attribute_record(record: dict, collector: str = "") -> dict:
     confidence = "high" if vendor and product else "low"
     basis = "explicit vendor/product fields" if confidence == "high" else "no reliable product fingerprint"
 
+    catalog = _catalog()
     if not (vendor and product and device_type):
-        for pattern, matched_vendor, matched_product, matched_type in FINGERPRINTS:
-            if pattern.search(sample):
-                vendor = vendor or matched_vendor
-                product = product or matched_product
-                device_type = device_type or matched_type
+        for fingerprint in catalog.get("fingerprints", []):
+            if re.search(str(fingerprint.get("pattern") or r"(?!x)x"), sample, re.I):
+                vendor = vendor or str(fingerprint.get("vendor") or "Unknown")
+                product = product or str(fingerprint.get("product") or "Unknown")
+                device_type = device_type or str(fingerprint.get("device_type") or "unknown")
                 confidence = "high" if explicit_vendor or explicit_product else "medium"
-                basis = f"matched {matched_product} telemetry fingerprint"
+                basis = f"matched {product} telemetry fingerprint"
                 break
 
-    if event in WINDOWS_EVENT_IDS or re.search(r"\bwindows\b|\bwinlog\b", sample, re.I):
+    windows_ids = {str(value) for value in catalog.get("windows_event_ids", [])}
+    identity_ids = {
+        str(value) for value in catalog.get("windows_identity_event_ids", [])
+    }
+    if event in windows_ids or re.search(r"\bwindows\b|\bwinlog\b", sample, re.I):
         vendor = vendor or "Microsoft"
         product = product or "Windows Security"
-        device_type = device_type or ("identity" if event in {"4768", "4769", "4771", "4776"} else "endpoint")
-        confidence = "high" if event in WINDOWS_EVENT_IDS else "medium"
+        device_type = device_type or ("identity" if event in identity_ids else "endpoint")
+        confidence = "high" if event in windows_ids else "medium"
         basis = f"recognized Windows event {event}" if event else "matched Windows log fields"
 
     if not device_type:
@@ -146,4 +128,3 @@ def telemetry_profile(records: list[dict]) -> dict:
             item.get("attribution_confidence") == "low" for item in records
         ),
     }
-

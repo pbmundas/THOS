@@ -15,7 +15,7 @@ def test_reasoning_tier_has_room_for_evidence_prompt_and_json(monkeypatch):
     target = model_router.target_for("reasoning")
 
     assert target.num_ctx == 16384
-    assert target.num_predict == 2048
+    assert target.num_predict == 4096
 
 
 def test_scheduled_reasoning_routes_to_dedicated_worker(monkeypatch):

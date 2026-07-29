@@ -1,37 +1,94 @@
-"""Risk Analysis Agent.
+"""Evidence-grounded Risk Analysis Agent.
 
-Converts verifier-supported hunt-report findings and persisted scheduled
-detections into a uniform, explainable risk register. The implementation is
-deterministic so opening the Risks or Overview pages never consumes an LLM
-worker or changes source evidence.
+Deterministic code extracts and validates source facts. The local model decides
+whether those facts describe an actionable risk and assigns the explanation,
+entity, score, severity, and rationale.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import re
 from typing import Any
 
+from services.agents.decision import AgentDecisionError, decide_json
+from services.runtime_config import get_value
 
-_SEVERITY_SCORE = {
-    "critical": 92,
-    "high": 80,
-    "medium": 62,
-    "low": 38,
-    "informational": 20,
+
+RISK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "candidate_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "what": {"type": "string"},
+                    "why": {"type": "string"},
+                    "discovery": {"type": "string"},
+                    "entity_type": {"type": "string"},
+                    "entity_name": {"type": "string"},
+                    "score": {"type": "integer"},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low"],
+                    },
+                    "evidence_refs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "candidate_id",
+                    "name",
+                    "description",
+                    "what",
+                    "why",
+                    "discovery",
+                    "entity_type",
+                    "entity_name",
+                    "score",
+                    "severity",
+                    "evidence_refs",
+                ],
+            },
+        },
+        "excluded_candidates": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["items", "excluded_candidates"],
 }
 
 
-def _severity(score: int) -> str:
-    if score >= 90:
-        return "critical"
-    if score >= 75:
-        return "high"
-    if score >= 50:
-        return "medium"
-    return "low"
+SYSTEM_PROMPT = """You are THOS's senior cyber-risk analysis agent. Review
+validated hunt findings and persisted detection evidence and decide which
+entries represent actionable risks.
+
+Requirements:
+- use only supplied evidence and exact candidate identifiers;
+- exclude negative findings, unsupported claims, routine expected behavior,
+  controlled testing that creates no residual exposure, and detections that do
+  not establish a plausible security risk;
+- controlled-test evidence can still reveal a risk when it proves an exposed
+  control, vulnerable asset, missing containment, or operational gap;
+- explain what the risk is, why it matters, how it was discovered, and which
+  entity is affected;
+- score 1-100 by evidence-supported likelihood, impact, exposure, asset
+  relevance, control effectiveness, and uncertainty; do not score from tool
+  names, ATT&CK tactics, keywords, event counts, or rule severity alone;
+- select an entity only when its literal value appears in the candidate;
+- never convert a rule, reputation, IOC, anomaly, or model label directly into
+  a verdict;
+- cite every risk with one or more exact candidate identifiers.
+
+Return only schema-valid JSON. It is valid to return no risks."""
 
 
 def _timestamp(value: Any) -> str:
@@ -47,258 +104,246 @@ def _timestamp(value: Any) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _report_title(markdown: str, fallback: str) -> str:
+def _title(markdown: str, fallback: str) -> str:
     match = re.search(r"^#\s+(.+?)\s*$", markdown, flags=re.MULTILINE)
     return re.sub(r"[*_`]", "", match.group(1)).strip() if match else fallback
 
 
-def _report_findings(markdown: str) -> list[str]:
+def _section_bullets(markdown: str, heading: str) -> list[str]:
     match = re.search(
-        r"^###\s+.*Security Findings\s*$([\s\S]*?)(?=^###\s+|^##\s+|\Z)",
+        rf"^###?\s+.*{re.escape(heading)}.*$([\s\S]*?)(?=^###?\s+|\Z)",
         markdown,
         flags=re.IGNORECASE | re.MULTILINE,
     )
     if not match:
         return []
-    findings = []
-    for line in match.group(1).splitlines():
-        if not re.match(r"^\s*[-*]\s+", line):
-            continue
-        value = re.sub(r"^\s*[-*]\s+", "", line).strip()
-        value = re.sub(r"^\[[^\]]+\]\s*", "", value).strip()
-        if not value or "no findings" in value.lower():
-            continue
-        normalized = value.lower().strip()
-        negative_prefixes = (
-            "no evidence",
-            "no indication",
-            "no indicators",
-            "no network",
-            "no process",
-            "no suspicious",
-            "not observed",
-            "not detected",
-            "none observed",
-            "absence of",
-            "insufficient evidence",
-            "the hypothesis is not supported",
-            "the hypothesis was not supported",
-        )
-        if normalized.startswith(negative_prefixes):
-            continue
-        findings.append(value[:1600])
-    return findings[:20]
+    return [
+        re.sub(r"^\s*[-*]\s+", "", line).strip()[:3000]
+        for line in match.group(1).splitlines()
+        if re.match(r"^\s*[-*]\s+\S", line)
+    ]
 
 
-def _entity_from_report(markdown: str, finding: str) -> dict[str, str]:
-    network_finding = any(
-        token in finding.lower()
-        for token in ("network", "nmap", "scan", "connection", "remote", "ip ")
-    )
-    patterns = []
-    if network_finding:
-        patterns.append(("IP address", r'"src_ip"\s*:\s*"([^"]+)"'))
-    patterns.extend((
-        ("Host", r'"host"\s*:\s*"([^"]+)"'),
-        ("User", r'"user"\s*:\s*"([^"]+)"'),
-        ("IP address", r'"src_ip"\s*:\s*"([^"]+)"'),
-        ("IP address", r'"dst_ip"\s*:\s*"([^"]+)"'),
+def _verified_report(markdown: str) -> bool:
+    return bool(re.search(
+        r"Verifier[\s\S]{0,800}?(?:`passed`|Passed:|status.{0,20}passed)",
+        markdown,
+        flags=re.IGNORECASE,
     ))
-    for entity_type, pattern in patterns:
-        match = re.search(pattern, markdown)
-        if match and match.group(1).strip() not in {"", "—", "-"}:
-            return {"type": entity_type, "name": match.group(1).strip()[:240]}
-    technique = re.search(r"MITRE ATT&CK.*?\|\s*([^|\n]+)", markdown)
-    if technique:
-        return {"type": "ATT&CK technique", "name": technique.group(1).strip()[:240]}
-    return {"type": "Investigation", "name": "Environment-wide"}
 
 
-def _entity_from_detection(detection: dict) -> dict[str, str]:
-    events = detection.get("matched_events") or []
-    candidates = (
-        ("Host", "host"),
-        ("User", "user"),
-        ("IP address", "src_ip"),
-        ("IP address", "dst_ip"),
-    )
-    for entity_type, key in candidates:
-        counts: dict[str, int] = defaultdict(int)
-        for event in events if isinstance(events, list) else []:
-            if isinstance(event, dict) and event.get(key):
-                counts[str(event[key]).strip()] += 1
-        if counts:
-            name = max(counts, key=counts.get)
-            return {"type": entity_type, "name": name[:240]}
-    return {
-        "type": "Telemetry source",
-        "name": str(detection.get("siem_type") or "Unknown source")[:240],
-    }
-
-
-def _finding_name(finding: str) -> str:
-    name = re.split(r"\s*\((?:evidence|ref)\s*:", finding, maxsplit=1, flags=re.I)[0]
-    name = re.sub(r"^(evidence of|observed|detected)\s+", "", name, flags=re.I)
-    name = name.strip(" .:-")
-    if not name:
-        return "Verifier-supported hunt finding"
-    return name[:110] + ("…" if len(name) > 110 else "")
-
-
-def _risk_id(source_type: str, source_id: str, name: str, entity: str) -> str:
-    material = f"{source_type}|{source_id}|{name.lower()}|{entity.lower()}"
-    return "risk-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
-
-
-def _report_risks(hunts: list[dict], reports_root: Path) -> list[dict]:
-    risks: list[dict] = []
+def _report_candidates(hunts: list[dict], reports_root: Path) -> list[dict]:
+    candidates = []
     for hunt in hunts:
-        if hunt.get("status") != "completed":
+        if hunt.get("status") != "completed" or not hunt.get("report_path"):
             continue
-        report_path = str(hunt.get("report_path") or "")
-        if not report_path:
+        path = reports_root / Path(str(hunt["report_path"])).name
+        if not path.is_file():
             continue
-        candidate = reports_root / Path(report_path).name
-        if not candidate.is_file():
+        markdown = path.read_text(encoding="utf-8", errors="replace")
+        if not _verified_report(markdown):
             continue
-        markdown = candidate.read_text(encoding="utf-8", errors="replace")
-        verifier_passed = bool(re.search(
-            r"Verifier[\s\S]{0,500}?(?:`passed`|Passed:)", markdown, flags=re.I
-        ))
-        if not verifier_passed:
-            continue
-        findings = _report_findings(markdown)
-        report_title = _report_title(markdown, candidate.stem.replace("_", " "))
-        for finding in findings:
-            entity = _entity_from_report(markdown, finding)
-            hard_evidence = "hard-evidence" in finding.lower() or "evidence:" in finding.lower()
-            score = 78 if hard_evidence else 68
-            if any(word in finding.lower() for word in ("malware", "ransomware", "credential", "nmap", "exploit")):
-                score += 5
-            if hunt.get("outcome", {}).get("reasoning_degraded"):
-                score -= 8
-            score = max(1, min(score, 100))
-            name = _finding_name(finding)
-            hypothesis = str(hunt.get("hypothesis_id") or "dynamic hypothesis")
-            risks.append({
-                "id": _risk_id("report", str(hunt.get("hunt_id")), name, entity["name"]),
-                "name": name,
-                "description": (
-                    f"What: {finding} Why this is a risk: the finding was supported by "
-                    f"persisted evidence and passed citation verification. How discovered: "
-                    f"the Risk Analysis Agent reviewed hunt report {hypothesis} and its "
-                    f"validated Security Findings section."
-                ),
-                "what": finding,
-                "why": "Persisted hunt evidence supports potentially harmful or unauthorized behavior.",
-                "discovery": f"Verifier-supported finding in {report_title}.",
-                "entity": entity,
-                "score": score,
-                "severity": _severity(score),
-                "identified_at": _timestamp(hunt.get("created_at")),
-                "last_seen_at": _timestamp(hunt.get("updated_at") or hunt.get("created_at")),
+        findings = _section_bullets(markdown, "Security Findings")
+        for index, finding in enumerate(findings):
+            candidate_id = f"report:{hunt.get('hunt_id')}:{index}"
+            candidates.append({
+                "candidate_id": candidate_id,
                 "source_type": "hunt_report",
-                "source_label": report_title,
                 "source_id": str(hunt.get("hunt_id") or ""),
-                "report_filename": candidate.name,
-                "detection_run_id": "",
-                "evidence_count": 1,
-                "status": "open",
+                "source_label": _title(markdown, path.stem),
+                "report_filename": path.name,
+                "hypothesis_id": str(hunt.get("hypothesis_id") or ""),
+                "finding": finding,
+                "context_excerpt": markdown[:16000],
+                "identified_at": _timestamp(hunt.get("created_at")),
+                "last_seen_at": _timestamp(
+                    hunt.get("updated_at") or hunt.get("created_at")
+                ),
             })
-    return risks
+    return candidates
 
 
-def _detection_risks(detections: list[dict]) -> list[dict]:
-    risks: list[dict] = []
+def _detection_candidates(detections: list[dict]) -> list[dict]:
+    candidates = []
     for detection in detections:
         matched = int(detection.get("events_matched") or 0)
         if matched <= 0:
             continue
-        entity = _entity_from_detection(detection)
-        level = str(detection.get("level") or "medium").lower()
-        score = min(100, _SEVERITY_SCORE.get(level, 62) + min(8, matched // 2))
-        title = str(detection.get("rule_title") or detection.get("rule_id") or "Detection")
-        rule_id = str(detection.get("rule_id") or "unknown-rule")
         run_id = str(detection.get("run_id") or "")
-        analysis = detection.get("analysis") or {}
-        summary = str(analysis.get("summary") or f"{matched} matching events were recorded.")
-        risks.append({
-            "id": _risk_id("detection", run_id, title, entity["name"]),
-            "name": title[:140],
-            "description": (
-                f"What: {title} affected {entity['type'].lower()} {entity['name']}. "
-                f"Why this is a risk: the {level} detection rule matched {matched} event(s). "
-                f"How discovered: the Risk Analysis Agent reviewed persisted scheduled "
-                f"detection {rule_id}. {summary}"
+        candidates.append({
+            "candidate_id": f"detection:{run_id}",
+            "source_type": "detection",
+            "source_id": str(detection.get("rule_id") or ""),
+            "source_label": str(
+                detection.get("rule_title")
+                or detection.get("rule_id")
+                or "Detection"
             ),
-            "what": f"{title} matched {matched} event(s).",
-            "why": f"A {level} scheduled rule produced evidence on {entity['name']}.",
-            "discovery": f"Scheduled detection {rule_id}; {summary}",
-            "entity": entity,
-            "score": score,
-            "severity": _severity(score),
+            "detection_run_id": run_id,
+            "events_matched": matched,
+            "rule_metadata": {
+                key: detection.get(key)
+                for key in ("rule_id", "rule_title", "level", "siem_type")
+            },
+            "analysis": detection.get("analysis") or {},
+            "matched_events": (detection.get("matched_events") or [])[:50],
             "identified_at": _timestamp(detection.get("created_at")),
             "last_seen_at": _timestamp(
-                analysis.get("last_event_at") or detection.get("created_at")
+                (detection.get("analysis") or {}).get("last_event_at")
+                or detection.get("created_at")
             ),
-            "source_type": "detection",
-            "source_label": f"{title} · {rule_id}",
-            "source_id": rule_id,
-            "report_filename": "",
-            "detection_run_id": run_id,
-            "evidence_count": matched,
-            "status": "open",
         })
-    return risks
+    return candidates
 
 
-def _consolidate(risks: list[dict]) -> list[dict]:
-    consolidated: dict[tuple[str, str, str], dict] = {}
-    for risk in risks:
-        key = (
-            risk["source_type"],
-            risk["name"].lower(),
-            risk["entity"]["name"].lower(),
-        )
-        current = consolidated.get(key)
-        if current is None:
-            consolidated[key] = dict(risk)
-            continue
-        current["identified_at"] = min(current["identified_at"], risk["identified_at"])
-        current["last_seen_at"] = max(current["last_seen_at"], risk["last_seen_at"])
-        current["evidence_count"] += risk["evidence_count"]
-        current["score"] = min(100, max(current["score"], risk["score"]) + 2)
-        current["severity"] = _severity(current["score"])
-        if risk["last_seen_at"] >= current["last_seen_at"]:
-            for field in ("source_label", "source_id", "report_filename", "detection_run_id"):
-                current[field] = risk[field]
-    return sorted(
-        consolidated.values(),
-        key=lambda item: (item["score"], item["last_seen_at"]),
-        reverse=True,
+def _risk_id(item: dict, candidate: dict) -> str:
+    material = "|".join((
+        str(candidate.get("source_type") or ""),
+        str(candidate.get("source_id") or ""),
+        str(item.get("name") or "").casefold(),
+        str(item.get("entity_name") or "").casefold(),
+    ))
+    return "risk-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+async def _analyze_batch(candidates: list[dict]) -> dict:
+    by_id = {str(item["candidate_id"]): item for item in candidates}
+    rendered = {
+        candidate_id: json.dumps(candidate, ensure_ascii=False, default=str)
+        for candidate_id, candidate in by_id.items()
+    }
+
+    def validate(payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = []
+        seen = set()
+        for item in payload.get("items") or []:
+            candidate_id = str(item.get("candidate_id") or "")
+            candidate = by_id.get(candidate_id)
+            if not candidate or candidate_id in seen:
+                raise ValueError(
+                    f"risk referenced invalid/duplicate candidate {candidate_id}"
+                )
+            seen.add(candidate_id)
+            evidence_refs = list(dict.fromkeys(
+                str(value) for value in item.get("evidence_refs") or []
+            ))
+            if not evidence_refs or any(ref not in by_id for ref in evidence_refs):
+                raise ValueError("risk evidence references were invalid")
+            entity_name = str(item.get("entity_name") or "").strip()
+            if not entity_name or entity_name.casefold() not in rendered[
+                candidate_id
+            ].casefold():
+                raise ValueError(
+                    f"entity {entity_name!r} was not grounded in {candidate_id}"
+                )
+            score = int(item.get("score"))
+            if not 1 <= score <= 100:
+                raise ValueError("risk score was outside 1-100")
+            normalized.append({
+                **item,
+                "candidate_id": candidate_id,
+                "name": str(item.get("name") or "")[:180],
+                "description": str(item.get("description") or "")[:5000],
+                "what": str(item.get("what") or "")[:3000],
+                "why": str(item.get("why") or "")[:3000],
+                "discovery": str(item.get("discovery") or "")[:3000],
+                "entity_type": str(item.get("entity_type") or "")[:120],
+                "entity_name": entity_name[:500],
+                "score": score,
+                "evidence_refs": evidence_refs,
+            })
+        return {
+            "items": normalized,
+            "excluded_candidates": [
+                str(value)
+                for value in payload.get("excluded_candidates") or []
+                if str(value) in by_id
+            ],
+        }
+
+    return await decide_json(
+        agent="risk_analysis",
+        system=SYSTEM_PROMPT,
+        prompt=(
+            "Validated risk candidates:\n"
+            f"{json.dumps(candidates, indent=2, default=str)[:120000]}"
+        ),
+        schema=RISK_SCHEMA,
+        validator=validate,
     )
 
 
-def analyze_actionable_risks(
+async def analyze_actionable_risks(
     hunts: list[dict],
     detections: list[dict],
     reports_dir: str | Path,
     limit: int = 500,
     hours: int | None = None,
 ) -> dict:
-    """Return a uniform actionable-risk register and executive summary."""
-    risks = _consolidate([
-        *_report_risks(hunts, Path(reports_dir)),
-        *_detection_risks(detections),
-    ])
+    """Return risks selected and explained by the Risk Analysis Agent."""
+    candidates = [
+        *_report_candidates(hunts, Path(reports_dir)),
+        *_detection_candidates(detections),
+    ]
     if hours:
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=max(1, min(int(hours), 24 * 365 * 10))
         )
-        risks = [
-            item for item in risks
+        candidates = [
+            item
+            for item in candidates
             if datetime.fromisoformat(item["identified_at"]) >= cutoff
         ]
+    candidate_by_id = {
+        str(item["candidate_id"]): item for item in candidates
+    }
+    batch_size = max(
+        1,
+        min(
+            int(get_value("autonomy", "risk_batch_size", default=40)),
+            100,
+        ),
+    )
+    model_items = []
+    failures = []
+    for start in range(0, len(candidates), batch_size):
+        batch = candidates[start:start + batch_size]
+        try:
+            result = await _analyze_batch(batch)
+            model_items.extend(result.get("items") or [])
+        except AgentDecisionError as exc:
+            failures.append(str(exc))
+    risks = []
+    for item in model_items:
+        candidate = candidate_by_id[item["candidate_id"]]
+        risks.append({
+            "id": _risk_id(item, candidate),
+            "name": item["name"],
+            "description": item["description"],
+            "what": item["what"],
+            "why": item["why"],
+            "discovery": item["discovery"],
+            "entity": {
+                "type": item["entity_type"],
+                "name": item["entity_name"],
+            },
+            "score": item["score"],
+            "severity": item["severity"],
+            "identified_at": candidate["identified_at"],
+            "last_seen_at": candidate["last_seen_at"],
+            "source_type": candidate["source_type"],
+            "source_label": candidate["source_label"],
+            "source_id": candidate["source_id"],
+            "report_filename": candidate.get("report_filename", ""),
+            "detection_run_id": candidate.get("detection_run_id", ""),
+            "evidence_count": len(item["evidence_refs"]),
+            "evidence_refs": item["evidence_refs"],
+            "status": "open",
+        })
+    risks.sort(
+        key=lambda item: (item["score"], item["last_seen_at"]),
+        reverse=True,
+    )
     risks = risks[:max(1, min(int(limit), 2000))]
     entities = {
         f"{item['entity']['type']}:{item['entity']['name']}" for item in risks
@@ -313,15 +358,21 @@ def analyze_actionable_risks(
         "average_score": round(
             sum(item["score"] for item in risks) / len(risks), 1
         ) if risks else 0,
-        "report_findings": sum(item["source_type"] == "hunt_report" for item in risks),
-        "detection_findings": sum(item["source_type"] == "detection" for item in risks),
+        "report_findings": sum(
+            item["source_type"] == "hunt_report" for item in risks
+        ),
+        "detection_findings": sum(
+            item["source_type"] == "detection" for item in risks
+        ),
     }
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "agent": {
             "id": "risk_analysis",
             "name": "Risk Analysis Agent",
-            "mode": "deterministic evidence correlation",
+            "mode": "local model with deterministic evidence validation",
+            "degraded": bool(failures),
+            "errors": failures,
         },
         "summary": summary,
         "items": risks,

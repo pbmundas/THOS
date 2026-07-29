@@ -2,7 +2,8 @@
 LangGraph state machine implementing:
 
   refresh_hearth_kb -> hypothesis -> supervisor -> query_gen -> siem_fetch
-    -> log_processing -> guardrail -> soc_tools -> evidence gate -> reasoning
+    -> log_processing -> guardrail -> soc_tools -> coverage/enrichment
+    -> adaptive retrieval -> evidence gate -> reasoning
     -> [need_more_logs? -> siem_fetch (loop) : verifier -> report -> END]
 
 refresh_hearth_kb pulls the latest hypotheses from the live HEARTH GitHub
@@ -14,6 +15,8 @@ analyst-review case creation before `report`, parallel fan-out to multiple SOC
 tools, or a dedicated "escalate" node that pages a human analyst when
 confidence is low.
 """
+import json
+
 from langgraph.graph import StateGraph, END
 
 from services.orchestration.state import HuntState
@@ -41,23 +44,54 @@ def route_after_reasoning(state: HuntState) -> str:
     if state.get("reasoning_skipped"):
         return "no_evidence"
     follow_up = (state.get("follow_up_query") or "").strip()
+    source = str(
+        state.get("follow_up_source")
+        or state.get("active_query_source")
+        or state.get("siem_type")
+        or "folder"
+    )
+    lookback = int(
+        state.get("follow_up_lookback_minutes")
+        or state.get("active_lookback_minutes")
+        or 1440
+    )
+    limit = int(
+        state.get("follow_up_limit")
+        or state.get("active_query_limit")
+        or state.get("log_limit")
+        or 25
+    )
+    attempt_key = json.dumps({
+        "source": source,
+        "query": follow_up,
+        "lookback_minutes": lookback,
+        "limit": limit,
+    }, sort_keys=True, separators=(",", ":"))
     # One targeted refinement is useful; repeated full-pipeline loops are
     # expensive and tend to re-analyze the same data rather than add evidence.
     can_follow_up = (
         state.get("need_more_logs")
         and follow_up
         and state.get("iteration", 0) <= state.get("max_reasoning_followups", 1)
-        and follow_up not in (state.get("executed_queries") or [])
+        and attempt_key not in (state.get("executed_query_keys") or [])
     )
     return "siem_fetch" if can_follow_up else "verifier"
 
 
 def route_after_adaptive_replan(state: HuntState) -> str:
-    return "siem_fetch" if state.get("replan_action") == "refine_query" else "reasoning"
+    return (
+        "siem_fetch"
+        if state.get("replan_action") == "refine_query"
+        else "negative_screening_gate"
+    )
 
 
 def route_after_negative_screening(state: HuntState) -> str:
     return "no_evidence" if state.get("reasoning_skipped") else "reasoning"
+
+
+def route_after_verifier(state: HuntState) -> str:
+    return "failed" if state.get("verification_failed") else "continue"
 
 
 def build_graph():
@@ -93,23 +127,31 @@ def build_graph():
     graph.add_edge("guardrail", "soc_tools")
     graph.add_edge("soc_tools", "coverage_gap")
     graph.add_edge("coverage_gap", "threat_intel")
-    graph.add_edge("threat_intel", "negative_screening_gate")
+    # Retrieval is allowed to broaden, tighten, expand its bounded time
+    # window, or query another selected source before the no-evidence gate
+    # terminates the hunt. This prevents a narrow zero-result primary query
+    # from being mistaken for a completed investigation.
+    graph.add_edge("threat_intel", "adaptive_replan")
+    graph.add_conditional_edges("adaptive_replan", route_after_adaptive_replan, {
+        "siem_fetch": "siem_fetch",
+        "negative_screening_gate": "negative_screening_gate",
+    })
     graph.add_conditional_edges(
         "negative_screening_gate",
         route_after_negative_screening,
-        {"reasoning": "adaptive_replan", "no_evidence": END},
+        {"reasoning": "reasoning", "no_evidence": END},
     )
-    graph.add_conditional_edges("adaptive_replan", route_after_adaptive_replan, {
-        "siem_fetch": "siem_fetch",
-        "reasoning": "reasoning",
-    })
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
         "siem_fetch": "siem_fetch",
         "verifier": "verifier",
         "failed": END,
         "no_evidence": END,
     })
-    graph.add_edge("verifier", "detection_engineering")
+    graph.add_conditional_edges(
+        "verifier",
+        route_after_verifier,
+        {"continue": "detection_engineering", "failed": END},
+    )
     graph.add_edge("detection_engineering", "communication")
     graph.add_edge("communication", "report")
     graph.add_edge("report", END)

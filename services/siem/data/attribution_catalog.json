@@ -1,0 +1,30 @@
+{
+  "windows_event_ids": ["4624", "4625", "4634", "4648", "4672", "4688", "4689", "4697", "4698", "4720", "4728", "4732", "4768", "4769", "4771", "4776", "7045", "4103", "4104", "1102"],
+  "windows_identity_event_ids": ["4768", "4769", "4771", "4776"],
+  "fingerprints": [
+    {"pattern": "\\b(crowdstrike|falcon)\\b", "vendor": "CrowdStrike", "product": "Falcon", "device_type": "endpoint"},
+    {"pattern": "\\b(sentinelone|deep visibility)\\b", "vendor": "SentinelOne", "product": "SentinelOne", "device_type": "endpoint"},
+    {"pattern": "\\b(cortex xdr|xdr_data|palo alto)\\b", "vendor": "Palo Alto Networks", "product": "Cortex / PAN-OS", "device_type": "firewall"},
+    {"pattern": "\\b(carbon black|cb defense|cb response)\\b", "vendor": "Broadcom", "product": "Carbon Black", "device_type": "endpoint"},
+    {"pattern": "\\b(microsoft defender|defender for endpoint|mdatp|advanced hunting)\\b", "vendor": "Microsoft", "product": "Defender XDR", "device_type": "endpoint"},
+    {"pattern": "\\b(sysmon|microsoft-windows-sysmon)\\b", "vendor": "Microsoft", "product": "Sysmon", "device_type": "endpoint"},
+    {"pattern": "\\b(suricata|eve\\.json)\\b", "vendor": "Open Information Security Foundation", "product": "Suricata", "device_type": "ids"},
+    {"pattern": "\\b(zeek|conn\\.log|dns\\.log|http\\.log)\\b", "vendor": "Zeek Project", "product": "Zeek", "device_type": "network"},
+    {"pattern": "\\b(okta|system\\.log)\\b", "vendor": "Okta", "product": "Okta", "device_type": "identity"},
+    {"pattern": "\\b(cloudtrail|guardduty|aws\\.)\\b", "vendor": "Amazon Web Services", "product": "AWS Security", "device_type": "cloud"},
+    {"pattern": "\\b(azureactivity|entra|aad sign-?in)\\b", "vendor": "Microsoft", "product": "Azure / Entra", "device_type": "cloud"},
+    {"pattern": "\\b(fortigate|fortinet)\\b", "vendor": "Fortinet", "product": "FortiGate", "device_type": "firewall"},
+    {"pattern": "\\b(check point|checkpoint)\\b", "vendor": "Check Point", "product": "Security Gateway", "device_type": "firewall"},
+    {"pattern": "\\b(cisco asa|firepower|ftd)\\b", "vendor": "Cisco", "product": "Firewall", "device_type": "firewall"},
+    {"pattern": "\\b(zscaler|web proxy|proxy)\\b", "vendor": "Unknown", "product": "Web Proxy", "device_type": "proxy"}
+  ],
+  "event_categories": [
+    {"category": "process", "markers": ["process", "4688", "sysmon event id 1", "commandline"]},
+    {"category": "authentication", "markers": ["login", "logon", "auth", "4624", "4625", "signin"]},
+    {"category": "dns", "markers": ["dns", "domain query"]},
+    {"category": "file", "markers": ["file", "hash", "malware", "quarantine"]},
+    {"category": "registry", "markers": ["registry", "reg_key", "regvalue"]},
+    {"category": "network", "markers": ["network", "connection", "flow", "src_ip", "dst_ip"]},
+    {"category": "email", "markers": ["email", "mail", "phish"]}
+  ]
+}
