@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import statistics
 import time
 from typing import Any
@@ -152,12 +153,10 @@ def _hypothesis_estimates(
             encoding="utf-8"
         )
     )
-    required = json.loads(
-        (REPO_ROOT / "services/hunting/data/required_gap_hypotheses.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    catalog = [*upstream, *required]
+    catalog = [
+        item for item in upstream
+        if re.fullmatch(r"[BHM]-?\d+", str(item.get("id") or ""), re.IGNORECASE)
+    ]
     by_hypothesis: dict[str, list[float]] = defaultdict(list)
     for row in historical:
         if row["status"] == "completed" and row.get("hypothesis_id"):

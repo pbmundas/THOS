@@ -80,7 +80,87 @@ def test_attack_coverage_reports_untested_required_telemetry(monkeypatch):
     assert any("Network Traffic" in gap for gap in result["coverage_gaps"])
 
 
+def test_empty_telemetry_coverage_is_deterministic_unknown(monkeypatch):
+    monkeypatch.setattr(gap_analysis.mitre, "map_technique", lambda _value: {
+        "name": "Network Service Discovery",
+        "data_sources": ["Network Traffic", "Process Creation"],
+    })
+
+    async def model_must_not_run(**_kwargs):
+        raise AssertionError("model should not run without records")
+
+    monkeypatch.setattr(gap_analysis, "decide_json", model_must_not_run)
+    result = asyncio.run(gap_analysis.coverage_gap_node({
+        "technique_id": "T1046",
+        "processed_logs": [],
+        "siem_types": ["wazuh"],
+        "source_diagnostics": {
+            "wazuh": {"status": "queried", "last_record_count": 0},
+        },
+    }))
+
+    assessment = result["coverage_assessment"]
+    assert assessment["status"] == "unknown"
+    assert assessment["decision_owner"] == (
+        "deterministic_empty_telemetry"
+    )
+    assert all(
+        row["status"] == "unknown"
+        for row in assessment["data_sources"]
+    )
+
+
+def test_coverage_agent_uses_compact_bounded_record_sample(monkeypatch):
+    monkeypatch.setattr(gap_analysis.mitre, "map_technique", lambda _value: {
+        "name": "Network Service Discovery",
+        "data_sources": ["Network Traffic"],
+    })
+    captured = {}
+
+    async def coverage_decision(**kwargs):
+        captured.update(kwargs)
+        return kwargs["validator"]({
+            "overall_status": "covered",
+            "data_sources": [{
+                "data_source": "Network Traffic",
+                "status": "covered",
+                "confidence": "high",
+                "reason": "A normalized network record was supplied.",
+                "evidence_refs": ["record:0"],
+                "missing_requirements": [],
+            }],
+            "gaps": [],
+        })
+
+    monkeypatch.setattr(gap_analysis, "decide_json", coverage_decision)
+    result = asyncio.run(gap_analysis.coverage_gap_node({
+        "technique_id": "T1046",
+        "processed_logs": [{
+            "event": "network",
+            "evidence_summary": "destination port: 3389 | TCP SYN: true",
+            "detail": "duplicated-detail-" * 2_000,
+            "full_log": "duplicated-full-log-" * 2_000,
+            "_raw": {"payload": "raw-payload-" * 2_000},
+        }],
+        "siem_types": ["wazuh"],
+        "source_diagnostics": {"wazuh": {"status": "queried"}},
+    }))
+
+    assert "_raw" not in captured["prompt"]
+    assert "duplicated-detail" not in captured["prompt"]
+    assert "duplicated-full-log" not in captured["prompt"]
+    assert "destination port: 3389" in captured["prompt"]
+    assert captured["num_predict"] == 640
+    assert (
+        captured["schema"]["properties"]["data_sources"]["maxItems"]
+        == 1
+    )
+    assert result["coverage_assessment"]["status"] == "covered"
+
+
 def test_adaptive_supervisor_can_request_one_nonduplicate_refinement(monkeypatch):
+    query_request = {}
+
     async def fake_decision(**kwargs):
         return kwargs["validator"]({
             "action": "refine_query",
@@ -91,7 +171,8 @@ def test_adaptive_supervisor_can_request_one_nonduplicate_refinement(monkeypatch
             "reason": "The user-selected source has not yet been investigated.",
         })
 
-    async def fake_call_tool(*_args, **_kwargs):
+    async def fake_call_tool(_tool_name, arguments):
+        query_request.update(arguments)
         return {
             "query": json.dumps({
                 "query": {"term": {"event.category": "network"}},
@@ -118,7 +199,13 @@ def test_adaptive_supervisor_can_request_one_nonduplicate_refinement(monkeypatch
         "source_diagnostics": {"splunk": {"status": "queried"}},
         "executed_query_keys": [],
         "processed_logs": [{}],
-        "coverage_assessment": {"status": "partial"},
+        "coverage_assessment": {
+            "status": "partial",
+            "data_sources": [{
+                "data_source": "Network Traffic",
+                "status": "not_covered",
+            }],
+        },
     }))
 
     assert result["replan_action"] == "refine_query"
@@ -127,6 +214,9 @@ def test_adaptive_supervisor_can_request_one_nonduplicate_refinement(monkeypatch
         "query": {"term": {"event.category": "network"}},
     }
     assert result["follow_up_source"] == "elasticsearch"
+    assert query_request["investigation_context"][
+        "required_data_sources"
+    ] == ["Network Traffic"]
 
 
 def test_yara_catalog_and_rule_selection_are_locally_bounded(tmp_path, monkeypatch):

@@ -42,6 +42,19 @@ REPORTS_DIR = os.environ.get("REPORTS_DIR", "/data/reports")
 MAX_TITLE_LEN = 90
 
 
+def _markdown_cell(value) -> str:
+    """Render arbitrary report data without breaking Markdown tables."""
+    if isinstance(value, (dict, list, tuple)):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return (
+        str(value if value is not None else "")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", "<br>")
+        .replace("|", "\\|")
+    )
+
+
 def _local_now() -> datetime.datetime:
     """Return a timezone-aware timestamp in the host's local timezone."""
     return datetime.datetime.now().astimezone()
@@ -260,7 +273,9 @@ def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_
     for rm in sigma_rule_matches:
         label = source_label.get(rm.get("source", ""), "—")
         lines.append(
-            f"| {label} | `{rm['rule_id']}` | {rm['title']} | {rm['level']} | {rm['matched_count']} |"
+            f"| {_markdown_cell(label)} | `{_markdown_cell(rm.get('rule_id'))}` | "
+            f"{_markdown_cell(rm.get('title'))} | {_markdown_cell(rm.get('level'))} | "
+            f"{_markdown_cell(rm.get('matched_count'))} |"
         )
     return "\n".join(lines)
 
@@ -419,7 +434,12 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
             summary_str = h.get("summary") or "No summary recorded."
             if len(summary_str) > 100:
                 summary_str = summary_str[:97] + "..."
-            hunt_memory_section += f"| `{h.get('hunt_id')}` | {date_str} | `{h.get('status')}` | {summary_str} |\n"
+            hunt_memory_section += (
+                f"| `{_markdown_cell(h.get('hunt_id'))}` | "
+                f"{_markdown_cell(date_str)} | "
+                f"`{_markdown_cell(h.get('status'))}` | "
+                f"{_markdown_cell(summary_str)} |\n"
+            )
 
     # Format Plan section
     if not plan:
@@ -469,7 +489,12 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         threat_intel_section = f"Correlated {len(enrichment_hits)} observable indicator(s) against the local blocklist:\n\n"
         threat_intel_section += "| Indicator / IOC | Log Record Index | Source | Threat Metadata |\n|---|---|---|---|\n"
         for hit in enrichment_hits:
-            threat_intel_section += f"| `{hit.get('indicator')}` | {hit.get('record_index')} | `{hit.get('source')}` | {hit.get('metadata')} |\n"
+            threat_intel_section += (
+                f"| `{_markdown_cell(hit.get('indicator'))}` | "
+                f"{_markdown_cell(hit.get('record_index'))} | "
+                f"`{_markdown_cell(hit.get('source'))}` | "
+                f"{_markdown_cell(hit.get('metadata'))} |\n"
+            )
 
     # Format ATT&CK-aware coverage and health section.
     ca = coverage_assessment or {}
@@ -486,8 +511,10 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         )
         for item in ca.get("data_sources", []):
             coverage_gaps_section += (
-                f"| {item.get('data_source')} | `{item.get('status')}` | "
-                f"{item.get('confidence')} | {item.get('reason')} |\n"
+                f"| {_markdown_cell(item.get('data_source'))} | "
+                f"`{_markdown_cell(item.get('status'))}` | "
+                f"{_markdown_cell(item.get('confidence'))} | "
+                f"{_markdown_cell(item.get('reason'))} |\n"
             )
         coverage_gaps_section += (
             "\n**Observed device types:** `"
@@ -591,12 +618,15 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                 or "none"
             )
             query_attempts_section += (
-                f"| {attempt.get('sequence', '')} | `{attempt.get('source', '')}` | "
-                f"{str(attempt.get('objective') or '')[:180]} | "
-                f"{attempt.get('lookback_minutes', 'n/a')}m | "
-                f"{attempt.get('limit', 'n/a')} | `{attempt.get('status', '')}` | "
-                f"{attempt.get('record_count', 0)} / "
-                f"{attempt.get('total_hits', 'n/a')} | {str(issue)[:220]} |\n"
+                f"| {_markdown_cell(attempt.get('sequence', ''))} | "
+                f"`{_markdown_cell(attempt.get('source', ''))}` | "
+                f"{_markdown_cell(str(attempt.get('objective') or '')[:180])} | "
+                f"{_markdown_cell(attempt.get('lookback_minutes', 'n/a'))}m | "
+                f"{_markdown_cell(attempt.get('limit', 'n/a'))} | "
+                f"`{_markdown_cell(attempt.get('status', ''))}` | "
+                f"{_markdown_cell(attempt.get('record_count', 0))} / "
+                f"{_markdown_cell(attempt.get('total_hits', 'n/a'))} | "
+                f"{_markdown_cell(str(issue)[:220])} |\n"
             )
         query_attempts_section += "\n**Proposed and normalized query details:**\n"
         for attempt in attempts:

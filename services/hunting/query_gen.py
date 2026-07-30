@@ -74,4 +74,12 @@ async def generate_query_node(state: HuntState) -> dict:
         "pending_query_plan": pending,
         "query_used_fallback": result.get("query_used_fallback", False),
         "query_validation_error": result.get("query_validation_error"),
+        "query_generation_mode": result.get(
+            "query_generation_mode",
+            "model",
+        ),
+        "query_generation_warnings": result.get(
+            "query_generation_warnings",
+            [],
+        ),
     }

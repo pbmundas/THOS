@@ -1,0 +1,138 @@
+{
+  "version": "thos-confirmed-finding-impact-v1",
+  "assumption": "The hypothesis produced a validated positive finding.",
+  "default_tactic_score": 55,
+  "severity_thresholds": {
+    "critical": 90,
+    "high": 70,
+    "medium": 50,
+    "low": 0
+  },
+  "tactic_scores": {
+    "Impact": 86,
+    "Credential Access": 82,
+    "Exfiltration": 82,
+    "Privilege Escalation": 80,
+    "Lateral Movement": 76,
+    "Command and Control": 74,
+    "Persistence": 72,
+    "Initial Access": 72,
+    "Execution": 68,
+    "Defense Evasion": 66,
+    "Collection": 64,
+    "Discovery": 50,
+    "Reconnaissance": 38,
+    "Resource Development": 38
+  },
+  "tactic_impact_domains": {
+    "Impact": ["availability", "integrity"],
+    "Credential Access": ["confidentiality", "identity"],
+    "Exfiltration": ["confidentiality"],
+    "Privilege Escalation": ["authorization", "identity"],
+    "Lateral Movement": ["authorization", "scope"],
+    "Command and Control": ["control"],
+    "Persistence": ["control", "authorization"],
+    "Initial Access": ["control"],
+    "Execution": ["integrity", "control"],
+    "Defense Evasion": ["visibility", "control"],
+    "Collection": ["confidentiality"],
+    "Discovery": ["visibility"],
+    "Reconnaissance": ["visibility"],
+    "Resource Development": ["readiness"]
+  },
+  "consequence_signals": [
+    {
+      "name": "destructive or recovery-inhibiting activity",
+      "points": 14,
+      "pattern": "\\b(ransomware|data destruction|disk (?:content |structure )?wipe|firmware corruption|encrypt(?:ing|ed)? files|inhibit system recovery|destroy(?:ing|ed)? data|wiper malware)\\b",
+      "impact_domains": ["availability", "integrity"]
+    },
+    {
+      "name": "enterprise identity or control-plane compromise",
+      "points": 10,
+      "pattern": "\\b(domain admins?|enterprise admins?|global admins?|krbtgt|ntds\\.dit|golden ticket|saml signing|identity provider|cloud administrator|control plane|root account)\\b",
+      "impact_domains": ["identity", "authorization", "control"]
+    },
+    {
+      "name": "bulk or sensitive-data exfiltration",
+      "points": 10,
+      "pattern": "\\b(bulk (?:export|exfiltration)|mass exfiltration|mailbox contents|customer records|patient records|source code|trade secrets?|sensitive database|sensitive data exfiltration)\\b",
+      "impact_domains": ["confidentiality"]
+    },
+    {
+      "name": "critical-service availability risk",
+      "points": 9,
+      "pattern": "\\b(denial of service|service stop|critical service|critical infrastructure|industrial control|safety system|hypervisor compromise|domain controllers?)\\b",
+      "impact_domains": ["availability"]
+    },
+    {
+      "name": "credential or authentication-material exposure",
+      "points": 6,
+      "pattern": "\\b(credential dump(?:ing)?|passwords?|api keys?|oauth tokens?|access tokens?|session (?:token|cookie|material)|private keys?|mfa (?:token|interception|bypass)|two-factor|2fa)\\b",
+      "impact_domains": ["confidentiality", "identity"]
+    },
+    {
+      "name": "security-control impairment",
+      "points": 7,
+      "pattern": "\\b(disable(?:d|s|ing)? (?:security|firewall|antivirus|endpoint|logging)|impair defenses|tamper(?:ing|ed)? with (?:security|logging)|clear(?:ing|ed)? (?:event |audit )?logs?|edr evasion)\\b",
+      "impact_domains": ["visibility", "control"]
+    },
+    {
+      "name": "remote exploitation or arbitrary execution",
+      "points": 6,
+      "pattern": "\\b(remote code execution|arbitrary code execution|zero[- ]day|exploit(?:ing|ation of) (?:a )?(?:remote|public-facing|software) (?:service|application|vulnerability))\\b",
+      "impact_domains": ["integrity", "control"]
+    },
+    {
+      "name": "broad blast radius",
+      "points": 5,
+      "pattern": "\\b(across (?:the )?(?:enterprise|environment|internal network|organization)|many hosts|multiple (?:hosts|systems|accounts|endpoints)|worm(?:able)?|self-propagat(?:e|ing)|widespread)\\b",
+      "impact_domains": ["scope"]
+    },
+    {
+      "name": "sensitive repository or communications access",
+      "points": 5,
+      "pattern": "\\b(email collection|mailbox|database|code repository|document repository|crm records|financial data|health data|confidential files?)\\b",
+      "impact_domains": ["confidentiality"]
+    }
+  ],
+  "asset_classes": [
+    {
+      "name": "identity",
+      "pattern": "\\b(account|credential|password|token|oauth|saml|kerberos|active directory|identity provider|mfa|2fa)\\b"
+    },
+    {
+      "name": "endpoint",
+      "pattern": "\\b(process|executable|script|command line|registry|workstation|endpoint|file system|kernel|driver)\\b"
+    },
+    {
+      "name": "network",
+      "pattern": "\\b(network|dns|tcp|udp|tls|http|proxy|firewall|port scan|beacon)\\b"
+    },
+    {
+      "name": "cloud",
+      "pattern": "\\b(cloud|aws|azure|gcp|tenant|service principal|control plane)\\b"
+    },
+    {
+      "name": "application",
+      "pattern": "\\b(application|webmail|browser|database|api|saas|crm|repository|server)\\b"
+    },
+    {
+      "name": "data",
+      "pattern": "\\b(data|files?|documents?|mailbox|records?|database|source code|secrets?)\\b"
+    },
+    {
+      "name": "virtualization",
+      "pattern": "\\b(virtual machine|hypervisor|container|kubernetes|docker)\\b"
+    }
+  ],
+  "review_parameters": [
+    "asset_criticality",
+    "blast_radius",
+    "privilege_level",
+    "data_sensitivity",
+    "evidence_confidence",
+    "active_exploitation",
+    "business_impact"
+  ]
+}

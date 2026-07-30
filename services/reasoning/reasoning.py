@@ -8,6 +8,7 @@ from services.orchestration.state import HuntState
 from services.observability import cache
 from services.mcp.mcp_client import call_tool
 from services.hunting.query_generator import validate_and_normalize_query
+from services.hunting.evidence_selector import _model_record
 from services.runtime_config import get_value
 
 logger = logging.getLogger(__name__)
@@ -168,14 +169,16 @@ No markdown fences, no extra commentary — JSON only.
 FINDINGS_SCHEMA = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
+        "summary": {"type": "string", "maxLength": 600},
         "findings": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
             "items": {
                 "type": "object",
                 "properties": {
-                    "claim": {"type": "string"},
-                    "evidence": {"type": "string"},
+                    "claim": {"type": "string", "maxLength": 220},
+                    "evidence": {"type": "string", "maxLength": 260},
                     # Keep the Ollama grammar schema deliberately simple.
                     # llama.cpp's JSON-schema grammar parser rejects Python-
                     # style regex escapes such as \d/\s with HTTP 400. The
@@ -190,10 +193,10 @@ FINDINGS_SCHEMA = {
                 "required": ["claim", "evidence", "ref", "confidence"],
             },
         },
-        "recommendations": {"type": "string"},
+        "recommendations": {"type": "string", "maxLength": 800},
         "need_more_logs": {"type": "boolean"},
-        "follow_up_objective": {"type": "string"},
-        "follow_up_source": {"type": "string"},
+        "follow_up_objective": {"type": "string", "maxLength": 300},
+        "follow_up_source": {"type": "string", "maxLength": 100},
         "follow_up_lookback_minutes": {"type": "integer"},
         "follow_up_limit": {"type": "integer"},
     },
@@ -313,6 +316,49 @@ def _diverse_sample(logs: list[dict], size: int, per_type_cap: int,
 def _event_histogram(logs: list[dict], top_n: int = 30) -> dict:
     counts = Counter(str(log.get("event", "unknown")) for log in logs)
     return dict(counts.most_common(top_n))
+
+
+def _compact_records(items, *, item_cap: int, char_cap: int) -> list:
+    """Bound arbitrary model context without changing the underlying hunt state."""
+    compact = []
+    for item in list(items or [])[:max(0, item_cap)]:
+        if isinstance(item, dict):
+            compact.append(_model_record(item, char_cap))
+        else:
+            compact.append(str(item)[:char_cap])
+    return compact
+
+
+def _compact_retrieval_attempts(attempts, *, item_cap: int, char_cap: int) -> list[dict]:
+    """Keep authoritative retrieval facts while removing duplicate query copies."""
+    fields = (
+        "source",
+        "objective",
+        "lookback_minutes",
+        "limit",
+        "validation_status",
+        "status",
+        "record_count",
+        "returned_count",
+        "total_hits",
+        "error",
+        "skipped",
+        "skip_reason",
+    )
+    compact: list[dict] = []
+    for attempt in list(attempts or [])[-max(0, item_cap):]:
+        if not isinstance(attempt, dict):
+            continue
+        row = {
+            field: attempt[field]
+            for field in fields
+            if attempt.get(field) not in (None, "", [], {})
+        }
+        query = attempt.get("normalized_query") or attempt.get("query")
+        if query:
+            row["query"] = str(query)[:char_cap]
+        compact.append(_model_record(row, char_cap))
+    return compact
 
 
 def _render_findings(findings) -> str:
@@ -443,6 +489,11 @@ async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | No
                 system=SYSTEM_PROMPT,
                 format=FINDINGS_SCHEMA,
                 agent="reasoning",
+                num_predict=int(get_value(
+                    "autonomy",
+                    "reasoning_decision_num_predict",
+                    default=512,
+                )),
                 # The strike loop owns retries. Avoid hidden nested attempts so
                 # "three strikes" always means exactly three model requests.
                 transport_retries=0,
@@ -626,14 +677,36 @@ async def reason_node(state: HuntState) -> dict:
         return _negative_screening_update(state, screened)
 
     evidence_refs = sorted(set(sigma_matched_refs + behavioral_refs + artifact_refs))
+    model_record_cap = max(1, int(get_value(
+        "autonomy", "reasoning_model_record_cap", default=8
+    )))
+    record_char_cap = max(400, int(get_value(
+        "autonomy", "reasoning_record_char_cap", default=1400
+    )))
+    context_item_cap = max(1, int(get_value(
+        "autonomy", "reasoning_context_item_cap", default=8
+    )))
+    retrieval_attempt_cap = max(1, int(get_value(
+        "autonomy", "reasoning_retrieval_attempt_cap", default=8
+    )))
     diverse = _diverse_sample(
         reasoning_logs,
-        _SAMPLE_SIZE,
+        model_record_cap,
         _PER_EVENT_TYPE_CAP,
         priority_indices=evidence_refs,
     )
     matched_set = set(sigma_matched_refs)
-    sample = [_slim_log(log, ref=i, is_sigma_match=(i in matched_set)) for i, log in diverse]
+    sample = []
+    for i, log in diverse:
+        bounded = _model_record(
+            _slim_log(log, ref=i, is_sigma_match=(i in matched_set)),
+            record_char_cap,
+        )
+        # Citation and rule-match metadata must survive field compaction.
+        bounded["_ref"] = i
+        if i in matched_set:
+            bounded["_rule_match"] = True
+        sample.append(bounded)
 
     kb_context = await _build_kb_context(state)
     kb_section = (
@@ -659,18 +732,47 @@ async def reason_node(state: HuntState) -> dict:
         f"than automatic conclusions.\n"
     )
     coverage_section = "\n".join(f"- {gap}" for gap in state.get("coverage_gaps") or []) or "- No deterministic coverage gaps identified."
-    coverage_matrix = json.dumps(state.get("coverage_assessment") or {}, indent=2)
-    intel_section = json.dumps(state.get("enrichment_hits") or [], indent=2)
-    evidence_highlights_section = json.dumps(state.get("evidence_highlights") or [], indent=2)
-    behavioral_evidence_section = json.dumps(
-        state.get("behavioral_evidence") or [], indent=2
+    json_options = {
+        "ensure_ascii": False,
+        "separators": (",", ":"),
+        "default": str,
+    }
+    coverage_matrix = json.dumps(
+        state.get("coverage_assessment") or {}, **json_options
     )
-    memory_section = json.dumps(state.get("hunt_memory") or [], indent=2, default=str)
+    intel_section = json.dumps(_compact_records(
+        state.get("enrichment_hits") or [],
+        item_cap=context_item_cap,
+        char_cap=record_char_cap,
+    ), **json_options)
+    evidence_highlights_section = json.dumps(_compact_records(
+        state.get("evidence_highlights") or [],
+        item_cap=context_item_cap,
+        char_cap=record_char_cap,
+    ), **json_options)
+    behavioral_evidence_section = json.dumps(
+        _compact_records(
+            state.get("behavioral_evidence") or [],
+            item_cap=context_item_cap,
+            char_cap=record_char_cap,
+        ),
+        **json_options,
+    )
+    memory_section = json.dumps(_compact_records(
+        state.get("hunt_memory") or [],
+        item_cap=context_item_cap,
+        char_cap=record_char_cap,
+    ), **json_options)
     retrieval_section = json.dumps(
-        state.get("retrieval_attempts") or [], indent=2, default=str
+        _compact_retrieval_attempts(
+            state.get("retrieval_attempts") or [],
+            item_cap=retrieval_attempt_cap,
+            char_cap=record_char_cap,
+        ),
+        **json_options,
     )
     completeness_section = json.dumps(
-        state.get("hunt_completeness") or {}, indent=2, default=str
+        state.get("hunt_completeness") or {}, **json_options
     )
     active_source = str(
         state.get("active_query_source") or state.get("siem_type") or "folder"
@@ -691,16 +793,16 @@ async def reason_node(state: HuntState) -> dict:
         f"Hunt completeness assessment:\n{completeness_section}\n\n"
         f"Active follow-up query source: {active_source}\n"
         f"User-authorized telemetry sources: "
-        f"{json.dumps(state.get('siem_types') or [active_source])}\n"
+        f"{json.dumps(state.get('siem_types') or [active_source], **json_options)}\n"
         f"{kb_section}"
         f"Event-type histogram across ALL {len(processed_logs)} processed records "
         f"(event_id/type -> count, top {len(histogram)} shown):\n"
-        f"{json.dumps(histogram, indent=2)}\n\n"
+        f"{json.dumps(histogram, **json_options)}\n\n"
         f"Representative log sample ({len(sample)} records — any detection-rule "
         f"matcher hits are guaranteed included first, remainder diversified "
         f"across event types, up to {_PER_EVENT_TYPE_CAP} per type — each "
         f"tagged with '_ref' for citation):\n"
-        f"{json.dumps(sample, indent=2)}\n\n"
+        f"{json.dumps(sample, **json_options)}\n\n"
         f"Current iteration: {state.get('iteration', 0) + 1} of {state.get('max_iterations', 1)}"
     )
 

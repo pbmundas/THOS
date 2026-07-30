@@ -3,12 +3,62 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from services.detection import sigma_engine, sigmahq_engine
 from services.detection.sigma_detection_agent import LOCAL_SOURCES, query_sigma_for_hunt
 from services.hunting.evidence_selector import select_hunt_evidence
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
+from services.runtime_config import get_value
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _derive_indicators_bounded(arguments: dict) -> dict:
+    """Keep optional model enrichment from blocking deterministic SOC tools."""
+    timeout = max(
+        1.0,
+        float(
+            get_value(
+                "autonomy",
+                "indicator_stage_timeout_seconds",
+                default=75,
+            )
+        ),
+    )
+    try:
+        result = await asyncio.wait_for(
+            call_tool("derive_detection_indicators", arguments),
+            timeout=timeout,
+        )
+        return result if isinstance(result, dict) else {}
+    except asyncio.TimeoutError:
+        logger.warning(
+            "indicator enrichment exceeded its %.1fs stage deadline; "
+            "continuing with governed rule and literal evidence",
+            timeout,
+        )
+        reason = "stage_timeout"
+    except Exception as exc:
+        logger.warning(
+            "indicator enrichment was unavailable; continuing with governed "
+            "rule and literal evidence: %s",
+            exc,
+        )
+        reason = "tool_unavailable"
+    return {
+        "event_ids": [],
+        "keywords": [],
+        "behavior_phrases": [],
+        "grounding_sources": [],
+        "_decision_metadata": {
+            "owner": "bounded_indicator_fallback",
+            "degraded": True,
+            "reason": reason,
+        },
+    }
 
 def _record_key(record: dict) -> str:
     return json.dumps({key: record.get(key) for key in
@@ -51,7 +101,7 @@ async def run_soc_tools_node(state: HuntState) -> dict:
         or "folder"
     ).lower()
 
-    indicator_call = call_tool("derive_detection_indicators", {
+    indicator_call = _derive_indicators_bounded({
         "hypothesis_text": hypothesis_text, "technique_id": technique_id,
         "technique_name": technique_name, "tactic": tactic,
     })

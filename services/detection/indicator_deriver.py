@@ -6,7 +6,8 @@ import json
 
 from services.knowledge.cyber_retrieval import search as search_cyber_knowledge
 from services.observability import cache
-from services.siem.clients import ollama_generate
+from services.reasoning.ollama_client import generate
+from services.runtime_config import get_value
 
 
 SYSTEM_PROMPT = (
@@ -25,6 +26,29 @@ SYSTEM_PROMPT = (
     "hypothesis, not a conclusion that an attack occurred. No markdown fences "
     "or commentary; JSON only."
 )
+
+INDICATOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "event_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 30,
+        },
+        "keywords": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 50,
+        },
+        "behavior_phrases": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 30,
+        },
+    },
+    "required": ["event_ids", "keywords", "behavior_phrases"],
+    "additionalProperties": False,
+}
 
 
 def _parse(raw: str) -> dict:
@@ -59,19 +83,27 @@ async def derive_indicators(
         return cached
 
     try:
+        reference_hit_cap = max(
+            1,
+            int(get_value("autonomy", "indicator_reference_hit_cap", default=3)),
+        )
         reference_hits = await asyncio.to_thread(
             search_cyber_knowledge,
             f"{technique_id} {technique_name} {hypothesis_text}",
-            5,
+            reference_hit_cap,
             ["detection", "threat_hunting", "dfir", "mitre_attack"],
         )
     except Exception:
         reference_hits = []
+    reference_char_cap = max(
+        512,
+        int(get_value("autonomy", "indicator_reference_char_cap", default=2400)),
+    )
     reference_text = "\n".join(
         f"[{hit.get('citation_id', 'unverified')}] {hit.get('text', '')}"
         for hit in reference_hits
         if isinstance(hit, dict)
-    )[:12_000]
+    )[:reference_char_cap]
     prompt = (
         f"Hypothesis: {hypothesis_text}\n"
         f"MITRE technique: {technique_id} ({technique_name}); tactic: {tactic}\n\n"
@@ -79,10 +111,29 @@ async def derive_indicators(
         "Generate the JSON now."
     )
     try:
-        raw = await ollama_generate(
+        raw = await generate(
             prompt=prompt,
             system=SYSTEM_PROMPT,
+            format=INDICATOR_SCHEMA,
             agent="indicator_deriver",
+            transport_retries=max(
+                0,
+                int(get_value("autonomy", "indicator_transport_retries", default=0)),
+            ),
+            num_predict=max(
+                64,
+                int(get_value("autonomy", "indicator_decision_num_predict", default=192)),
+            ),
+            timeout_seconds=max(
+                1,
+                float(
+                    get_value(
+                        "autonomy",
+                        "indicator_generation_timeout_seconds",
+                        default=45,
+                    )
+                ),
+            ),
         )
     except Exception:
         raw = ""

@@ -45,6 +45,8 @@ class HuntState(TypedDict, total=False):
     active_query_limit: Optional[int]
     query_used_fallback: bool
     query_validation_error: Optional[str]
+    query_generation_mode: Optional[str]
+    query_generation_warnings: List[str]
     executed_queries: List[str]
     executed_query_keys: List[str]
     retrieval_attempts: List[Dict[str, Any]]

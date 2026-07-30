@@ -24,6 +24,11 @@ import time
 
 import chromadb
 from chromadb.config import Settings
+from services.hunting.hypothesis_catalog import (
+    canonical_hypotheses,
+    hypothesis_document,
+    hypothesis_metadata,
+)
 
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "chromadb")
 CHROMA_PORT = int(os.environ.get("CHROMA_PORT", "8000"))
@@ -52,58 +57,38 @@ def get_client(retries: int = 20, delay: float = 3.0):
 def ingest_hearth(client):
     """Ingest HEARTH hypotheses into the 'hearth_kb' collection.
 
-    Tries a live fetch from https://github.com/THORCollective/HEARTH first
-    (so every `docker compose up` / kb-ingest run picks up whatever new
-    hypotheses THOR Collective has published since last time). Falls back
-    to whatever local JSON is under KB_ROOT/hearth/*.json if the fetch
-    fails (e.g. an air-gapped/fully on-prem deployment with no route to
-    github.com) — this platform is meant to still work fully offline.
+    The reviewed, versioned local B/H/M catalog is authoritative by default.
+    Set HEARTH_LIVE_REFRESH=1 to explicitly refresh those same canonical
+    hypothesis families from upstream. Generated SIEM-specific coverage
+    entries are not part of the product hypothesis catalog.
     """
     collection = client.get_or_create_collection("hearth_kb")
     ids, docs, metas = [], [], []
-    source = "unknown"
+    source = f"versioned local JSON ({KB_ROOT}/hearth/*.json)"
+    items = []
 
-    try:
-        from services.knowledge.hearth_fetch import fetch_and_parse_hearth
-        items = fetch_and_parse_hearth()
-        source = "live GitHub fetch"
-        # Cache what we fetched to disk too, so the local-file fallback
-        # path below stays fresh for the next offline run.
+    if os.environ.get("HEARTH_LIVE_REFRESH", "0") == "1":
         try:
-            cache_dir = os.path.join(KB_ROOT, "hearth")
-            os.makedirs(cache_dir, exist_ok=True)
-            with open(os.path.join(cache_dir, "hearth_full.json"), "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=2)
-        except OSError as e:
-            print(f"[hearth_kb] warning: could not cache fetched hypotheses to disk: {e}")
-    except Exception as e:  # noqa: BLE001 - network/parents errors, fall back to local files
-        print(f"[hearth_kb] live fetch failed ({e}); falling back to local JSON under {KB_ROOT}/hearth/")
-        items = []
-        for path in glob.glob(os.path.join(KB_ROOT, "hearth", "*.json")):
-            with open(path) as f:
-                items.extend(json.load(f))
-        source = f"local JSON ({KB_ROOT}/hearth/*.json)"
+            from services.knowledge.hearth_fetch import fetch_and_parse_hearth
+            items = fetch_and_parse_hearth()
+            source = "explicit live GitHub refresh"
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"[hearth_kb] live refresh failed ({e}); "
+                "using the versioned local catalog"
+            )
 
-    # THOS-required gap hypotheses are versioned with the application and
-    # overlay the upstream HEARTH feed. They cover techniques for which the
-    # live SIEM schema has runnable Sigma detections but HEARTH has no exact
-    # hypothesis. Upstream refreshes must never erase this local coverage.
-    from services.hunting.hearth import REQUIRED_GAP_HYPOTHESES
-    items_by_id = {str(item["id"]): item for item in items if item.get("id")}
-    items_by_id.update({
-        str(item["id"]): item for item in REQUIRED_GAP_HYPOTHESES
-        if item.get("id")
-    })
-    items = list(items_by_id.values())
+    if not items:
+        for path in glob.glob(os.path.join(KB_ROOT, "hearth", "*.json")):
+            with open(path, encoding="utf-8") as handle:
+                items.extend(json.load(handle))
+
+    items = canonical_hypotheses(items)
 
     for h in items:
         ids.append(h["id"])
-        docs.append(f'{h["title"]}. {h["text"]}')
-        metas.append({
-            "id": h["id"], "title": h["title"], "tactic": h.get("tactic", ""),
-            "technique": h.get("technique", ""), "text": h["text"],
-            "severity": h.get("severity", ""), "category": h.get("category", ""),
-        })
+        docs.append(hypothesis_document(h))
+        metas.append(hypothesis_metadata(h))
     if ids:
         existing_ids = set(collection.get(include=[]).get("ids", []))
         stale_ids = sorted(existing_ids - set(ids))

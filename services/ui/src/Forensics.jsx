@@ -51,6 +51,13 @@ function reportFilename(path) {
   return String(path || "").split(/[\\/]/).pop();
 }
 
+function readyForensicTools(payload) {
+  const tools = Array.isArray(payload?.tools) ? payload.tools : [];
+  return tools.filter(
+    (tool) => tool?.available === true && tool?.status === "available"
+  );
+}
+
 function MemoryResult({ scan }) {
   if (!scan) {
     return (
@@ -179,6 +186,7 @@ export default function Forensics({
   const [notice, setNotice] = useState("");
   const [noticeError, setNoticeError] = useState(false);
   const [forensicTools, setForensicTools] = useState(null);
+  const visibleForensicTools = readyForensicTools(forensicTools);
   const fileInput = useRef(null);
   const memoryInput = useRef(null);
 
@@ -335,15 +343,15 @@ export default function Forensics({
         <button role="tab" aria-selected={activeTab === "memory"} className={activeTab === "memory" ? "active" : ""} onClick={() => { setActiveTab("memory"); onRouteChange?.("yara"); }}><CpuChipIcon /><span><strong>File &amp; Memory Analysis</strong><small>Suspicious files, executables, and dumps</small></span></button>
       </div>
 
-      {forensicTools?.tools?.length > 0 && (
+      {visibleForensicTools.length > 0 && (
         <details className="forensic-tool-coverage panel">
           <summary>
             <span><ShieldCheckIcon /></span>
-            <div><strong>Ready forensic tools</strong><small>{forensicTools.tools.length} tools available for agent-selected analysis · samples are never executed</small></div>
+            <div><strong>Ready forensic tools</strong><small>{visibleForensicTools.length} tools available for agent-selected analysis · samples are never executed</small></div>
             <span>View tools</span>
           </summary>
           <div className="forensic-tool-grid">
-            {forensicTools.tools.map((tool) => (
+            {visibleForensicTools.map((tool) => (
               <article key={tool.tool_id}>
                 <header><strong>{tool.name}</strong></header>
                 <p>{tool.purpose}</p>

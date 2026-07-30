@@ -66,6 +66,43 @@ def test_tool_status_hides_tools_that_are_not_installed(monkeypatch):
     assert tools.tool_status()["tools"] == []
 
 
+def test_tool_status_hides_non_ready_catalog_states_even_if_binary_exists(monkeypatch):
+    monkeypatch.setattr(tools, "_available", lambda _selector: True)
+    monkeypatch.setattr(tools, "_TOOL_CATALOG", (
+        {
+            "tool_id": "ready",
+            "name": "Ready",
+            "availability": "command:ready",
+            "deployment": "bundled",
+        },
+        {
+            "tool_id": "licensed",
+            "name": "Licensed",
+            "availability": "command:licensed",
+            "deployment": "license_required",
+        },
+        {
+            "tool_id": "legacy",
+            "name": "Legacy",
+            "availability": "command:legacy",
+            "deployment": "deprecated",
+            "execution": "status_only",
+        },
+        {
+            "tool_id": "wrong-platform",
+            "name": "Wrong platform",
+            "availability": "command:wrong-platform",
+            "deployment": "unsupported_platform",
+        },
+    ))
+
+    status = tools.tool_status()
+
+    assert [item["tool_id"] for item in status["tools"]] == ["ready"]
+    assert all(item["available"] is True for item in status["tools"])
+    assert all(item["status"] == "available" for item in status["tools"])
+
+
 def test_clamav_signature_result_becomes_a_fact_not_an_auto_verdict(monkeypatch):
     monkeypatch.setattr(
         analysis.ioc_management,

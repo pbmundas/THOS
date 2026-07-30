@@ -98,6 +98,13 @@ def _load_tool_catalog() -> tuple[dict[str, Any], ...]:
 # tool metadata outside executable code lets administrators extend or replace
 # capabilities without embedding investigative choices in the adapters.
 _TOOL_CATALOG = _load_tool_catalog()
+_EXCLUDED_DEPLOYMENT_STATES = {
+    "deprecated",
+    "license_required",
+    "not_installed",
+    "unsupported",
+    "unsupported_platform",
+}
 
 
 def _available(selector: str) -> bool:
@@ -113,6 +120,14 @@ def tool_status() -> dict:
     """Return only tools that are installed in this forensic worker."""
     items = []
     for spec in _TOOL_CATALOG:
+        deployment = str(spec.get("deployment") or "").strip().lower()
+        declared_status = str(spec.get("status") or "").strip().lower()
+        if (
+            deployment in _EXCLUDED_DEPLOYMENT_STATES
+            or declared_status in _EXCLUDED_DEPLOYMENT_STATES
+            or str(spec.get("execution") or "").strip().lower() == "status_only"
+        ):
+            continue
         installed = _available(str(spec["availability"]))
         if not installed:
             continue

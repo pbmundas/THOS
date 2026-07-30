@@ -40,5 +40,51 @@ def get_field_mapping(siem_type: str) -> dict:
     return mapping
 
 
+def get_field_capabilities() -> dict[str, list[str]]:
+    """Return vendor-neutral telemetry capabilities by normalized field."""
+    configured = _default_field_map().get("_normalized_capabilities", {})
+    if not isinstance(configured, dict):
+        return {}
+    return {
+        str(field): [
+            str(capability)
+            for capability in capabilities
+            if str(capability).strip()
+        ]
+        for field, capabilities in configured.items()
+        if isinstance(capabilities, list)
+    }
+
+
+def get_field_value_kinds() -> dict[str, list[str]]:
+    """Return governed literal kinds accepted by each normalized field."""
+    configured = _default_field_map().get("_normalized_value_kinds", {})
+    if not isinstance(configured, dict):
+        return {}
+    return {
+        str(field): [
+            str(kind)
+            for kind in kinds
+            if str(kind).strip()
+        ]
+        for field, kinds in configured.items()
+        if isinstance(kinds, list)
+    }
+
+
+def get_field_query_priorities() -> dict[str, int]:
+    """Return data-configured retrieval priority by normalized field."""
+    configured = _default_field_map().get("_normalized_query_priority", {})
+    if not isinstance(configured, dict):
+        return {}
+    output: dict[str, int] = {}
+    for field, priority in configured.items():
+        try:
+            output[str(field)] = max(0, min(100, int(priority)))
+        except (TypeError, ValueError):
+            continue
+    return output
+
+
 def normalize_field(siem_type: str, normalized_field: str) -> str | None:
     return get_field_mapping(siem_type).get(normalized_field)

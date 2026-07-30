@@ -70,6 +70,32 @@ def test_attack_and_kev_json_are_converted_to_independent_records():
     assert "Apply mitigations" in kev[0]["text"]
 
 
+def test_jsonld_defensive_knowledge_is_split_into_independent_records():
+    source = cyber_corpus.Source(
+        id="defensive_graph", title="Defensive graph", enabled=True,
+        required=False, kind="json",
+        location="https://d3fend.mitre.org/ontologies/d3fend.json",
+        publisher="MITRE", license="MITRE D3FEND Terms of Use",
+        license_url="https://d3fend.mitre.org/tou/",
+        trust_tier="primary", domains=("frameworks",), refresh_days=90,
+    )
+    records = cyber_corpus._json_documents(source, json.dumps({
+        "@graph": [{
+            "@id": "d3f:ProcessSpawnAnalysis",
+            "rdfs:label": "Process Spawn Analysis",
+            "d3f:definition": "Analyzes process creation relationships.",
+            "d3f:d3fend-id": "D3-PSA",
+        }, {
+            "@id": "d3f:EmptyPlumbing",
+            "rdfs:label": "No useful description",
+        }],
+    }).encode())
+
+    assert len(records) == 1
+    assert records[0]["record_id"] == "d3f:ProcessSpawnAnalysis"
+    assert "process creation relationships" in records[0]["text"]
+
+
 class _FakeCollection:
     def count(self):
         return 2

@@ -25,6 +25,7 @@ ALLOWED_REMOTE_HOSTS = {
     "raw.githubusercontent.com",
     "www.cisa.gov",
     "nvlpubs.nist.gov",
+    "d3fend.mitre.org",
 }
 _INSTRUCTION_MARKERS = re.compile(
     r"ignore\s+(all\s+)?(previous|prior)\s+instructions?|"
@@ -136,8 +137,11 @@ def _clean_text(value: object) -> str:
 def _json_documents(source: Source, data: bytes) -> list[dict]:
     payload = json.loads(data.decode("utf-8"))
     is_stix_bundle = isinstance(payload, dict) and isinstance(payload.get("objects"), list)
+    is_jsonld_graph = isinstance(payload, dict) and isinstance(payload.get("@graph"), list)
     if is_stix_bundle:
         items = payload["objects"]
+    elif is_jsonld_graph:
+        items = payload["@graph"]
     elif isinstance(payload, dict) and isinstance(payload.get("vulnerabilities"), list):
         items = payload["vulnerabilities"]
     elif isinstance(payload, list):
@@ -157,6 +161,29 @@ def _json_documents(source: Source, data: bytes) -> list[dict]:
             or item.get("revoked") is True
             or item.get("x_mitre_deprecated") is True
         ):
+            continue
+        if is_jsonld_graph:
+            record_id = str(item.get("@id") or f"record-{index}")
+            label = item.get("rdfs:label") or record_id
+            if isinstance(label, list):
+                label = next((str(value) for value in label if str(value).strip()), record_id)
+            preferred = [
+                item.get("d3f:definition"),
+                item.get("d3f:kb-abstract"),
+                item.get("d3f:kb-article"),
+                item.get("d3f:attack-id"),
+                item.get("d3f:d3fend-id"),
+                item.get("d3f:cwe-id"),
+                item.get("rdfs:comment"),
+            ]
+            body = " ".join(_clean_text(value) for value in preferred if value)
+            if not body:
+                continue
+            documents.append({
+                "record_id": record_id,
+                "title": str(label),
+                "text": f"{label}. {body}",
+            })
             continue
         external_id = ""
         references = item.get("external_references") or []

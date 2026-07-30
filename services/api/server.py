@@ -80,7 +80,7 @@ def search_hypotheses_semantic(query: str, n_results: int = 3) -> list[dict]:
 
 @mcp.tool()
 def refresh_hearth_hypotheses() -> dict:
-    """Fetch the latest HEARTH hypotheses live from
+    """Fetch the latest canonical B/H/M HEARTH hypotheses from
     https://github.com/THORCollective/HEARTH and re-ingest them into the
     hearth_kb vector store, so list_hearth_hypotheses / semantic search
     reflect whatever's newest upstream. Falls back gracefully (returns an
@@ -88,30 +88,22 @@ def refresh_hearth_hypotheses() -> dict:
     a fully air-gapped on-prem deployment."""
     from services.knowledge.hearth_fetch import fetch_and_parse_hearth
     from services.siem.clients import get_or_create_collection
-    from services.hunting.hearth import REQUIRED_GAP_HYPOTHESES
+    from services.hunting.hypothesis_catalog import (
+        canonical_hypotheses,
+        hypothesis_document,
+        hypothesis_metadata,
+    )
 
     try:
         items = fetch_and_parse_hearth()
     except Exception as e:  # noqa: BLE001
         return {"refreshed": False, "count": 0, "error": str(e)}
 
-    items_by_id = {str(item["id"]): item for item in items if item.get("id")}
-    items_by_id.update({
-        str(item["id"]): item for item in REQUIRED_GAP_HYPOTHESES
-        if item.get("id")
-    })
-    items = list(items_by_id.values())
+    items = canonical_hypotheses(items)
     collection = get_or_create_collection("hearth_kb")
     ids = [h["id"] for h in items]
-    docs = [f'{h["title"]}. {h["text"]}' for h in items]
-    metas = [
-        {
-            "id": h["id"], "title": h["title"], "tactic": h.get("tactic", ""),
-            "technique": h.get("technique", ""), "text": h["text"],
-            "severity": h.get("severity", ""), "category": h.get("category", ""),
-        }
-        for h in items
-    ]
+    docs = [hypothesis_document(h) for h in items]
+    metas = [hypothesis_metadata(h) for h in items]
     if ids:
         existing_ids = set(collection.get(include=[]).get("ids", []))
         stale_ids = sorted(existing_ids - set(ids))

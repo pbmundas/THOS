@@ -44,6 +44,7 @@ from reportlab.platypus import (
 )
 
 from services.api import control_plane
+from services.hunting.hypothesis_catalog import normalize_hypothesis
 from services.runtime_config import get_value, read_config
 from services.security.configuration import required_secret
 
@@ -284,14 +285,32 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
 
 
-async def _upstream_json(method: str, path: str, **kwargs):
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-        response = await client.request(
-            method,
-            f"{ORCHESTRATOR_URL}{path}",
-            headers=_UPSTREAM_HEADERS,
-            **kwargs,
-        )
+async def _upstream_json(
+    method: str,
+    path: str,
+    *,
+    upstream_timeout: httpx.Timeout | None = None,
+    **kwargs,
+):
+    timeout = upstream_timeout or httpx.Timeout(60.0, connect=10.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method,
+                f"{ORCHESTRATOR_URL}{path}",
+                headers=_UPSTREAM_HEADERS,
+                **kwargs,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Orchestrator request timed out for {path}",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach the orchestrator for {path}",
+        ) from exc
     if response.is_error:
         try:
             detail = response.json().get("detail", response.text)
@@ -420,7 +439,10 @@ async def dashboard_operations(request: Request, hours: int = 24):
 async def actionable_risks(request: Request, limit: int = 500, hours: int = 0):
     control_plane.require_feature(request, "reports")
     return await _upstream_json(
-        "GET", "/risks", params={
+        "GET",
+        "/risks",
+        upstream_timeout=httpx.Timeout(300.0, connect=10.0),
+        params={
             "limit": max(1, min(limit, 2000)),
             "hours": max(1, min(hours, 24 * 365 * 10)) if hours else 0,
         }
@@ -458,7 +480,8 @@ async def hypotheses(request: Request):
     recent = {item.get("hypothesis_id"): item for item in last_runs}
     custom = read_config().get("custom_hypotheses", [])
     return [
-        {**item, "severity": control_plane.hypothesis_severity(item), **({
+        {**normalize_hypothesis(item),
+         "severity": control_plane.hypothesis_severity(item), **({
             "last_ran_at": recent[item.get("id")].get("last_ran_at"),
             "last_run_status": recent[item.get("id")].get("status"),
         } if item.get("id") in recent else {})}

@@ -29,6 +29,9 @@ async def decide_json(
     schema: dict[str, Any],
     validator: Validator,
     attempts: int | None = None,
+    num_predict: int | None = None,
+    transport_retries: int = 1,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Return one schema- and domain-validated local-model decision."""
     configured_attempts = int(
@@ -50,7 +53,9 @@ async def decide_json(
                 system=system,
                 format=schema,
                 agent=agent,
-                transport_retries=1,
+                transport_retries=max(0, int(transport_retries)),
+                num_predict=num_predict,
+                timeout_seconds=timeout_seconds,
             )
             parsed = json.loads(raw)
             if not isinstance(parsed, dict):

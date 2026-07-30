@@ -1,5 +1,19 @@
 # THOS cybersecurity model adaptation
 
+## Current certification status
+
+The default THOS configuration uses general-purpose local models. The
+repository does not contain a completed fine-tuning run, a cybersecurity
+adapter, an immutable training snapshot, or a passing domain-balanced model
+certification for the currently installed models. They must therefore be
+treated as **uncertified assistants**, not as fully trained autonomous
+cybersecurity experts.
+
+Prompts, tool use, governed retrieval, citation validation, and fail-closed
+report gates reduce risk, but they do not change the model weights and cannot
+guarantee that a model will never hallucinate. No language model should be
+described as 100% capable of every cybersecurity task.
+
 THOS separates knowledge from behavior:
 
 - Current, factual cybersecurity knowledge belongs in the governed RAG corpus.
@@ -19,6 +33,10 @@ The source manifest is
 - CISA Known Exploited Vulnerabilities for actively exploited advisories;
 - NIST CSF 2.0, SP 800-61 Rev. 3, SP 800-115, and SP 800-92 for frameworks,
   incident response, security assessment, and log-management foundations;
+- MITRE D3FEND for defensive techniques, countermeasure relationships, and
+  digital-artifact concepts;
+- NIST SP 800-86, SP 800-83 Rev. 1, and SP 800-150 for forensic process,
+  malware incident handling, and threat-information sharing;
 - the repository's pinned community detection-rule corpus for threat detection and detection
   engineering.
 
@@ -70,11 +88,27 @@ The initial retrieval set is
 SME-reviewed questions, balanced across all curriculum domains, before
 comparing embedding or reranking changes.
 
-An optional weight-adaptation run is blocked until:
+Retrieval evaluation alone does not certify model reasoning. The model
+promotion policy is defined in
+`data/evals/cybersecurity_capability_requirements.json` and enforced by
+`services/evaluation/cybersecurity_capability.py`. It requires coverage of:
+
+- threat hunting, threat behavior, anomaly analysis, SOC triage, threat
+  investigation, incident response, digital forensics, and malware analysis;
+- identity, endpoint, network, cloud, framework, and query-generation tasks;
+- positive, negative, insufficient-evidence, and adversarial scenarios;
+- citation validity, unsupported-claim rate, disposition accuracy, abstention,
+  prompt-injection resistance, query validity, false positives, and false
+  negatives.
+
+An optional weight-adaptation run and model promotion are blocked until:
 
 - at least 250 human-verified, evidence-cited examples exist;
 - retrieval pass rate is at least 90%;
 - grounding/abstention pass rate is at least 98%;
+- the domain-balanced capability suite passes every release gate;
+- the model, training dataset, and evaluation suite have immutable snapshot
+  identifiers;
 - the training GPU has at least 12 GB VRAM for a 4B QLoRA target;
 - a cybersecurity SME approves the frozen dataset and eval snapshot.
 
@@ -99,3 +133,13 @@ before they enter the training snapshot.
 Fine-tune stable response behavior with LoRA/QLoRA; do not fine-tune volatile
 threat intelligence. A candidate adapter must beat the frozen baseline,
 complete a canary period, and retain a one-command rollback to the prior model.
+
+Do not train every agent identically. Query agents need dialect generation and
+schema-repair examples; supervisor agents need branch planning and stopping
+decisions; reasoning and forensic agents need evidence classification,
+alternative explanations, calibrated dispositions, and abstention. Current
+threat intelligence, new attacks, vulnerabilities, and framework changes
+remain governed retrieval data.
+
+Never admit a model's own unreviewed reports back into training. Analyst
+corrections may become candidates only after evidence-level SME verification.

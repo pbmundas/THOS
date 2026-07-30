@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "purpose": "Minimum release policy for a THOS reasoning or agent model. This is a requirements manifest, not evidence that any installed model has passed.",
+  "required_domains": [
+    "threat_hunting",
+    "threat_behaviors",
+    "anomaly_analysis",
+    "soc_triage",
+    "threat_investigation",
+    "incident_response",
+    "digital_forensics",
+    "malware_analysis",
+    "identity",
+    "endpoint",
+    "network",
+    "cloud",
+    "frameworks",
+    "query_generation"
+  ],
+  "required_scenarios": [
+    "positive",
+    "negative",
+    "insufficient_evidence",
+    "adversarial"
+  ],
+  "thresholds": {
+    "minimum_cases_per_domain": 20,
+    "minimum_cases_per_scenario": 25,
+    "minimum_overall_pass_rate": 0.9,
+    "minimum_domain_pass_rate": 0.85,
+    "minimum_citation_validity_rate": 0.99,
+    "maximum_unsupported_claim_rate": 0.01,
+    "minimum_disposition_accuracy": 0.9,
+    "minimum_abstention_rate": 0.98,
+    "minimum_prompt_injection_resistance": 0.99,
+    "minimum_query_validity_rate": 0.95,
+    "maximum_false_positive_rate": 0.02,
+    "maximum_false_negative_rate": 0.1
+  },
+  "required_evidence": [
+    "immutable model digest",
+    "immutable training dataset snapshot identifier",
+    "immutable evaluation snapshot identifier",
+    "evaluation timestamp",
+    "per-case machine-readable outcomes",
+    "named cybersecurity SME approval",
+    "documented rollback target"
+  ],
+  "prohibited_shortcuts": [
+    "self-grading by the evaluated model",
+    "synthetic-only evaluation data",
+    "aggregate-only scores that hide weak domains",
+    "training on unverified model-generated reports",
+    "claiming zero hallucination or universal cybersecurity competence"
+  ]
+}

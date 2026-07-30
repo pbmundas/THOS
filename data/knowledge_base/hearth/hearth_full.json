@@ -3,13 +3,15 @@
     "id": "M001",
     "title": "A machine learning model can detect anomalies in user login patterns that indicate compromised accounts.",
     "tactic": "Initial Access",
-    "technique": "",
+    "technique": "T1078",
     "text": "A machine learning model can detect anomalies in user login patterns that indicate compromised accounts. Machine learning model trained on historical login data to identify deviations from normal behavior",
     "category": "Alchemy",
     "all_tactics": [
       "Initial Access"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1078"
+    ],
     "tags": [
       "modelassisted",
       "machinelearning",
@@ -21,13 +23,15 @@
     "id": "M002",
     "title": "Beaconing behavior can be detected in encrypted DNS traffic patterns by applying machine learning models that identify anomalous, periodic c",
     "tactic": "Command and Control",
-    "technique": "",
+    "technique": "T1071.004",
     "text": "Beaconing behavior can be detected in encrypted DNS traffic patterns by applying machine learning models that identify anomalous, periodic communication indicative of command and control activity. Encrypted DNS traffic (e.g., DoH) may be used to hide beaconing communications, making it harder to detect.",
     "category": "Alchemy",
     "all_tactics": [
       "Command and Control"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1071.004"
+    ],
     "tags": [
       "commandandcontrol",
       "beaconing",
@@ -39,13 +43,15 @@
     "id": "M003",
     "title": "Machine learning models can identify anomalies with user or systems initiating outbound traffic with unusually large byte sizes that may ind",
     "tactic": "Exfiltration",
-    "technique": "",
+    "technique": "T1041",
     "text": "Machine learning models can identify anomalies with user or systems initiating outbound traffic with unusually large byte sizes that may indicate potential data exfiltration activity. Unusual Byte Size: Outbound packets significantly larger than the typical size associated with normal business transactions.",
     "category": "Alchemy",
     "all_tactics": [
       "Exfiltration"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1041"
+    ],
     "tags": [
       "exfiltration",
       "machinelearning"
@@ -55,13 +61,15 @@
     "id": "M004",
     "title": "Machine learning models can identify database query anomalies indicating potential data manipulation or exfiltration activity.",
     "tactic": "Impact",
-    "technique": "",
+    "technique": "T1565.001",
     "text": "Machine learning models can identify database query anomalies indicating potential data manipulation or exfiltration activity. If a user or system executes an unusually high number of data modification queries (e.gl, INSERT, UPDATE, DELETE) within a short timeframe, particularly in sensitive databases, it may indicate potential data manipulation or exfiltration activities.",
     "category": "Alchemy",
     "all_tactics": [
       "Impact"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1565.001"
+    ],
     "tags": [
       "impact",
       "machinelearning"
@@ -71,13 +79,15 @@
     "id": "M005",
     "title": "Machine learning models can detect command-line obfuscation via Base64 encoding, which adversaries may use to evade detection.",
     "tactic": "Defense Evasion",
-    "technique": "",
+    "technique": "T1027",
     "text": "Machine learning models can detect command-line obfuscation via Base64 encoding, which adversaries may use to evade detection. Adversaries can use Base64 encoded commands and scripts in a variety of interpreters, such as PowerShell, Windows Command Shell, and Bash.",
     "category": "Alchemy",
     "all_tactics": [
       "Defense Evasion"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1027"
+    ],
     "tags": [
       "defenseevasion",
       "obfuscation"
@@ -458,6 +468,9 @@
       "Multiple"
     ],
     "all_techniques": [],
+    "technique_names": [
+      "Cross-technique Alert Triage"
+    ],
     "tags": [
       "alert_triage",
       "false_positive_reduction",
@@ -921,13 +934,15 @@
     "id": "B016",
     "title": "What does normal virtual machine and hypervisor binary usage look like across endpoints \u2014 which hosts legitimately run QEMU, VirtualBox, or ",
     "tactic": "Defense Evasion",
-    "technique": "",
+    "technique": "T1497.001",
     "text": "What does normal virtual machine and hypervisor binary usage look like across endpoints \u2014 which hosts legitimately run QEMU, VirtualBox, or VMware Workstation, and what are the expected binary paths, network patterns, and disk image locations? Data collection (30 days): Collect process creation events for VM binaries: qemu-system-*.exe, VBoxManage.exe, VirtualBoxVM.exe, vmware.exe, vmrun.exe, vmwp.exe (Hyper-V worker), wsl.exe, utm (macOS). Record: hostname, username, binary path, binary hash, command-line arguments, parent process, and outbound network connections per session. Build the allowlist: Categorize each host as approved (developer workstations, QA, IT admin) or unapproved. For approved hosts, document expected binary paths (C:\\Program Files\\Oracle\\VirtualBox\\, C:\\Program Files\\QEMU\\), expected disk image locations, and typical network volume. Immediate flags (no baseline needed): VM binaries executing from ProgramData, Temp, AppData, Downloads, or any user-writable path. Headless flags: `-nographic`, `-display none`, `-daemonize`. NAT user-mode networking: `-nic user` or `-netdev user` (tunnels all traffic through host process, used in STXRAT and Payouts King). Minimal memory allocation: `-m 256M` or lower with tiny disk images. Disk image monitoring: Hunt for VM image files (.qcow2, .vmdk, .vdi, .raw, .vhd, .vhdx) in non-standard locations. Flag images < 200MB \u2014 legitimate dev VMs are typically >1GB, attack-focused Alpine/BusyBox images are ~50-100MB. Disk images disguised with non-VM extensions (.dll, .db) as seen in Payouts King. Network baseline: Establish per-host outbound volume from VM processes. Sustained high-volume outbound connections (hours of continuous transfer) from QEMU on a host that isn't a development machine is a strong exfil indicator. Output: Produce a host allowlist with approved VM binaries, paths, users, and network thresholds. This baseline directly enables detection for H127 (rclone+QEMU exfil tunnel).",
     "category": "Embers",
     "all_tactics": [
       "Defense Evasion"
     ],
-    "all_techniques": [],
+    "all_techniques": [
+      "T1497.001"
+    ],
     "tags": [
       "defense_evasion",
       "baseline",

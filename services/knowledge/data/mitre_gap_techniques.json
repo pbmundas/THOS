@@ -1,4 +1,76 @@
 {
+  "T1025": {
+    "data_sources": [],
+    "description": "Adversaries may collect data from connected removable media.",
+    "id": "T1025",
+    "name": "Data from Removable Media",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Collection"
+  },
+  "T1120": {
+    "data_sources": [],
+    "description": "Adversaries may attempt to gather information about attached peripheral devices and components.",
+    "id": "T1120",
+    "name": "Peripheral Device Discovery",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Discovery"
+  },
+  "T1132.001": {
+    "data_sources": [],
+    "description": "Adversaries may encode command and control traffic using a standard data encoding system.",
+    "id": "T1132.001",
+    "name": "Standard Encoding",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Command and Control"
+  },
+  "T1210": {
+    "data_sources": [],
+    "description": "Adversaries may exploit remote services to gain unauthorized access to internal systems after compromising a host.",
+    "id": "T1210",
+    "name": "Exploitation of Remote Services",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Lateral Movement"
+  },
+  "T1561.001": {
+    "data_sources": [],
+    "description": "Adversaries may overwrite the contents of storage devices to interrupt availability.",
+    "id": "T1561.001",
+    "name": "Disk Content Wipe",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Impact"
+  },
+  "T1561.002": {
+    "data_sources": [],
+    "description": "Adversaries may corrupt disk structures that are necessary to boot systems or access stored data.",
+    "id": "T1561.002",
+    "name": "Disk Structure Wipe",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Impact"
+  },
+  "T1602.001": {
+    "data_sources": [],
+    "description": "Adversaries may collect network device information through Simple Network Management Protocol.",
+    "id": "T1602.001",
+    "name": "SNMP",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Collection"
+  },
+  "T1602.002": {
+    "data_sources": [],
+    "description": "Adversaries may collect configuration data from network devices.",
+    "id": "T1602.002",
+    "name": "Network Device Configuration Dump",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Collection"
+  },
+  "T1622": {
+    "data_sources": [],
+    "description": "Adversaries may employ various means to detect and avoid debugging environments.",
+    "id": "T1622",
+    "name": "Debugger Evasion",
+    "source": "official-mitre-attack-v19.1",
+    "tactic": "Defense Evasion"
+  },
   "T1003.002": {
     "data_sources": [],
     "description": "Adversaries may attempt to extract credential material from the Security Account Manager (SAM) database either through in-memory techniques or through the Windows Registry where the SAM database is stored. The SAM is a database file that contains local accounts for the host, typically those found with the <code>net user</code> command. Enumerating the SAM database requires SYSTEM level access.\n\nA number of tools can be used to retrieve the SAM file through in-memory techniques:\n\n* pwdumpx.exe\n* [gsecdump](https://attack.mitre.org/software/S0008)\n* [Mimikatz](https://attack.mitre.org/software/S0002)\n* secretsdump.py\n\nAlternatively, the SAM can be extracted from the Registry with Reg:\n\n* <code>reg save HKLM\\sam sam</code>\n* <code>reg save HKLM\\system system</code>\n\nCreddump7 can then be used to process the SAM database locally to retrieve hashes.(Citation: GitHub Creddump7)\n\nNotes: \n\n* RID 500 account is the local, built-in administrator.\n* RID 501 is the guest account.\n* User accounts start with a RID of 1,000+.",

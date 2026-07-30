@@ -277,7 +277,10 @@ class ScheduleRequest(BaseModel):
     target_ids: list[str] = Field(default_factory=list, max_length=500)
     title: str = Field(default="", max_length=500)
     schedule_scope: str = Field(default="individual", pattern="^(individual|severity|catalog)$")
-    severity: str | None = Field(default=None, pattern="^(all|low|medium|high|critical)$")
+    severity: str | None = Field(
+        default=None,
+        pattern="^(all|unrated|low|medium|high|critical)$",
+    )
     time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     frequency: str = Field(default="daily", pattern="^(minutes|hourly|daily)$")
     interval: int = Field(default=1, ge=1, le=59)
@@ -1424,12 +1427,95 @@ async def _hypothesis_schedule_targets(target_ids: list[str], severity: str | No
     return targets
 
 
+async def _active_hypothesis_catalog() -> dict[str, dict[str, Any]]:
+    """Resolve the current catalog once for schedule display/execution."""
+    upstream = await _upstream("GET", "/hypotheses")
+    config = read_config()
+    return {
+        str(item.get("id")): item
+        for item in [
+            *(upstream if isinstance(upstream, list) else []),
+            *config.get("custom_hypotheses", []),
+        ]
+        if isinstance(item, dict) and item.get("id")
+    }
+
+
+def _reconcile_hypothesis_schedule(
+    item: dict[str, Any],
+    catalog: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Return a recoverable catalog view without mutating stored schedules."""
+    scheduled_ids = list(dict.fromkeys(
+        str(target_id)
+        for target_id in (
+            item.get("target_ids")
+            or [
+                target.get("id")
+                for target in item.get("hypothesis_targets") or []
+            ]
+            or [item.get("target_id")]
+        )
+        if target_id
+    ))
+    active_ids = [target_id for target_id in scheduled_ids if target_id in catalog]
+    targets = []
+    for target_id in active_ids:
+        source = catalog[target_id]
+        targets.append({
+            "id": target_id,
+            "title": str(
+                source.get("title") or source.get("text") or target_id
+            )[:500],
+            "severity": hypothesis_severity(source),
+            "hypothesis_text": (
+                source.get("text", "") if source.get("custom") else ""
+            ),
+            "hypothesis_tactic": (
+                source.get("tactic", "") if source.get("custom") else ""
+            ),
+            "hypothesis_technique": (
+                source.get("technique", "") if source.get("custom") else ""
+            ),
+        })
+
+    reconciled = dict(item)
+    reconciled.update({
+        "target_ids": active_ids,
+        "hypothesis_targets": targets,
+        "target_count": len(active_ids),
+        "catalog_reconciliation": {
+            "scheduled_target_count": len(scheduled_ids),
+            "active_target_count": len(active_ids),
+            "removed_target_count": len(scheduled_ids) - len(active_ids),
+        },
+    })
+    if active_ids:
+        reconciled["target_id"] = active_ids[0]
+    if len(active_ids) != len(scheduled_ids):
+        title = str(item.get("title") or "Hypothesis schedule")
+        reconciled["title"] = re.sub(
+            r"\(\d+\s+hypotheses\)",
+            f"({len(active_ids)} active hypotheses)",
+            title,
+            flags=re.IGNORECASE,
+        )
+    return reconciled
+
+
 @router.get("/settings/schedules/{kind}")
 async def list_schedules(kind: str, request: Request):
     require_feature(request, "settings", sme_only=True)
     if kind not in {"hypothesis", "sigma", "yara"}:
         raise HTTPException(status_code=404, detail="Unknown schedule type")
-    return _schedule_collection(read_config(), kind)
+    schedules = _schedule_collection(read_config(), kind)
+    if kind != "hypothesis":
+        return schedules
+    catalog = await _active_hypothesis_catalog()
+    return [
+        _reconcile_hypothesis_schedule(item, catalog)
+        for item in schedules
+    ]
 
 
 @router.post("/settings/schedules/{kind}", status_code=201)
@@ -2379,12 +2465,24 @@ async def _execute_schedule_unlocked(item: dict[str, Any]) -> None:
             status = str(result.get("status", "completed"))
             result_summary = result
         else:
+            item = _reconcile_hypothesis_schedule(
+                item,
+                await _active_hypothesis_catalog(),
+            )
             all_targets = item.get("hypothesis_targets") or [{
                 "id": item["target_id"],
                 "hypothesis_text": item.get("hypothesis_text"),
                 "hypothesis_tactic": item.get("hypothesis_tactic", ""),
                 "hypothesis_technique": item.get("hypothesis_technique", ""),
             }]
+            if not all_targets:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This schedule has no targets in the active hypothesis "
+                        "catalog. Review or replace the schedule."
+                    ),
+                )
             try:
                 duration_rows, last_run_rows = await asyncio.gather(
                     _upstream("GET", "/hypotheses/duration-stats"),

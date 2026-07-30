@@ -5,9 +5,11 @@ import json
 from typing import Any
 
 from services.agents.decision import AgentDecisionError, decide_json
+from services.hunting.evidence_selector import _model_record
 from services.hunting.query_generator import validate_and_normalize_query
 from services.mcp.mcp_client import call_tool
 from services.orchestration.state import HuntState
+from services.runtime_config import get_value
 
 
 # This is the governed evidence pipeline, not an investigative conclusion.
@@ -31,9 +33,13 @@ REQUIRED_ORDER = [
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
-        "rationale": {"type": "string"},
-        "risk_focus": {"type": "array", "items": {"type": "string"}},
-        "initial_objective": {"type": "string"},
+        "rationale": {"type": "string", "maxLength": 1200},
+        "risk_focus": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 300},
+            "maxItems": 8,
+        },
+        "initial_objective": {"type": "string", "maxLength": 1200},
         "source_priority": {
             "type": "array",
             "items": {"type": "string"},
@@ -85,9 +91,23 @@ Follow an experienced hunter process:
   source capability, expected event density, and available resource bounds;
 - state an initial objective that tells the Query Generation Agent what
   evidence to retrieve, not a raw query;
+- keep the rationale to three concise sentences;
+- keep lookback and result limits only in their dedicated numeric fields, not
+  in initial_objective;
 - do not invent observables or assume that an ATT&CK mapping proves activity.
 
 Return only schema-valid JSON."""
+
+
+def _decision_token_budget() -> int:
+    return max(128, min(
+        2048,
+        int(get_value(
+            "autonomy",
+            "supervisor_decision_num_predict",
+            default=512,
+        )),
+    ))
 
 REPLAN_SYSTEM = """You are THOS's senior adaptive threat-hunt supervisor. You
 alone decide whether the investigation needs another retrieval step or can
@@ -121,6 +141,63 @@ def _selected_sources(state: HuntState) -> list[str]:
         )
         if str(source).strip()
     ))
+
+
+def _compact_context_items(
+    items,
+    *,
+    item_cap: int | None = None,
+    char_cap: int | None = None,
+) -> list:
+    """Bound model context while keeping the authoritative hunt state intact."""
+    maximum_items = max(1, int(item_cap or get_value(
+        "autonomy", "supervisor_context_item_cap", default=8
+    )))
+    maximum_chars = max(400, int(char_cap or get_value(
+        "autonomy", "supervisor_context_char_cap", default=1400
+    )))
+    return [
+        _model_record(item, maximum_chars)
+        if isinstance(item, dict)
+        else str(item)[:maximum_chars]
+        for item in list(items or [])[:maximum_items]
+    ]
+
+
+def _compact_hunt_memory(items) -> list[dict[str, Any]]:
+    """Project prior hunts to decision-relevant conclusions, never raw telemetry."""
+    fields = (
+        "hunt_id",
+        "hypothesis_id",
+        "hypothesis_text",
+        "technique_id",
+        "technique_name",
+        "summary",
+        "reasoning_summary",
+        "findings",
+        "recommendations",
+        "status",
+        "completed_at",
+        "similarity",
+    )
+    projected = [
+        {
+            field: item[field]
+            for field in fields
+            if isinstance(item, dict)
+            and item.get(field) not in (None, "", [], {})
+        }
+        for item in list(items or [])
+        if isinstance(item, dict)
+    ]
+    return _compact_context_items(
+        projected,
+        item_cap=int(get_value(
+            "autonomy",
+            "supervisor_memory_item_cap",
+            default=4,
+        )),
+    )
 
 
 def _observed_entities(
@@ -256,6 +333,19 @@ async def plan_hunt_node(state: HuntState) -> dict:
     sources = _selected_sources(state)
     max_lookback = max(1, int(state.get("max_lookback_minutes") or 10080))
     max_limit = max(1, int(state.get("max_query_limit") or 2000))
+    plan_schema = {
+        **PLAN_SCHEMA,
+        "properties": {
+            **PLAN_SCHEMA["properties"],
+            "source_priority": {
+                "type": "array",
+                "items": {"type": "string", "enum": sources},
+                "minItems": len(sources),
+                "maxItems": len(sources),
+                "uniqueItems": True,
+            },
+        },
+    }
 
     def validate(payload: dict[str, Any]) -> dict[str, Any]:
         source_priority = [
@@ -299,14 +389,17 @@ async def plan_hunt_node(state: HuntState) -> dict:
                 state.get("investigation_requirements") or {}
             ),
             "selected_sources": sources,
-            "hunt_memory": state.get("hunt_memory") or [],
+            "hunt_memory": _compact_hunt_memory(
+                state.get("hunt_memory") or []
+            ),
             "resource_bounds": {
                 "max_lookback_minutes": max_lookback,
                 "max_query_limit": max_limit,
             },
-        }, indent=2, default=str),
-        schema=PLAN_SCHEMA,
+        }, ensure_ascii=False, separators=(",", ":"), default=str),
+        schema=plan_schema,
         validator=validate,
+        num_predict=_decision_token_budget(),
     )
     return {
         "plan": list(REQUIRED_ORDER),
@@ -346,6 +439,27 @@ async def adaptive_replan_node(state: HuntState) -> dict:
     max_lookback = max(1, int(state.get("max_lookback_minutes") or 10080))
     max_limit = max(1, int(state.get("max_query_limit") or 2000))
     diagnostics = state.get("source_diagnostics") or {}
+    coverage_rows = (
+        (state.get("coverage_assessment") or {}).get("data_sources") or []
+    )
+    uncovered_data_sources = list(dict.fromkeys(
+        str(row.get("data_source") or "").strip()
+        for row in coverage_rows
+        if isinstance(row, dict)
+        and row.get("status") != "covered"
+        and str(row.get("data_source") or "").strip()
+    ))
+    if not uncovered_data_sources:
+        uncovered_data_sources = list(dict.fromkeys(
+            str(source).strip()
+            for source in (
+                (state.get("investigation_requirements") or {}).get(
+                    "required_data_sources"
+                )
+                or []
+            )
+            if str(source).strip()
+        ))
     unqueried = [
         source
         for source in sources
@@ -390,10 +504,13 @@ async def adaptive_replan_node(state: HuntState) -> dict:
         "selected_sources": sources,
         "unqueried_sources": unqueried,
         "source_diagnostics": diagnostics,
-        "retrieval_attempts": state.get("retrieval_attempts") or [],
+        "retrieval_attempts": _compact_context_items(
+            state.get("retrieval_attempts") or []
+        ),
         "telemetry_profile": state.get("telemetry_profile") or {},
         "coverage_assessment": state.get("coverage_assessment") or {},
         "coverage_gaps": state.get("coverage_gaps") or [],
+        "required_data_sources": uncovered_data_sources,
         "evidence_counts": {
             "detection_rule_matches": int(
                 state.get("sigma_matched_count") or 0
@@ -407,7 +524,9 @@ async def adaptive_replan_node(state: HuntState) -> dict:
             "ioc_matches": len(state.get("enrichment_hits") or []),
         },
         "observed_entities": _observed_entities(state),
-        "prior_supervisor_decisions": state.get("replan_history") or [],
+        "prior_supervisor_decisions": _compact_context_items(
+            state.get("replan_history") or []
+        ),
         "resource_bounds": {
             "remaining_refinements": maximum - prior,
             "max_lookback_minutes": max_lookback,
@@ -421,6 +540,7 @@ async def adaptive_replan_node(state: HuntState) -> dict:
             prompt=json.dumps(context, indent=2, default=str)[:120000],
             schema=REPLAN_SCHEMA,
             validator=validate,
+            num_predict=_decision_token_budget(),
         )
     except AgentDecisionError as exc:
         return {

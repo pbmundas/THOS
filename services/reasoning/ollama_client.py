@@ -14,8 +14,15 @@ async def generate(
     format: str | dict = "json",
     agent: str = "reasoning",
     transport_retries: int | None = None,
+    num_predict: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> str:
     target = target_for(agent)
+    completion_limit = (
+        target.num_predict
+        if num_predict is None
+        else max(64, min(int(num_predict), target.num_predict))
+    )
     payload = {
         "model": target.model,
         "prompt": prompt,
@@ -34,7 +41,7 @@ async def generate(
         # room to finish instead of being cut off by an output cap.
         "options": {
             "num_ctx": target.num_ctx,
-            "num_predict": target.num_predict,
+            "num_predict": completion_limit,
             "temperature": 0,
         },
         "keep_alive": os.environ.get(f"THOS_{target.tier.upper()}_KEEP_ALIVE", "30m"),
@@ -62,10 +69,15 @@ async def generate(
         payload["system"] = system
 
     async def _do_request():
-        timeout = float(os.environ.get(
-            f"THOS_{target.tier.upper()}_GENERATION_TIMEOUT_SECONDS",
-            os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"),
-        ))
+        timeout = max(
+            1.0,
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(os.environ.get(
+                f"THOS_{target.tier.upper()}_GENERATION_TIMEOUT_SECONDS",
+                os.environ.get("OLLAMA_GENERATION_TIMEOUT_SECONDS", "180"),
+            )),
+        )
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{target.host}/api/generate", json=payload)
             if resp.is_error:

@@ -173,6 +173,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media (max-width: 900px) { .intel-summary { grid-template-columns: 1fr; }.intel-controls { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 640px) { .intel-controls { grid-template-columns: 1fr; }.intel-pagination { justify-content: space-between; } }
 .specialist-chip { color: #075985; background: #ecfeff; }
+.hypothesis-techniques { margin: 7px 0 0; color: #475467; font-size: 9px; line-height: 1.45; }
+.hypothesis-techniques strong { color: #344054; }
+.reader-techniques { margin-top: 12px; padding: 8px 10px; border: 1px solid #dbeafe; border-radius: 8px; background: #eff6ff; }
 .help-page { max-width: 1280px; margin: 0 auto; }
 .help-heading { margin-bottom: 18px; }
 .help-search { display: flex; align-items: center; gap: 10px; padding: 0 16px; min-height: 48px; border: 1px solid var(--soc-line); border-radius: 12px; background: var(--soc-panel); box-shadow: 0 2px 8px rgb(16 24 40 / 4%); }
@@ -601,3 +604,23 @@ body { font-size: var(--soc-body-size); line-height: 1.55; }
   .memory-integrity > span { grid-column: 2; text-align: left; }
   .memory-offsets > div { grid-template-columns: 90px 90px minmax(160px, 1fr); }
 }
+
+.level-unrated { color: #475467; border-color: #d0d5dd; background: #f9fafb; }
+
+.hunt-lock-chevron { width: 18px; margin-left: auto; flex: 0 0 auto; transition: transform .18s ease; }
+.hunt-lock-alert.expanded { color: #fff; border-color: #4338ca; background: #4338ca; box-shadow: 0 8px 24px rgb(67 56 202 / 18%); }
+.hunt-lock-alert.expanded:hover { border-color: #3730a3; background: #3730a3; }
+.hunt-lock-alert.expanded small { color: #e0e7ff; }
+.hunt-lock-alert.expanded .hunt-lock-chevron { transform: rotate(90deg); }
+.hunt-lock-alert + .hunt-console { margin-top: 0; margin-bottom: 22px; }
+
+.hypothesis-risk {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  color: #312e81;
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  background: #eef2ff;
+}
+.hypothesis-risk p { margin: 6px 0; }
+.hypothesis-risk small { color: #4338ca; line-height: 1.5; }

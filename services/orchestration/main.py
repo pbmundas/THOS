@@ -870,9 +870,10 @@ _NEXT_PIPELINE_NODE = {
     "query_gen": "siem_fetch", "siem_fetch": "log_processing",
     "log_processing": "guardrail", "guardrail": "soc_tools",
     "soc_tools": "coverage_gap", "coverage_gap": "threat_intel",
-    "threat_intel": "negative_screening_gate",
-    "negative_screening_gate": "adaptive_replan",
-    "adaptive_replan": "reasoning", "verifier": "detection_engineering",
+    "threat_intel": "adaptive_replan",
+    "adaptive_replan": "negative_screening_gate",
+    "negative_screening_gate": "reasoning",
+    "verifier": "detection_engineering",
     "detection_engineering": "communication", "communication": "report",
 }
 
@@ -884,7 +885,7 @@ def _next_pipeline_node(completed_node: str, state: dict) -> str | None:
     if completed_node == "negative_screening_gate":
         from services.orchestration.graph import route_after_negative_screening
         route = route_after_negative_screening(state)
-        return None if route == "no_evidence" else "adaptive_replan"
+        return None if route == "no_evidence" else "reasoning"
     if completed_node == "reasoning":
         from services.orchestration.graph import route_after_reasoning
         route = route_after_reasoning(state)

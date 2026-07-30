@@ -78,8 +78,13 @@ def get_pg_pool() -> ConnectionPool:
     return _pg_pool
 
 
-async def ollama_generate(prompt: str, model: str = None, system: str = None,
-                          agent: str = "query_gen") -> str:
+async def ollama_generate(
+    prompt: str,
+    model: str = None,
+    system: str = None,
+    agent: str = "query_gen",
+    format: str | dict | None = None,
+) -> str:
     """Call the local Ollama server for generation (used by query_generator, reasoning helpers)."""
     target = target_for(agent)
     model = model or target.model
@@ -97,6 +102,8 @@ async def ollama_generate(prompt: str, model: str = None, system: str = None,
     }
     if system:
         payload["system"] = system
+    if format is not None:
+        payload["format"] = format
 
     async def _do_request():
         timeout = float(os.environ.get(

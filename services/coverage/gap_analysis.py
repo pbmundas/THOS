@@ -6,8 +6,10 @@ import json
 from typing import Any
 
 from services.agents.decision import AgentDecisionError, decide_json
+from services.hunting.evidence_selector import _model_record
 from services.knowledge import mitre
 from services.orchestration.state import HuntState
+from services.runtime_config import get_value
 
 
 COVERAGE_SCHEMA = {
@@ -129,7 +131,98 @@ async def coverage_gap_node(state: HuntState) -> dict:
                 "data-source mapping in the local technique catalog."
             ],
         }
-    known_refs = {f"record:{index}" for index in range(len(logs))}
+    if not logs:
+        rows = [{
+            "data_source": source,
+            "status": "unknown",
+            "confidence": "low",
+            "reason": (
+                "No retrieved telemetry record was available to demonstrate "
+                f"{source} coverage; a zero-result query cannot establish "
+                "whether collection, retention, parsing, or scope is adequate."
+            ),
+            "evidence_refs": [],
+            "missing_requirements": [
+                f"Retrieved and cited {source} telemetry records",
+            ],
+        } for source in required_sources]
+        factual_gaps = []
+        for source in selected_sources:
+            diagnostic = diagnostics.get(source) or {}
+            if not diagnostic:
+                factual_gaps.append(
+                    f"Selected telemetry source `{source}` has not been queried."
+                )
+            elif diagnostic.get("status") in {
+                "unavailable", "query_generation_failed",
+            }:
+                factual_gaps.append(
+                    f"Selected telemetry source `{source}` could not be "
+                    f"evaluated: {diagnostic.get('error') or diagnostic.get('status')}."
+                )
+            else:
+                factual_gaps.append(
+                    f"Selected telemetry source `{source}` returned no records "
+                    "for the governed query scope; coverage remains unknown."
+                )
+        return {
+            "coverage_assessment": {
+                "technique_id": technique_id,
+                "technique_name": (
+                    technique.get("name")
+                    or state.get("technique_name")
+                    or ""
+                ),
+                "status": "unknown",
+                "required_source_count": len(rows),
+                "covered_source_count": 0,
+                "partial_source_count": 0,
+                "unavailable_source_count": 0,
+                "data_sources": rows,
+                "observed_device_types": {},
+                "observed_event_categories": {},
+                "decision_owner": "deterministic_empty_telemetry",
+                "degraded": False,
+                "error": "",
+            },
+            "coverage_gaps": list(dict.fromkeys(factual_gaps)),
+        }
+    evidence_selection = (
+        (state.get("enrichment") or {}).get("evidence_selection") or {}
+    )
+    selected_indices = [
+        int(item["record_index"])
+        for item in evidence_selection.get("evidence") or []
+        if isinstance(item.get("record_index"), int)
+        and 0 <= int(item["record_index"]) < len(logs)
+    ]
+    sample_cap = max(
+        1,
+        int(
+            get_value(
+                "autonomy",
+                "coverage_model_record_cap",
+                default=12,
+            )
+        ),
+    )
+    record_char_cap = max(
+        500,
+        int(
+            get_value(
+                "autonomy",
+                "coverage_record_char_cap",
+                default=1800,
+            )
+        ),
+    )
+    sample_indices = []
+    for index in [*selected_indices, *range(len(logs))]:
+        if index not in sample_indices:
+            sample_indices.append(index)
+        if len(sample_indices) >= sample_cap:
+            break
+    known_refs = {f"record:{index}" for index in sample_indices}
 
     def validate(payload: dict[str, Any]) -> dict[str, Any]:
         rows = payload.get("data_sources")
@@ -173,13 +266,9 @@ async def coverage_gap_node(state: HuntState) -> dict:
     record_sample = [
         {
             "_coverage_ref": f"record:{index}",
-            **{
-                key: value
-                for key, value in record.items()
-                if key not in {"_raw"} and value not in (None, "", [], {})
-            },
+            **_model_record(logs[index], record_char_cap),
         }
-        for index, record in enumerate(logs[:300])
+        for index in sample_indices
     ]
     prompt = (
         f"Technique: {technique_id} {technique.get('name') or ''}\n"
@@ -193,12 +282,37 @@ async def coverage_gap_node(state: HuntState) -> dict:
         f"Referenced record sample:\n{json.dumps(record_sample, default=str)[:100000]}"
     )
     try:
+        schema = json.loads(json.dumps(COVERAGE_SCHEMA))
+        sources_schema = schema["properties"]["data_sources"]
+        sources_schema["minItems"] = len(required_sources)
+        sources_schema["maxItems"] = len(required_sources)
+        row_properties = sources_schema["items"]["properties"]
+        row_properties["reason"]["maxLength"] = 400
+        row_properties["evidence_refs"]["maxItems"] = sample_cap
+        row_properties["missing_requirements"]["maxItems"] = 4
+        row_properties["missing_requirements"]["items"]["maxLength"] = 300
+        schema["properties"]["gaps"]["maxItems"] = 6
+        schema["properties"]["gaps"]["items"]["maxLength"] = 400
         decision = await decide_json(
             agent="coverage_gap",
             system=SYSTEM_PROMPT,
             prompt=prompt,
-            schema=COVERAGE_SCHEMA,
+            schema=schema,
             validator=validate,
+            attempts=int(
+                get_value(
+                    "autonomy",
+                    "coverage_decision_attempts",
+                    default=2,
+                )
+            ),
+            num_predict=int(
+                get_value(
+                    "autonomy",
+                    "coverage_decision_num_predict",
+                    default=640,
+                )
+            ),
         )
         degraded = False
         error = ""

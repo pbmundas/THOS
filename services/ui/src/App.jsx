@@ -247,6 +247,11 @@ function readableHypothesisText(value) {
   return String(value).replace(/<\/?br\s*\/?>/gi, "\n").trim();
 }
 
+function hypothesisTechniqueNames(item = {}) {
+  const names = Array.isArray(item.technique_names) ? item.technique_names : [];
+  return names.length ? names : [item.technique].filter(Boolean);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) {
@@ -277,6 +282,54 @@ function EmptyState({ icon: Icon, title, body }) {
       <h3>{title}</h3>
       <p>{body}</p>
     </div>
+  );
+}
+
+function HuntProgressPanel({
+  running,
+  huntError,
+  finalState,
+  lastRun,
+  huntLocked,
+  huntTitle,
+  huntId,
+  activeNode,
+  activeAgent,
+  completedModules,
+  workflowTimestamp,
+  expandedNode,
+  setExpandedNode,
+  progress,
+  runHunt,
+  openLatestHuntReport,
+}) {
+  return (
+    <section className="hunt-console panel" id="hunt-progress-details">
+      <div className="console-header">
+        <div><StatusPill tone={running ? "amber" : huntError ? "red" : "green"}>{running ? <ClockIcon /> : huntError ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}{running ? "Hunt running" : huntError ? "Needs attention" : "Hunt completed"}</StatusPill><h2>{huntTitle}</h2><p>{huntId ? `Hunt ${huntId}` : "Waiting for hunt identifierâ€¦"}</p></div>
+        <div className="console-actions">
+          {huntError && lastRun && !huntLocked && <button className="secondary-button" onClick={() => runHunt(lastRun)}><ArrowPathIcon /> Retry hunt</button>}
+          {finalState?.report_path && <button className="primary-button" onClick={openLatestHuntReport}><DocumentTextIcon /> View report</button>}
+        </div>
+      </div>
+      {huntError && <div className="alert error-alert"><ExclamationTriangleIcon />{huntError}</div>}
+      <button className="pipeline-overview" onClick={() => activeNode && setExpandedNode(expandedNode === activeNode ? "" : activeNode)} disabled={!activeNode}>
+        <span className="pipeline-overview-copy"><strong>{activeNode ? `Running: ${activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}` : finalState ? "Agent workflow complete" : "Preparing agent workflow"}</strong><small>{completedModules} agent stage(s) completed</small></span>
+        <span className="pipeline-timestamp"><ClockIcon /> Latest local update</span><time>{workflowTimestamp}</time>
+      </button>
+      {expandedNode && expandedNode === activeNode && <div className="module-detail active-detail"><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{activeAgent?.activity || NODE_REASONS[activeNode] || "This agent is processing the current hunt state."}</p><code>{activeAgent?.model_name ? `Model: ${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "Model: none (deterministic/tool stage)"}</code></div>}
+      <div className="progress-list">
+        {progress.map((item, index) => (
+          <div className="progress-entry" key={item.id || `${item.node}-${index}`}><button className="progress-row" onClick={() => setExpandedNode(expandedNode === `${item.node}-${index}` ? "" : `${item.node}-${index}`)}>
+            <span className="progress-check"><CheckCircleIcon /></span>
+            <div><strong>{item.agentName}</strong><p>{item.reason}</p><small>{item.label} Â· {item.modelName ? `${item.modelName} (${item.modelTier} tier)` : "deterministic/tool stage"}</small></div>
+            <time title="Local completion timestamp">{item.completedAt}</time>
+          </button>{expandedNode === `${item.node}-${index}` && <div className="module-detail"><pre>{JSON.stringify(item.details, null, 2)}</pre></div>}</div>
+        ))}
+        {running && activeNode && <button className="progress-row current" onClick={() => setExpandedNode(expandedNode === activeNode ? "" : activeNode)}><span className="pulse-ring" /><div><strong>{activeAgent?.agent_name || NODE_LABELS[activeNode] || activeNode}</strong><p>{NODE_REASONS[activeNode] || "Agent is working on the current hunt state."}</p><small>{activeAgent?.model_name ? `${activeAgent.model_name} (${activeAgent.model_tier} tier)` : "deterministic/tool stage"}</small></div><time>running</time></button>}
+      </div>
+      {finalState?.reasoning_summary && !finalState.reasoning_failed && <div className="result-summary"><h3>Verified conclusion</h3><p>{finalState.reasoning_summary}</p></div>}
+    </section>
   );
 }
 
@@ -376,6 +429,7 @@ function App() {
   const [activeNode, setActiveNode] = useState("");
   const [activeAgent, setActiveAgent] = useState(null);
   const [expandedNode, setExpandedNode] = useState("");
+  const [showHuntProgress, setShowHuntProgress] = useState(false);
   const [huntError, setHuntError] = useState("");
   const [finalState, setFinalState] = useState(null);
   const [lastRun, setLastRun] = useState(null);
@@ -579,14 +633,26 @@ function App() {
       if (severity !== "all" && (item.severity || "medium") !== severity) return false;
       if (tactic !== "All tactics" && item.tactic !== tactic) return false;
       if (!needle) return true;
-      return [item.id, item.title, item.tactic, item.technique, item.text]
+      return [
+        item.id,
+        item.title,
+        item.tactic,
+        item.technique,
+        item.text,
+        ...(Array.isArray(item.technique_names) ? item.technique_names : []),
+        ...(Array.isArray(item.tags) ? item.tags : []),
+        item.severity,
+        item.severity_rationale,
+        ...(item.risk_parameters?.impact_domains || []),
+        ...(item.risk_parameters?.asset_classes || []),
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
   }, [hypotheses, query, tactic, severity]);
 
   const groupedHypotheses = useMemo(
-    () => ["critical", "high", "medium", "low"]
+    () => ["critical", "high", "medium", "low", "unrated"]
       .map((type) => ({
         severity: type,
         items: filteredHypotheses.filter((item) => (item.severity || "medium") === type),
@@ -628,6 +694,7 @@ function App() {
     setActiveNode("");
     setActiveAgent(null);
     setExpandedNode("");
+    setShowHuntProgress(false);
     setHuntError("");
     setFinalState(null);
 
@@ -777,8 +844,10 @@ function App() {
     setSidebarOpen(false);
   };
   const openHuntProgress = () => {
+    const shouldOpen = !showHuntProgress;
+    setShowHuntProgress(shouldOpen);
     navigate("hunts", "", { id: huntId });
-    window.requestAnimationFrame(() => {
+    if (shouldOpen) window.requestAnimationFrame(() => {
       document.getElementById("hunt-progress-details")?.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -873,7 +942,7 @@ function App() {
               <div className="field search-field">
                 <label htmlFor="hypothesis-search">Search hypotheses</label>
                 <span><MagnifyingGlassIcon /></span>
-                <input id="hypothesis-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by title, ID, tactic, technique, or text…" />
+                <input id="hypothesis-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by title, ID, tactic, technique name, tag, or text…" />
                 {query && <button onClick={() => setQuery("")} aria-label="Clear search"><XMarkIcon /></button>}
               </div>
               <div className="field">
@@ -885,7 +954,7 @@ function App() {
               <div className="field compact-field">
                 <label htmlFor="hypothesis-severity">Severity</label>
                 <select id="hypothesis-severity" value={severity} onChange={(event) => setSeverity(event.target.value)}>
-                  <option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+                  <option value="all">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="unrated">Unrated</option>
                 </select>
               </div>
               <div className="field compact-field">
@@ -910,7 +979,25 @@ function App() {
             </section>
 
             {hypothesisError && <div className="alert error-alert"><ExclamationTriangleIcon />{hypothesisError}</div>}
-            {huntLocked && <button type="button" className="alert hunt-lock-alert" onClick={openHuntProgress}><ClockIcon /><span><strong>One hunt is already running.</strong><small>View the timestamped progress details and execution flow.</small></span></button>}
+            {huntLocked && <button type="button" className={`alert hunt-lock-alert ${showHuntProgress ? "expanded" : ""}`} aria-expanded={showHuntProgress} aria-controls="hunt-progress-details" onClick={openHuntProgress}><ClockIcon /><span><strong>One hunt is already running.</strong><small>{showHuntProgress ? "Hide timestamped progress details." : "View the timestamped progress details and execution flow."}</small></span><ChevronRightIcon className="hunt-lock-chevron" /></button>}
+            {huntLocked && showHuntProgress && <HuntProgressPanel
+              running={running}
+              huntError={huntError}
+              finalState={finalState}
+              lastRun={lastRun}
+              huntLocked={huntLocked}
+              huntTitle={huntTitle}
+              huntId={huntId}
+              activeNode={activeNode}
+              activeAgent={activeAgent}
+              completedModules={completedModules}
+              workflowTimestamp={workflowTimestamp}
+              expandedNode={expandedNode}
+              setExpandedNode={setExpandedNode}
+              progress={progress}
+              runHunt={runHunt}
+              openLatestHuntReport={openLatestHuntReport}
+            />}
             {loadingHypotheses ? (
               <div className="tile-grid">{Array.from({ length: 6 }).map((_, index) => <div className="hypothesis-tile tile-skeleton" key={index} />)}</div>
             ) : filteredHypotheses.length ? (
@@ -929,6 +1016,7 @@ function App() {
                         <span className={`detection-level level-${item.severity || "medium"}`}>{item.severity || "medium"}</span>
                       </div>
                       <h3>{item.title}</h3>
+                      <p className="hypothesis-techniques"><strong>ATT&amp;CK technique names:</strong> {hypothesisTechniqueNames(item).join(" · ")}</p>
                       <p className="hypothesis-copy">{readableHypothesisText(item.text)}</p>
                       {item.last_ran_at && <p className="tile-last-run"><ClockIcon /> Last ran {new Date(item.last_ran_at).toLocaleString()}</p>}
                       <div className="tile-footer">
@@ -945,7 +1033,7 @@ function App() {
               </div>
             ) : <EmptyState icon={MagnifyingGlassIcon} title={severity === "all" ? "No hypotheses match" : `No ${severity} severity hypotheses match`} body="Try another keyword, tactic, or severity type." />}
 
-            {(running || huntId || huntError || finalState) && (
+            {!huntLocked && (running || huntId || huntError || finalState) && (
               <section className="hunt-console panel" id="hunt-progress-details">
                 <div className="console-header">
                   <div><StatusPill tone={running ? "amber" : huntError ? "red" : "green"}>{running ? <ClockIcon /> : huntError ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}{running ? "Hunt running" : huntError ? "Needs attention" : "Hunt completed"}</StatusPill><h2>{huntTitle}</h2><p>{huntId ? `Hunt ${huntId}` : "Waiting for hunt identifier…"}</p></div>
@@ -1056,7 +1144,9 @@ function App() {
       </main>
       {readingHypothesis && <div className="hypothesis-reader-backdrop" role="presentation" onClick={() => setReadingHypothesis(null)}><section className="hypothesis-reader" role="dialog" aria-modal="true" aria-label={`Read hypothesis ${readingHypothesis.id}`} onClick={(event) => event.stopPropagation()}>
         <header><div><span className="status-pill status-indigo">{readingHypothesis.id}</span><span className="status-pill status-cyan">{readingHypothesis.technique || "Unmapped"}</span></div><button aria-label="Close hypothesis" onClick={() => setReadingHypothesis(null)}><XMarkIcon /></button></header>
-        <h2>{readingHypothesis.title}</h2><div className="reader-meta"><span><ShieldCheckIcon />{readingHypothesis.tactic || "Unassigned tactic"}</span>{readingHypothesis.last_ran_at && <span><ClockIcon />Last ran {new Date(readingHypothesis.last_ran_at).toLocaleString()}</span>}</div>
+        <h2>{readingHypothesis.title}</h2><div className="reader-meta"><span><ShieldCheckIcon />{readingHypothesis.tactic || "Unassigned tactic"}</span><span className={`detection-level level-${readingHypothesis.severity || "medium"}`}>{readingHypothesis.severity || "medium"} impact · {Number(readingHypothesis.severity_score || 0)}/100</span>{readingHypothesis.last_ran_at && <span><ClockIcon />Last ran {new Date(readingHypothesis.last_ran_at).toLocaleString()}</span>}</div>
+        <div className="hypothesis-techniques reader-techniques"><strong>ATT&amp;CK technique names:</strong> {hypothesisTechniqueNames(readingHypothesis).join(" · ")}</div>
+        {readingHypothesis.severity_rationale && <div className="hypothesis-risk"><strong>Confirmed-finding impact:</strong><p>{readingHypothesis.severity_rationale}</p><small>Context review: {(readingHypothesis.risk_parameters?.review_parameters || []).join(" · ")}</small></div>}
         <article>{readableHypothesisText(readingHypothesis.text)}</article>
         <footer><button className="secondary-button" onClick={() => setReadingHypothesis(null)}>Close</button><button className="primary-button" disabled={huntLocked} onClick={() => { const item = readingHypothesis; setReadingHypothesis(null); runHunt({ hypothesisId: item.id, hypothesisText: item.custom ? item.text : null, hypothesisTactic: item.custom ? item.tactic : "", hypothesisTechnique: item.custom ? item.technique : "", title: `${item.id} · ${item.title}` }); }}><PlayIcon /> Run hypothesis</button></footer>
       </section></div>}

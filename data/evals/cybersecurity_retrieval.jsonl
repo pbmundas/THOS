@@ -8,3 +8,7 @@
 {"id":"purple-validation","domain":"purple_teaming","query":"How can ATT&CK-mapped adversary behavior and detection rules be used to validate defensive coverage?","expected_source_ids":["mitre_attack_enterprise","sigmahq_rules"]}
 {"id":"framework-govern","domain":"frameworks","query":"Which CSF 2.0 function addresses cybersecurity governance?","expected_source_ids":["nist_csf_2"]}
 {"id":"abstain-private-intel","domain":"threat_hunting","query":"What unpublished indicators did a private incident-response company observe today?","expected_source_ids":[],"should_abstain":true}
+{"id":"defensive-countermeasure","domain":"frameworks","query":"Which defensive countermeasure knowledge graph maps defensive techniques and digital artifacts to adversary behavior?","expected_source_ids":["mitre_d3fend"]}
+{"id":"forensic-process","domain":"digital_forensics","query":"What process should an organization follow to integrate computer and network forensic techniques into incident response?","expected_source_ids":["nist_sp_800_86"]}
+{"id":"malware-handling","domain":"malware_analysis","query":"What organizational practices support malware incident prevention and handling?","expected_source_ids":["nist_sp_800_83r1"]}
+{"id":"threat-information-sharing","domain":"threat_intelligence","query":"How should an organization establish and govern cyber threat information sharing?","expected_source_ids":["nist_sp_800_150"]}
