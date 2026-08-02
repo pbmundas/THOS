@@ -17,7 +17,7 @@ def test_repeated_identical_reasoning_uses_cached_completion(monkeypatch):
         lambda namespace, payload, value: stored.__setitem__((namespace, payload), value),
     )
 
-    async def no_kb_context(state):
+    async def no_kb_context(state, **_kwargs):
         return ""
 
     async def fake_generate(*args, **kwargs):
@@ -69,7 +69,7 @@ def test_repeated_identical_reasoning_uses_cached_completion(monkeypatch):
 def test_reasoning_prompt_is_compact_and_preserves_evidence_refs(monkeypatch):
     captured = {}
 
-    async def no_kb_context(state):
+    async def no_kb_context(state, **_kwargs):
         return ""
 
     async def fake_generate(prompt, **kwargs):
@@ -127,11 +127,11 @@ def test_reasoning_prompt_is_compact_and_preserves_evidence_refs(monkeypatch):
     result = asyncio.run(reasoning.reason_node(state))
 
     assert result["reasoning_failed"] is False
-    assert len(captured["prompt"]) < 30000
+    assert len(captured["prompt"]) < 22000
     assert "\"_ref\":0" in captured["prompt"]
     assert "duplicated-detail" not in captured["prompt"]
     assert "duplicated-full-log" not in captured["prompt"]
     assert "duplicated-raw" not in captured["prompt"]
     assert "\"query\":\"normalized_query\"" in captured["prompt"]
-    assert captured["prompt"].count("\"query\":\"normalized_query\"") == 8
+    assert captured["prompt"].count("\"query\":\"normalized_query\"") == 4
     assert captured["kwargs"]["num_predict"] == 512

@@ -1,175 +1,229 @@
-# THOS Hypothesis and Forensic Verification Report
+# THOS Hypothesis, Hunt, and Forensic Verification Report
 
 **Verification date:** 2026-07-30 (Asia/Kolkata)  
 **Environment:** Local Docker THOS deployment  
-**Verification scope:** MCP health, hypothesis execution, hunt-report structure, and forensic regression tests
+**Final H111 hunt ID:** `5e8c0aca-8659-4d6a-b601-2513c91eeb4a`
 
-## Summary
+## Executive Summary
 
-THOS MCP and UI availability were restored by replacing placeholder application
-secrets and recreating the affected services. The `thos-mcp` and `thos-chat-ui`
-containers remained healthy after the fixes, and the rebuilt orchestrator successfully
-authenticated to MCP and retrieved the restored governed hypothesis catalog.
+THOS is operational. The unhealthy `thos-mcp` condition was corrected by replacing
+the rejected placeholder authentication configuration and recreating the affected
+services. At final verification, MCP, Chat UI, Ollama, PostgreSQL, Redis, and Chroma
+were healthy, and the recreated orchestrator returned `{"status":"ok"}`.
 
-The hunt-report renderer now enforces a concise investigation-only section order and
-escapes dynamic values before inserting them into Markdown tables. This prevents
-indicator metadata, rule titles, coverage reasons, and retrieval diagnostics from
-breaking table structure.
+The governed hypothesis catalog is restored to the versioned HEARTH source: 306
+established hypotheses whose identifiers begin with B-, H-, or M-. The previously
+visible total of 422 was not an older authoritative catalog; it combined these 306
+entries with 116 generated, Wazuh-derived `THOS-GAP-*` entries. That vendor-specific
+overlay has been removed.
 
-The complete focused hypothesis, report, forensic, YARA-intake, and gateway regression
-suite passed all 29 tests. A live Wazuh run of hypothesis H111 completed through the
-negative evidence gate and correctly created no report. A positive H013 regression run
-over the existing EVTX corpus did not reach a terminal result within the 30-minute
-client window and was interrupted during deployment of the planner-schema correction;
-no investigative conclusion or hunt report is claimed for that run.
+All 306 retained hypotheses are vendor agnostic, searchable by ATT&CK technique ID and
+human-readable technique name, visible on the Hunt Board and Configuration schedule
+selector, and assigned a deterministic impact severity with a score, rationale, and
+reviewable risk parameters. No hypothesis ID or SIEM vendor is hardcoded into the
+severity classifier.
 
-## Verification Results
+H111 completed successfully against the selected live Wazuh source. It retrieved 181
+records from 375 live matches, analyzed 146 deduplicated records, selected three
+grounded evidence records, completed model reasoning on the first attempt, passed
+citation verification, and generated a structured six-section report. The report
+records the selected source by name because source-specific retrieval and coverage
+diagnostics are required after a user chooses a source; this does not make the
+hypothesis or severity policy vendor specific.
+
+## Final Verification Matrix
 
 | Area | Result | Evidence |
 |---|---|---|
-| `thos-mcp` startup | Pass | Placeholder MCP token was rejected as designed; a unique secret restored startup. |
-| MCP container health | Pass | Container reported `healthy` after recreation and remained healthy during authenticated tool calls. |
-| Orchestrator-to-MCP authentication | Pass | Orchestrator health succeeded and `/hypotheses` returned 306 governed B/H/M entries. |
-| Hypothesis catalog provenance | Pass | The 116 generated Wazuh-only `THOS-GAP-*` entries were removed; the versioned HEARTH B/H/M catalog is authoritative. |
-| Technique-name search | Pass | All 306 entries expose named ATT&CK technique tags in API responses, UI search, and semantic-search documents. |
-| Chat UI startup and login | Pass | The placeholder UI password was rotated, the persisted account hash was updated through the authenticated account API, and a fresh login/session cookie was verified. |
-| UI upstream error handling | Pass | Slow risk analysis has a five-minute timeout; orchestrator timeouts and transport failures now return controlled HTTP 504 and 502 responses. |
-| Hunt report section contract | Pass | Exact top-level order is Summary, Hypothesis and Scope, Telemetry Retrieval, Evidence and Correlation, Findings, and Recommendations. |
-| Markdown table integrity | Pass | Pipes and line breaks in dynamic cells are escaped; nested metadata is rendered as deterministic JSON. |
-| Negative hypothesis gate | Pass | H111 produced `not_generated_no_evidence` with zero model-reasoning attempts and no report. |
-| Positive hypothesis completion | Incomplete | H013 reached the SOC/evidence-selection path over 15 parsed EVTX records but did not finish before the regression run was stopped for deployment. |
-| Forensic integrity failure | Pass | Post-acquisition tampering raises the expected integrity error. |
-| Forensic workflow/report | Pass | Named forensic-agent order, technical-report headings, evidence references, ATT&CK content, limitations, and legal-review text were verified. |
-| Forensic tool safety | Pass | Shell-free invocation, bounded output, content routing, and non-ready catalog filtering were verified. |
-
-## MCP Health Diagnosis and Correction
-
-The failing container log reported:
-
-```text
-RuntimeError: MCP_AUTH_TOKEN must be explicitly configured with a unique secret of at least 24 characters
-```
-
-The configured value had the required length but contained the known `change_me`
-placeholder. THOS correctly rejected it through the fail-closed secret loader. The MCP
-token, orchestrator API key, and UI session secret were rotated to unique values. The
-database and Redis credentials were deliberately left unchanged to avoid invalidating
-persisted services outside this correction.
-
-After recreation:
-
-- `thos-mcp`: healthy
-- MCP Streamable HTTP server: listening on the internal Docker network
-- Orchestrator MCP session: negotiated successfully
-- Governed hypothesis catalog: 306 canonical B/H/M entries returned
-
-Secret values are intentionally omitted from this report.
+| MCP health | Pass | `thos-mcp` reported `healthy` after the final rebuild. |
+| Orchestrator health | Pass | Internal `/health` returned `{"status":"ok"}`. |
+| Chat UI and login | Pass | UI container healthy; fresh analyst login returned HTTP 200. |
+| Catalog provenance | Pass | Exactly 306 canonical B/H/M entries; generated Wazuh gap overlay removed. |
+| ATT&CK search visibility | Pass | Technique IDs and technique names are present in tags and searchable text. |
+| Hunt Board tiles | Pass | All 306 tiles visible; severity counts match the live catalog. |
+| Schedule selector | Pass | All 306 hypotheses visible and filterable in Configuration. |
+| Hunt progress UX | Pass | Running banner appears above tiles; detail is collapsed by default and toggles with a high-contrast control. |
+| Severity coverage | Pass | 306 of 306 hypotheses have severity, score, rationale, and risk parameters. |
+| H111 live hunt | Pass | Completed with model reasoning, evidence-backed finding, verifier pass, and generated report. |
+| Report structure | Pass | Exact top-level order: Summary; Hypothesis and Scope; Telemetry Retrieval; Evidence and Correlation; Findings; Recommendations. |
+| Forensic regressions | Pass | Integrity, workflow, tool-safety, reporting, and related focused regressions passed in the completed suites. |
+| No hardcoded hypothesis logic | Pass | Catalog normalization, literal boundaries, evidence fallback, severity, UI filtering, and scheduling are metadata/configuration driven. |
 
 ## Hypothesis Catalog Restoration
 
-The earlier 422-entry view combined 306 established HEARTH hypotheses with 116
-generated `THOS-GAP-*` hypotheses derived from the Wazuh detection catalog. The
-generated entries were the source of the vendor-specific and repetitive wording.
-They have been removed from runtime merging, startup ingestion, manual refresh,
-benchmarking, and the Chroma collection.
+The mixed 422-entry presentation consisted of:
 
-The restored catalog is:
+| Source | Count |
+|---|---:|
+| Versioned HEARTH B/H/M catalog | 306 |
+| Generated Wazuh-derived `THOS-GAP-*` overlay | 116 |
+| Mixed presentation | 422 |
+
+The authoritative restored catalog contains:
 
 | Family | Count |
 |---|---:|
-| B — Baseline / Embers | 33 |
-| H — Hypothesis-driven / Flames | 247 |
-| M — Model-assisted / Alchemy | 26 |
+| B | 33 |
+| H | 247 |
+| M | 26 |
 | **Total** | **306** |
 
-Every retained entry now exposes:
+The generated overlay and its generator were removed from the runtime catalog path.
+Every retained hypothesis exposes:
 
-- all structured ATT&CK technique IDs available on the source hypothesis;
-- corresponding human-readable technique names;
-- technique IDs and names in the searchable tag set;
-- a `vendor-agnostic` catalog tag;
-- technique names in both client-side UI search and semantic-search documents.
+- its authored B-, H-, or M-prefixed identifier;
+- ATT&CK technique IDs;
+- human-readable ATT&CK technique names;
+- searchable technique ID/name tags;
+- vendor-agnostic metadata;
+- severity, score, rationale, impact domains, affected asset classes, and review
+  parameters.
 
-The few legacy entries whose structured technique field was empty are normalized
-from their authored metadata or a small reviewed legacy mapping. The cross-technique
-M026 alert-triage hypothesis is labeled `Cross-technique Alert Triage` rather than
-being assigned an inaccurate adversary technique.
+Catalog normalization is driven by hypothesis metadata and shared ATT&CK mappings.
+It does not branch on Wazuh, Splunk, Elastic, Sentinel, or another SIEM vendor.
 
-Live verification after re-ingestion:
+## Severity Policy
 
-- Chroma `hearth_kb` count: 306
-- non-B/H/M IDs: 0
-- hypotheses missing technique-name tags: 0
-- hypotheses containing Wazuh-specific catalog content: 0
-- `H013` technique-name tag: `PowerShell`
+Severity represents the potential impact if the hypothesis is successfully hunted and
+the finding is validated. It is not a claim that an incident already occurred.
 
-## Chat UI Health Diagnosis and Correction
+The shared policy evaluates:
 
-The `thos-chat-ui` restart loop reported:
+- ATT&CK tactic base risk;
+- potential confidentiality, integrity, availability, identity, control-plane, and
+  safety impact;
+- likely blast radius;
+- affected asset classes;
+- privilege, persistence, evasion, lateral-movement, exfiltration, and destructive
+  impact factors;
+- analyst-review parameters retained with the result.
 
-```text
-RuntimeError: CHATUI_PASSWORD must be explicitly configured with at least 12 characters
-```
+Live catalog distribution:
 
-The configured value contained the known `change_me` placeholder and was rejected by
-the fail-closed account loader. A unique UI password was configured and the container
-was recreated. Because the analyst account had already been seeded into persistent
-runtime state, its older password hash was then rotated through THOS's authenticated
-`/api/account/password` workflow.
+| Severity | Count |
+|---|---:|
+| Critical | 33 |
+| High | 201 |
+| Medium | 70 |
+| Low | 2 |
+| Unrated | 0 |
 
-Verification after rotation:
+H111 is `medium`, score `55/100`, based on Discovery tactic risk and its potential
+blast radius. The policy contains no hypothesis identifiers and no vendor names.
 
-- `thos-chat-ui`: healthy
-- `/health`: HTTP 200 with `{"status":"ok"}`
-- fresh login: accepted for the configured analyst
-- session: HTTP-only authentication cookie issued and accepted
-- static application assets: served successfully on host port 7860
-- risk API: slow local-model analysis receives a five-minute request budget, with
-  controlled gateway responses for timeouts and connection failures
+Historical saved schedule rotations still show their previously persisted membership
+distribution of 48 critical, 198 high, 58 medium, and 2 low. Those user-owned schedule
+selections were preserved instead of being destructively rewritten. New filtering and
+catalog views use the current 33/201/70/2 distribution.
 
-The active username and password remain stored in `.env`; password values are not
-included in this report.
+## Hunt Board and Schedule UX
 
-## Hypothesis Verification
+The Hunt Board loads the restored 306-entry catalog and renders its tiles with
+technique-name tags, tactic, severity, and risk score. Search matches both technique
+IDs and names.
 
-### H111 — Network Service Discovery (T1046)
+When a hunt is already active:
 
-**Hunt ID:** `d20d296b-62b0-45d3-98fa-c785f6bdecbe`  
-**Source:** Wazuh  
-**Terminal status:** Completed  
-**Report status:** `not_generated_no_evidence`  
-**Reasoning mode:** `deterministic_negative_screening`  
-**Model reasoning attempts:** 0  
-**Report path:** None
+1. the “One hunt is already running.” banner is displayed before the hypothesis tiles;
+2. progress detail remains collapsed by default;
+3. clicking the high-contrast control expands the current stage and progress;
+4. clicking again collapses the detail;
+5. tiles remain visible and searchable beneath the banner.
 
-The source-specific query generator returned an empty query, so the Wazuh source was
-recorded as `query_generation_failed`. No telemetry record reached the evidence gate.
-THOS therefore made no assertion that T1046 activity was absent; it recorded the source
-gap and correctly prohibited model reasoning and report generation.
+Configuration → Hunt Schedules loads the same catalog rather than a separate
+vendor-specific list.
 
-This result validates fail-closed behavior, not the hypothesis itself.
+## H111 End-to-End Verification
 
-### H013 — PowerShell (T1059.001)
+- **Hypothesis:** H111 — Network Service Discovery
+- **ATT&CK:** Network Service Discovery (`T1046`), Discovery
+- **Configured severity:** Medium (`55/100`)
+- **Selected source for this run:** Wazuh
+- **Hunt status:** Completed
+- **Report status:** Generated
+- **Reasoning mode:** Model
+- **Reasoning attempts:** 1
+- **Reasoning failed:** No
+- **Verification failed:** No
 
-**Hunt ID:** `82becaf4-30c8-41ce-a79b-ce4592bab49d`  
-**Source:** Existing local EVTX evidence under `/data/log_sources`  
-**Parsed records:** 15  
-**Last completed stage:** Guardrail  
-**Terminal status:** Failed after controlled orchestrator replacement  
-**Report path:** None
+### Retrieval and evidence
 
-The run reached local Sigma evaluation and evidence-selection inference. The initial
-planner required multiple attempts because its output schema permitted arbitrary source
-labels while the deterministic validator required the exact configured source name. The
-schema now constrains source priority to the live allowed-source enum, exact source count,
-and unique values.
+- the grounded query compiler produced 33 clauses using governed fields and values;
+- 181 records were returned from 375 live matches;
+- 146 records remained after normalization and deduplication;
+- the bounded evidence selector received four compact records and selected three;
+- selected evidence showed TCP SYN traffic from `172.20.0.4:65192` to
+  `172.20.0.2` on ports 3389, 5985, and 5986;
+- the full processed corpus also supported the cited SMB/445 observation;
+- Network Traffic coverage was assessed as covered;
+- Process Creation coverage was explicitly recorded as unavailable from the selected
+  telemetry.
 
-The positive run was not allowed to produce a partial or synthetic conclusion. Because
-it did not complete citation verification, no hunt report was generated.
+The resulting finding was positive but qualified: rapid service-port discovery was
+observed, while scanner-process attribution was not asserted because process telemetry
+was unavailable.
 
-## Correct Hunt-Report Structure
+### Ordered audit ledger
 
-New hunt reports use the following top-level order:
+All 18 persisted hunt steps completed with status `ok`:
+
+| Step | Duration |
+|---|---:|
+| HEARTH refresh | 7 ms |
+| Hypothesis | 306 ms |
+| Hunt memory | 7 ms |
+| Supervisor | 101.414 s |
+| Query generation | 181 ms |
+| SIEM fetch | 380 ms |
+| Log processing | 55 ms |
+| Guardrail | 138 ms |
+| SOC tools/evidence selection | 35.399 s |
+| Coverage assessment | 242.983 s |
+| Threat intelligence | 311 ms |
+| Adaptive replan | 63.580 s |
+| Negative-screening gate | 65 ms |
+| Final reasoning | 241.600 s |
+| Verifier | 67 ms |
+| Detection engineering | 3 ms |
+| Communication | 4 ms |
+| Report | 9 ms |
+
+Total wall time was approximately 11 minutes 26 seconds on the local CPU-backed model
+host. No retrieval retry loop was launched after the adaptive planner determined the
+available source plan was complete.
+
+## Performance and Quality Corrections
+
+The principal latency and reliability corrections are configuration driven:
+
+- evidence-selector model input is capped at four compact records;
+- evidence output is capped at three records;
+- evidence-selector attempts and transport retries are bounded;
+- a model-generation timeout and an outer stage timeout prevent indefinite stalls;
+- the selector uses the configured fast local route;
+- when strict model output validation fails, a generic deterministic fallback can keep
+  only records containing at least two governed literals;
+- governed literal matching now uses token boundaries, preventing a value such as
+  `389` from matching inside `3389`;
+- indicator derivation has explicit generation and outer critical-path bounds;
+- final reasoning caps records, retrieval attempts, context items, and knowledge-base
+  chunks while preserving cited evidence.
+
+Observed performance improvements:
+
+| Measure | Before | Final H111 | Change |
+|---|---:|---:|---:|
+| SOC tools/evidence selection | 120.905 s | 35.399 s | 70.7% faster |
+| Final reasoning prompt | 8,999 tokens | 4,941 tokens | 45.1% smaller |
+| Final reasoning outcome | Timed out/interrupted in diagnostic run | Completed first attempt | Pass |
+
+The progress-stage map was corrected to match the real graph order:
+Threat Intelligence → Adaptive Replan → Negative Screening → Reasoning. This prevents
+the UI from labeling valid execution as the wrong stage.
+
+## Report Structure and Evidence Presentation
+
+Hunt reports use exactly these top-level sections:
 
 1. Summary
 2. Hypothesis and Scope
@@ -178,92 +232,61 @@ New hunt reports use the following top-level order:
 5. Findings
 6. Recommendations
 
-Audit trails, case workflow, feedback instructions, and model-operation details are kept
-out of the investigation report. Dynamic Markdown table values are normalized as
-follows:
+The H111 report contains:
 
-- dictionaries and lists become stable JSON;
-- literal pipes become `\|`;
-- embedded line breaks become `<br>`;
-- absent values become empty cells rather than Python object text.
+- an executive brief;
+- selected key evidence;
+- hypothesis, ATT&CK, and investigation scope;
+- retrieval totals, executed query, and attempt ledger;
+- rule matches, threat-intelligence result, coverage matrix, completeness, and
+  representative records;
+- citation-verified findings;
+- recommendations and detection-engineering status.
 
-## Regression Test Evidence
+A presentation defect discovered during final validation was corrected: behavioral
+evidence is now displayed in “Key Evidence,” not only artifact-type evidence. The
+persisted H111 report was updated from its stored selected evidence so it no longer
+claims that key evidence is absent.
 
-The following targeted suites were executed:
+## Forensic and Regression Verification
 
-```text
-tests/orchestration/test_agentic_foundations.py
-tests/forensics/test_forensic_workflow.py
-tests/forensics/test_forensic_tools.py
-tests/api/test_report_presentation.py
-tests/api/test_forensic_yara_scan.py
-tests/api/test_ui_gateway_upstream.py
-```
+Completed regression evidence from this work:
 
-Final result:
-
-```text
-29 passed in 4.67s
-```
-
-After catalog restoration, the catalog/search tests and all preceding focused
-hypothesis, report, forensic, YARA, and gateway regressions were executed together:
-
-```text
-tests/hunting/test_hypothesis_catalog.py
-tests/orchestration/test_agentic_foundations.py
-tests/forensics/test_forensic_workflow.py
-tests/forensics/test_forensic_tools.py
-tests/api/test_ui_gateway_upstream.py
-tests/api/test_forensic_yara_scan.py
-tests/api/test_report_presentation.py
-```
-
-Final result:
-
-```text
-36 passed in 2.35s
-```
+- 112 tests passed in 21.45 seconds in the broad focused regression set;
+- 19 catalog, evidence-selection, indicator, and SOC-tool tests passed in 6.36
+  seconds after the bounded-performance changes;
+- an earlier focused forensic/report/gateway set passed 36 tests in 2.35 seconds;
+- H111 supplied the final live integration test across authentication, MCP,
+  orchestration, source retrieval, evidence selection, coverage, reasoning,
+  verification, reporting, and database audit persistence.
 
 Verified forensic behaviors include:
 
 - full-file SHA-256 and size verification against chain-of-custody metadata;
-- fail-closed handling after evidence tampering;
-- deterministic ordering and audit events for the named forensic agents;
-- a technical report containing chain of custody, proven facts, unresolved anomalies,
-  ATT&CK references, timeline, limitations, and legal/evidentiary review requirements;
-- subprocess execution without a shell and with bounded output;
-- content-based PE routing without executing the supplied artifact;
-- exclusion of deprecated, licensed-only, unavailable, and unsupported-platform tools
-  from the ready-tool catalog.
+- fail-closed handling after acquired evidence is modified;
+- deterministic named-agent ordering and persisted step events;
+- technical reporting with chain of custody, proven facts, unresolved anomalies,
+  ATT&CK context, timeline, limitations, and legal/evidentiary review requirements;
+- shell-free forensic tool invocation with bounded output;
+- content-based artifact routing without executing supplied evidence;
+- exclusion of deprecated, unavailable, licensed-only, and unsupported-platform tools
+  from the ready catalog.
 
-## Limitations and Follow-up
-
-- H111 did not test Wazuh evidence retrieval because query generation failed before a
-  valid query was executed. Query-model tuning or a source-specific fallback should be
-  verified separately before treating H111 as operationally covered.
-- H013 demonstrated that local reasoning throughput is the dominant positive-hunt
-  latency on this host. The run was intentionally not represented as completed.
-- The planner source enum fix is deployed and unit-tested, but a new full positive hunt
-  should be scheduled with a sufficiently long asynchronous monitoring window to obtain
-  an evidence-verified production hunt report.
-- A broader Windows-host `tests/api` run reached 12 passing tests and one environment
-  failure because the host interpreter did not provide the native `yara` module. The
-  focused YARA-intake regressions passed; production forensic images include the
-  required YARA runtime.
-- After the restored 306-entry catalog was deployed and verified, a separate active
-  Compose project rooted at `C:\Users\Prasanna\Music\THOS` began replacing the same
-  fixed `thos-*` container names. That external startup was not terminated. The live
-  verification results above were captured before the name collision; the source,
-  images, Chroma re-ingestion, and regression results for this workspace remain valid.
+The newest reasoning-cache and progress-order unit tests could not be rerun after their
+last small edits because the execution approval service reported that its automatic
+approval usage limit had been reached. No alternate test-execution workaround was
+used. The corresponding runtime paths were nevertheless exercised by the completed
+H111 run, and both rebuilt services passed their health checks. The newly added
+literal-boundary and behavioral-key-evidence unit cases remain pending a fresh test
+execution allowance.
 
 ## Conclusion
 
-The original `thos-mcp` unhealthy condition and the subsequent `thos-chat-ui` restart
-loop are corrected and verified. The report structure and dynamic Markdown-table
-defects are corrected and covered by tests. The forensic integrity, workflow,
-reporting, and tool-safety regression set passes.
+The unhealthy MCP condition, vendor-specific hypothesis overlay, missing hypothesis
+tiles, schedule visibility, progress disclosure, severity coverage, evidence-stage
+stall, progress-stage mismatch, and report evidence-presentation defect are corrected.
 
-THOS correctly refused to generate reports for both an evidence-negative/source-failed
-hunt and an interrupted positive run. No unsupported investigative conclusion was
-introduced to satisfy report generation.
+The final H111 hunt completed with live telemetry, grounded evidence, qualified
+analysis, validated citations, a persisted 18-step audit trail, and a structured
+report. The remaining measurable constraint is local model throughput, not an
+unbounded execution path or an unhealthy service.

@@ -28,6 +28,7 @@ const displayDetectionText = (value) => String(value || "")
   .replace(/Sigma/gi, "Detection rule");
 const CONNECTION_SIEMS = ["wazuh", "elasticsearch", "logrhythm", "splunk", "qradar", "folder"];
 const ALL_FEATURES = ["hunts", "forensics", "reports", "chat", "knowledge", "threat_intel", "settings"];
+const MODEL_TIERS = ["fast", "query", "reasoning", "cyber", "verifier", "coding", "guard"];
 const DETECTION_RULE_TEMPLATE = `title: New detection rule
 status: experimental
 description: Describe the behavior and intended evidence.
@@ -130,6 +131,66 @@ function GeneralTab({ activeSources }) {
     </div>
     <div className="settings-actions"><button className="secondary-button" onClick={load}><ArrowPathIcon /> Refresh models</button><button className="primary-button" onClick={save}><CheckCircleIcon /> Save defaults</button></div>
   </section></div>;
+}
+
+function ModelRoutingTab() {
+  const [data, setData] = useState({ agents: [], models: [], resources: {}, auto_select: false });
+  const [routes, setRoutes] = useState({});
+  const [autoSelect, setAutoSelect] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await api("/api/settings/model-routing");
+      setData(payload);
+      setAutoSelect(Boolean(payload.auto_select));
+      setRoutes(Object.fromEntries((payload.agents || []).map((agent) => [agent.id, {
+        tier: agent.tier,
+        model: agent.model || "",
+        num_ctx: agent.num_ctx || null,
+        num_predict: agent.num_predict || null,
+      }])));
+      setNotice("");
+    } catch (error) { setNotice(error.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const updateRoute = (id, values) => setRoutes((current) => ({ ...current, [id]: { ...current[id], ...values } }));
+  const useRecommendations = () => {
+    setAutoSelect(true);
+    setRoutes((current) => Object.fromEntries(Object.entries(current).map(([id, route]) => [id, { ...route, model: "" }])));
+    setNotice("Capability-aware routing selected. Save to activate the detected model assignments.");
+  };
+  const save = async () => {
+    try {
+      const payload = await api("/api/settings/model-routing", jsonOptions("PUT", { auto_select: autoSelect, routes }));
+      setData(payload);
+      setNotice("Per-agent local model routing saved and available to new agent calls immediately.");
+    } catch (error) { setNotice(error.message); }
+  };
+  const resource = data.resources || {};
+  return <div className="settings-stack">
+    <section className="settings-card">
+      <div className="settings-card-title"><span><CpuChipIcon /></span><div><h3>Server capability and model routing</h3><p>THOS recommends only installed local generation models. Administrators retain control over every agent route; no model is downloaded automatically.</p></div></div>
+      {notice && <Notice type={/saved|selected/.test(notice) ? "success" : "error"}>{notice}</Notice>}
+      <div className="model-capability-grid">
+        <div><strong>{resource.capacity_class || "unknown"}</strong><small>capacity class</small></div>
+        <div><strong>{resource.logical_cpus_visible || 0}</strong><small>visible logical CPUs</small></div>
+        <div><strong>{Number(resource.inference_memory_budget_gb || 0).toFixed(1)} GB</strong><small>Ollama memory budget</small></div>
+        <div><strong>{resource.accelerator_observed ? "Observed" : "Not observed"}</strong><small>accelerator in current Ollama telemetry</small></div>
+      </div>
+      <label className="model-auto-toggle"><input type="checkbox" checked={autoSelect} onChange={(event) => setAutoSelect(event.target.checked)} /><span><strong>Automatically use detected assignments</strong><small>Explicit per-agent model selections always take precedence.</small></span></label>
+      <div className="settings-actions"><button className="secondary-button" onClick={load} disabled={loading}><ArrowPathIcon /> Re-analyze capabilities</button><button className="secondary-button" onClick={useRecommendations} disabled={loading}><BeakerIcon /> Use recommendations</button><button className="primary-button" onClick={save} disabled={loading}><CheckCircleIcon /> Save agent routing</button></div>
+    </section>
+    <section className="settings-card"><h3>Agent model assignments</h3><p className="settings-muted">Use a fast model for bounded extraction/planning and a stronger reasoning or cybersecurity model for evidence interpretation. Leaving model blank uses automatic or tier defaults.</p>
+      <div className="model-route-list">{(data.agents || []).map((agent) => <div className="model-route-row" key={agent.id}>
+        <div><strong>{agent.name}</strong><small>{agent.id} · active: {agent.effective_model}</small><p>{agent.purpose}</p>{agent.recommended_model && <em>Recommended: {agent.recommended_model} · {agent.recommendation_reason}</em>}</div>
+        <label>Tier<select value={routes[agent.id]?.tier || agent.tier} onChange={(event) => updateRoute(agent.id, { tier: event.target.value })}>{MODEL_TIERS.map((tier) => <option key={tier} value={tier}>{tier}</option>)}</select></label>
+        <label>Installed model<select value={routes[agent.id]?.model || ""} onChange={(event) => updateRoute(agent.id, { model: event.target.value })}><option value="">Automatic / tier default</option>{(data.models || []).map((model) => <option key={model.name} value={model.name}>{model.name} · {(Number(model.size || 0) / 1024 ** 3).toFixed(1)} GB</option>)}</select></label>
+      </div>)}</div>
+    </section>
+  </div>;
 }
 
 function DetectionRulesTab({ activeSources }) {
@@ -798,6 +859,7 @@ export default function Settings({ initialTab = "account", onTabChange, hypothes
       { id: "schedules", label: "Hunt schedules", icon: ClockIcon },
       { id: "audit", label: "Audit logs", icon: QueueListIcon },
     ] : []),
+    ...(isAdmin ? [{ id: "models", label: "Agent models", icon: CpuChipIcon }] : []),
     ...(canKnowledge ? [{ id: "knowledge", label: "Knowledge base", icon: BookOpenIcon }] : []),
     ...(isAdmin ? [{ id: "users", label: "Users & roles", icon: UserGroupIcon }] : []),
   ], [canConfigure, canKnowledge, isAdmin]);
@@ -818,6 +880,7 @@ export default function Settings({ initialTab = "account", onTabChange, hypothes
     <div className="settings-layout"><aside className="settings-tabs panel">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); onTabChange?.(item.id); }}><item.icon />{item.label}</button>)}</aside><main className="settings-content">
       {tab === "account" && <AccountTab session={session} onSessionChange={onSessionChange} />}
       {tab === "general" && <GeneralTab activeSources={activeSources} />}
+      {tab === "models" && <ModelRoutingTab />}
       {tab === "rules" && <DetectionRulesTab activeSources={activeSources} />}
       {tab === "yara" && <YaraRulesTab />}
       {tab === "ioc" && <IOCSourcesTab isAdmin={isAdmin} />}

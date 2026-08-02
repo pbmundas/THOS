@@ -7,6 +7,7 @@ hostile artifact cannot indefinitely occupy the forensic worker.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -382,6 +383,18 @@ def artifact_profile(path: str | Path, artifact_type: str = "evidence") -> dict:
         "ole": header.startswith(bytes.fromhex("d0cf11e0a1b11ae1")),
         "ewf": suffix in {".e01", ".ex01"},
         "disk_image": suffix in {".e01", ".ex01", ".raw", ".dd", ".img", ".001"},
+        "pcap": (
+            header[:4] in {
+                bytes.fromhex("d4c3b2a1"), bytes.fromhex("a1b2c3d4"),
+                bytes.fromhex("4d3cb2a1"), bytes.fromhex("a1b23c4d"),
+                bytes.fromhex("0a0d0d0a"),
+            }
+            or suffix in {".pcap", ".pcapng", ".cap"}
+        ),
+        "sqlite": (
+            header.startswith(b"SQLite format 3\x00")
+            or suffix in {".sqlite", ".sqlite3", ".db"}
+        ),
     }
     return {
         "artifact": target.name,
@@ -470,6 +483,43 @@ def _execute_selected_tool(
             if signatures["registry_hive"]
             else _result("regripper", "not_applicable", applicable=False)
         ]
+    if tool_id == "tshark":
+        packet_cap = max(
+            100,
+            min(
+                int(get_value("forensics", "packet_record_cap", default=5000)),
+                100_000,
+            ),
+        )
+        return [
+            _run(
+                "tshark",
+                [
+                    "tshark", "-n", "-r", str(target), "-c", str(packet_cap),
+                    "-T", "fields", "-E", "header=y", "-E", "separator=\t",
+                    "-e", "frame.number", "-e", "frame.time_epoch",
+                    "-e", "ip.src", "-e", "ipv6.src", "-e", "tcp.srcport",
+                    "-e", "udp.srcport", "-e", "ip.dst", "-e", "ipv6.dst",
+                    "-e", "tcp.dstport", "-e", "udp.dstport",
+                    "-e", "_ws.col.Protocol", "-e", "_ws.col.Info",
+                ],
+            )
+            if signatures["pcap"]
+            else _result("tshark", "not_applicable", applicable=False)
+        ]
+    if tool_id == "sqlite":
+        if not signatures["sqlite"]:
+            return [_result("sqlite", "not_applicable", applicable=False)]
+        return [
+            _run(
+                "sqlite",
+                [
+                    "sqlite3", "-readonly", str(target),
+                    "PRAGMA quick_check; SELECT type,name,tbl_name,sql "
+                    "FROM sqlite_master ORDER BY type,name LIMIT 1000;",
+                ],
+            )
+        ]
     if tool_id == "volatility3":
         plugins = parameters.get("plugins")
         if not isinstance(plugins, list) or not plugins:
@@ -478,6 +528,7 @@ def _execute_selected_tool(
                 "invalid_plan",
                 error="The Forensic Planner Agent did not select memory plugins.",
             )]
+        jobs = []
         results = []
         for plugin in plugins:
             plugin_name = str(plugin).strip()
@@ -491,10 +542,23 @@ def _execute_selected_tool(
                     error=f"Invalid plugin name: {plugin_name}",
                 ))
                 continue
-            results.append(_run(
-                "volatility3",
-                ["vol", "-q", "-f", str(target), "-r", "json", plugin_name],
-            ))
+            jobs.append(plugin_name)
+        concurrency = max(1, min(
+            len(jobs) or 1,
+            int(get_value(
+                "forensics", "volatility_plugin_concurrency", default=2
+            )),
+        ))
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [
+                executor.submit(
+                    _run,
+                    "volatility3",
+                    ["vol", "-q", "-f", str(target), "-r", "json", plugin],
+                )
+                for plugin in jobs
+            ]
+            results.extend(future.result() for future in futures)
         return results
     if tool_id == "yara":
         from services.detection import yara_engine
@@ -524,18 +588,18 @@ def run_static_triage(
     target = Path(path).resolve(strict=True)
     profile = artifact_profile(target, artifact_type)
     catalog_ids = {str(item["tool_id"]) for item in _TOOL_CATALOG}
-    results: list[dict] = []
     accepted_plan: list[dict] = []
     for step in tool_plan or []:
         if not isinstance(step, dict):
             continue
         tool_id = str(step.get("tool_id") or "").strip()
         if tool_id not in catalog_ids:
-            results.append(_result(
-                tool_id or "unknown",
-                "invalid_plan",
-                error="Planner selected a tool outside the capability catalog.",
-            ))
+            accepted_plan.append({
+                "tool_id": tool_id or "unknown",
+                "objective": "",
+                "parameters": {},
+                "_invalid": True,
+            })
             continue
         accepted_plan.append({
             "tool_id": tool_id,
@@ -544,14 +608,38 @@ def run_static_triage(
                 step.get("parameters"), dict
             ) else {},
         })
-        results.extend(_execute_selected_tool(
-            tool_id,
-            target,
-            profile,
-            sha256=sha256,
-            derived_dir=derived_dir,
-            parameters=accepted_plan[-1]["parameters"],
-        ))
+    concurrency = max(1, min(
+        len(accepted_plan) or 1,
+        int(get_value("forensics", "tool_concurrency", default=4)),
+    ))
+
+    def execute(step: dict[str, Any]) -> list[dict]:
+        if step.get("_invalid"):
+            return [_result(
+                step["tool_id"],
+                "invalid_plan",
+                error="Planner selected a tool outside the capability catalog.",
+            )]
+        try:
+            return _execute_selected_tool(
+                step["tool_id"],
+                target,
+                profile,
+                sha256=sha256,
+                derived_dir=derived_dir,
+                parameters=step["parameters"],
+            )
+        except Exception as exc:  # isolate one read-only adapter from peers
+            return [_result(step["tool_id"], "failed", error=str(exc))]
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(execute, step) for step in accepted_plan]
+        result_groups = [future.result() for future in futures]
+    results = [item for group in result_groups for item in group]
+    public_plan = [
+        {key: value for key, value in step.items() if not key.startswith("_")}
+        for step in accepted_plan
+    ]
     counts: dict[str, int] = {}
     for item in results:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
@@ -579,7 +667,7 @@ def run_static_triage(
         "sha256": sha256,
         "size_bytes": profile["size_bytes"],
         "profile": profile,
-        "tool_plan": accepted_plan,
+        "tool_plan": public_plan,
         "summary": counts,
         "evidence_observation_count": evidence_observations,
         "results": results,

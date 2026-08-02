@@ -150,7 +150,7 @@ def test_coverage_agent_uses_compact_bounded_record_sample(monkeypatch):
     assert "duplicated-detail" not in captured["prompt"]
     assert "duplicated-full-log" not in captured["prompt"]
     assert "destination port: 3389" in captured["prompt"]
-    assert captured["num_predict"] == 640
+    assert captured["num_predict"] == 384
     assert (
         captured["schema"]["properties"]["data_sources"]["maxItems"]
         == 1

@@ -6,6 +6,7 @@ Forensic Interpretation Agent.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
@@ -19,6 +20,7 @@ import zipfile
 
 from services.enrichment import ioc_management
 from services.forensics.tools import run_static_triage, tool_status
+from services.runtime_config import get_value
 from services.siem import file_log_parser
 
 FORENSIC_ROOT = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic"))
@@ -72,20 +74,32 @@ def verify_evidence(case_dir: str | Path) -> dict:
     if not manifest_path.is_file():
         raise ForensicIntegrityError("chain-of-custody manifest is missing")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    verified = []
+    pending = []
     for item in manifest.get("evidence", []):
         stored_name = Path(str(item.get("stored_name", ""))).name
         path = (case_path / stored_name).resolve()
         if path.parent != case_path or not path.is_file():
             raise ForensicIntegrityError(f"evidence file is missing: {stored_name}")
         actual_size = path.stat().st_size
-        actual_hash = sha256_file(path)
-        if (
-            actual_size != int(item.get("size_bytes", -1))
-            or actual_hash != item.get("sha256")
-        ):
+        if actual_size != int(item.get("size_bytes", -1)):
             raise ForensicIntegrityError(
                 f"integrity verification failed: {stored_name}"
+            )
+        pending.append((item, path, actual_size))
+    concurrency = max(1, min(
+        len(pending) or 1,
+        int(get_value("forensics", "hash_concurrency", default=2)),
+    ))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        hashes = list(executor.map(
+            sha256_file,
+            [path for _, path, _ in pending],
+        ))
+    verified = []
+    for (item, path, _), actual_hash in zip(pending, hashes):
+        if actual_hash != item.get("sha256"):
+            raise ForensicIntegrityError(
+                f"integrity verification failed: {path.name}"
             )
         verified.append({
             **item,
@@ -141,6 +155,74 @@ def _archive_inventory(path: Path) -> list[dict]:
     return entries
 
 
+def _analyze_one_artifact(
+    evidence: dict,
+    selected_tools: list[dict],
+    derived_dir: Path,
+) -> dict:
+    """Run one independent read-only artifact lane."""
+    path = Path(evidence["path"])
+    with path.open("rb") as handle:
+        magic = handle.read(16).hex()
+    inventory = {
+        "evidence_id": evidence["evidence_id"],
+        "original_name": evidence["original_name"],
+        "stored_name": evidence["stored_name"],
+        "size_bytes": evidence["size_bytes"],
+        "sha256": evidence["sha256"],
+        "extension": path.suffix.lower() or "(none)",
+        "magic_hex": magic,
+        "path": str(path),
+    }
+    result = run_static_triage(
+        path,
+        sha256=str(evidence["sha256"]),
+        artifact_type=str(evidence.get("artifact_type") or "evidence"),
+        derived_dir=derived_dir,
+        tool_plan=selected_tools,
+    )
+    result["evidence_id"] = evidence["evidence_id"]
+    warnings = []
+    for tool_result in result.get("results", []):
+        if tool_result.get("status") in {
+            "failed", "timed_out", "invalid_plan", "adapter_unavailable"
+        }:
+            warnings.append(
+                f"{evidence['evidence_id']}: "
+                f"{tool_result.get('tool_id')} {tool_result.get('status')}: "
+                f"{tool_result.get('error') or tool_result.get('note') or 'review output'}"
+            )
+    archive_entries = _archive_inventory(path)
+    disk_results = [
+        tool_result
+        for tool_result in result.get("results", [])
+        if tool_result.get("tool_id") in {"ewf", "sleuthkit"}
+    ]
+    parsed = file_log_parser.parse_file(str(path))
+    text = _document_text(path)[:MAX_DOCUMENT_TEXT]
+    if text:
+        parsed.append({
+            "timestamp": None,
+            "host": None,
+            "user": None,
+            "event": f"document:{path.suffix.lower()}",
+            "src_ip": None,
+            "dst_ip": None,
+            "detail": text,
+            "source_file": evidence["original_name"],
+            "source_type": "document",
+        })
+    return {
+        "evidence_id": evidence["evidence_id"],
+        "inventory": inventory,
+        "static_analysis": result,
+        "archive_entries": archive_entries,
+        "disk_results": disk_results,
+        "records": parsed,
+        "warnings": warnings,
+    }
+
+
 def analyze_artifacts(verified: dict, tool_plan: dict | None = None) -> dict:
     """Execute the validated per-artifact plan and parse supported evidence."""
     inventory, records, archives, disk_images, warnings, static_analysis = (
@@ -153,81 +235,45 @@ def analyze_artifacts(verified: dict, tool_plan: dict | None = None) -> dict:
         for item in (tool_plan or {}).get("artifacts") or []
         if isinstance(item, dict)
     }
-    for evidence in verified["evidence"]:
-        path = Path(evidence["path"])
-        with path.open("rb") as handle:
-            magic = handle.read(16).hex()
-        item = {
-            "evidence_id": evidence["evidence_id"],
-            "original_name": evidence["original_name"],
-            "stored_name": evidence["stored_name"],
-            "size_bytes": evidence["size_bytes"],
-            "sha256": evidence["sha256"],
-            "extension": path.suffix.lower() or "(none)",
-            "magic_hex": magic,
-            "path": str(path),
-        }
-        inventory.append(item)
-        result = run_static_triage(
-            path,
-            sha256=str(evidence["sha256"]),
-            artifact_type=str(evidence.get("artifact_type") or "evidence"),
-            derived_dir=derived_dir,
-            tool_plan=plan_by_evidence.get(str(evidence["evidence_id"]), []),
-        )
-        result["evidence_id"] = evidence["evidence_id"]
-        static_analysis.append(result)
-        for tool_result in result.get("results", []):
-            if tool_result.get("status") in {
-                "failed", "timed_out", "invalid_plan", "adapter_unavailable"
-            }:
-                warnings.append(
-                    f"{evidence['evidence_id']}: "
-                    f"{tool_result.get('tool_id')} {tool_result.get('status')}: "
-                    f"{tool_result.get('error') or tool_result.get('note') or 'review output'}"
-                )
-        archive_entries = _archive_inventory(path)
-        if archive_entries:
-            archives.append({
-                "evidence_id": evidence["evidence_id"],
-                "entries": archive_entries,
-            })
-        disk_results = [
-            tool_result
-            for tool_result in result.get("results", [])
-            if tool_result.get("tool_id") in {
-                "ewf", "sleuthkit"
-            }
+    concurrency = max(1, min(
+        len(verified["evidence"]) or 1,
+        int(get_value("forensics", "artifact_concurrency", default=2)),
+    ))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [
+            executor.submit(
+                _analyze_one_artifact,
+                evidence,
+                plan_by_evidence.get(str(evidence["evidence_id"]), []),
+                derived_dir,
+            )
+            for evidence in verified["evidence"]
         ]
-        if disk_results:
+        lanes = [future.result() for future in futures]
+    for lane in lanes:
+        inventory.append(lane["inventory"])
+        static_analysis.append(lane["static_analysis"])
+        warnings.extend(lane["warnings"])
+        if lane["archive_entries"]:
+            archives.append({
+                "evidence_id": lane["evidence_id"],
+                "entries": lane["archive_entries"],
+            })
+        if lane["disk_results"]:
             disk_images.append({
-                "evidence_id": evidence["evidence_id"],
-                "results": disk_results,
+                "evidence_id": lane["evidence_id"],
+                "results": lane["disk_results"],
             })
-        parsed = file_log_parser.parse_file(str(path))
-        text = _document_text(path)[:MAX_DOCUMENT_TEXT]
-        if text:
-            parsed.append({
-                "timestamp": None,
-                "host": None,
-                "user": None,
-                "event": f"document:{path.suffix.lower()}",
-                "src_ip": None,
-                "dst_ip": None,
-                "detail": text,
-                "source_file": evidence["original_name"],
-                "source_type": "document",
-            })
-        for record in parsed:
+        for record in lane["records"]:
             if len(records) >= MAX_FORENSIC_RECORDS:
                 warnings.append(
                     f"record safety cap reached at {MAX_FORENSIC_RECORDS}"
                 )
                 break
             record = dict(record)
-            record["_evidence_id"] = evidence["evidence_id"]
+            record["_evidence_id"] = lane["evidence_id"]
             record["_record_ref"] = (
-                f"{evidence['evidence_id']}:{len(records)}"
+                f"{lane['evidence_id']}:{len(records)}"
             )
             records.append(record)
     return {
@@ -255,6 +301,7 @@ def apply_followup_tool_plan(
         str(item.get("evidence_id")): item
         for item in verified.get("evidence") or []
     }
+    jobs = []
     for artifact in tool_plan.get("artifacts") or []:
         if not isinstance(artifact, dict) or not artifact.get("tools"):
             continue
@@ -262,14 +309,31 @@ def apply_followup_tool_plan(
         evidence = evidence_by_id.get(evidence_id)
         if not evidence:
             continue
+        jobs.append((
+            evidence_id,
+            evidence,
+            list(artifact.get("tools") or []),
+        ))
+
+    def execute(job: tuple[str, dict, list[dict]]) -> dict:
+        evidence_id, evidence, tools = job
         result = run_static_triage(
             evidence["path"],
             sha256=str(evidence["sha256"]),
             artifact_type=str(evidence.get("artifact_type") or "evidence"),
             derived_dir=derived_dir,
-            tool_plan=list(artifact.get("tools") or []),
+            tool_plan=tools,
         )
         result["evidence_id"] = evidence_id
+        return result
+
+    concurrency = max(1, min(
+        len(jobs) or 1,
+        int(get_value("forensics", "artifact_concurrency", default=2)),
+    ))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        results = list(executor.map(execute, jobs))
+    for result in results:
         static_analysis.append(result)
     updated["static_analysis"] = static_analysis
     updated["followup_tool_plan"] = tool_plan

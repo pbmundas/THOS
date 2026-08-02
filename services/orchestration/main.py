@@ -50,7 +50,11 @@ from services.reasoning.model_router import (
     set_model_workload,
     target_for,
 )
-from services.risk.risk_agent import analyze_actionable_risks
+from services.risk.risk_agent import (
+    analyze_actionable_risks,
+    filter_risk_payload,
+    risk_source_version,
+)
 from services.detection.detection_analysis_agent import analyze_detection
 from services.security.configuration import required_secret
 
@@ -125,8 +129,13 @@ _active_hunt_count = 0
 _active_hunt_lock = asyncio.Lock()
 _background_hunts: set[asyncio.Task] = set()
 _background_forensics: set[asyncio.Task] = set()
+_background_risk_refreshes: set[asyncio.Task] = set()
 _forensic_start_lock = asyncio.Lock()
 _forensic_worker_slot = asyncio.Semaphore(1)
+_risk_refresh_lock = asyncio.Lock()
+_risk_refresh_reasons: set[str] = set()
+_risk_refresh_force = False
+_risk_refresh_task: asyncio.Task | None = None
 
 
 def _background_hunt_done(task: asyncio.Task) -> None:
@@ -151,6 +160,118 @@ def _background_forensic_done(task: asyncio.Task) -> None:
         return
     if error is not None:
         logger.error("background forensic worker crashed: %s", error)
+
+
+def _background_risk_done(task: asyncio.Task) -> None:
+    global _risk_refresh_task
+    _background_risk_refreshes.discard(task)
+    if _risk_refresh_task is task:
+        _risk_refresh_task = None
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error("background risk refresh crashed: %s", error)
+
+
+async def _refresh_risk_snapshot(reason: str, force: bool = False) -> dict:
+    """Materialize model-owned risks after persisted evidence changes."""
+    async with _risk_refresh_lock:
+        hunts, detections = await asyncio.gather(
+            audit.risk_source_hunts(),
+            audit.risk_source_detections(),
+        )
+        source_version = await asyncio.to_thread(
+            risk_source_version, hunts, detections, REPORTS_DIR
+        )
+        existing = await audit.get_risk_snapshot()
+        existing_payload = (
+            existing.get("payload")
+            if existing and isinstance(existing.get("payload"), dict)
+            else {}
+        )
+        existing_agent = (
+            existing_payload.get("agent")
+            if isinstance(existing_payload.get("agent"), dict)
+            else {}
+        )
+        if (
+            not force
+            and existing
+            and existing.get("status") == "completed"
+            and existing.get("source_version") == source_version
+            and not bool(existing_agent.get("degraded"))
+            and not bool(existing_agent.get("errors"))
+        ):
+            return existing_payload
+        await audit.mark_risk_refresh_started(source_version, reason)
+        try:
+            result = await analyze_actionable_risks(
+                hunts,
+                detections,
+                REPORTS_DIR,
+                max(1, min(
+                    int(get_value(
+                        "autonomy", "risk_snapshot_limit", default=2000
+                    )),
+                    2000,
+                )),
+                previous_payload=(
+                    existing_payload
+                    if existing and not force
+                    else None
+                ),
+            )
+            await audit.save_risk_snapshot(source_version, result, reason)
+            await audit.log_platform_event({
+                "level": "INFO",
+                "service": "thos-risk",
+                "category": "risk_analysis",
+                "action": "risk_snapshot_refreshed",
+                "resource": source_version,
+                "message": (
+                    "Risk Analysis Agent refreshed the actionable-risk snapshot "
+                    f"from {len(hunts)} hunt report(s) and "
+                    f"{len(detections)} detection(s)."
+                ),
+                "context": {
+                    "reason": reason,
+                    "risk_count": len(result.get("items") or []),
+                    "source_version": source_version,
+                },
+            })
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep prior snapshot readable
+            await audit.fail_risk_refresh(source_version, str(exc), reason)
+            logger.exception("risk snapshot refresh failed")
+            return existing.get("payload") or {} if existing else {}
+
+
+async def _risk_refresh_worker() -> None:
+    global _risk_refresh_force
+    while _risk_refresh_reasons:
+        reasons = sorted(_risk_refresh_reasons)
+        _risk_refresh_reasons.clear()
+        force, _risk_refresh_force = _risk_refresh_force, False
+        await _refresh_risk_snapshot(", ".join(reasons)[:500], force=force)
+
+
+def _schedule_risk_refresh(reason: str, *, force: bool = False) -> None:
+    """Coalesce frequent detection/report events into one background refresh."""
+    global _risk_refresh_force, _risk_refresh_task
+    _risk_refresh_reasons.add(str(reason or "evidence_changed")[:120])
+    _risk_refresh_force = _risk_refresh_force or force
+    if _risk_refresh_task is not None and not _risk_refresh_task.done():
+        return
+    task = asyncio.create_task(_risk_refresh_worker(), name="risk-snapshot-refresh")
+    _risk_refresh_task = task
+    _background_risk_refreshes.add(task)
+    task.add_done_callback(_background_risk_done)
 
 
 class _HuntSlot:
@@ -178,7 +299,11 @@ class _HuntSlot:
 async def _shutdown():
     # Cleanly tear down the shared MCP client session (see mcp_client.py)
     # and release pooled Postgres connections (see audit.py).
-    pending = [*_background_hunts, *_background_forensics]
+    pending = [
+        *_background_hunts,
+        *_background_forensics,
+        *_background_risk_refreshes,
+    ]
     for task in pending:
         task.cancel()
     if pending:
@@ -191,6 +316,8 @@ async def _shutdown():
 async def _ensure_agentic_schema():
     await audit.ensure_agentic_schema()
     await audit.reconcile_incomplete_hunts()
+    await audit.reconcile_incomplete_forensic_cases()
+    _schedule_risk_refresh("orchestrator_startup")
 
 
 class HuntRequest(BaseModel):
@@ -410,44 +537,50 @@ async def operations_dashboard(hours: int = 24):
 
 
 @app.get("/risks", dependencies=[Depends(require_api_key)])
-async def actionable_risks(limit: int = 500, hours: int = 0):
+async def actionable_risks(
+    limit: int = 500,
+    hours: int = 0,
+    refresh: bool = False,
+):
     bounded_limit = max(1, min(limit, 2000))
     bounded_hours = max(1, min(hours, 24 * 365 * 10)) if hours else 0
-    cache_payload = f"v2-agent|limit={bounded_limit}|hours={bounded_hours}"
-    cached = await asyncio.to_thread(cache.cache_get, "actionable_risks", cache_payload)
-    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
-        return {**cached, "cache_hit": True}
-    hunts, detections = await asyncio.gather(
-        audit.risk_source_hunts(),
-        audit.risk_source_detections(),
+    snapshot = await audit.get_risk_snapshot()
+    _schedule_risk_refresh(
+        "manual_risk_refresh" if refresh else "risk_page_read",
+        force=refresh,
     )
-    result = await analyze_actionable_risks(
-        hunts,
-        detections,
-        REPORTS_DIR,
-        bounded_limit,
-        bounded_hours or None,
+    payload = (
+        snapshot.get("payload")
+        if snapshot and isinstance(snapshot.get("payload"), dict)
+        else {
+            "generated_at": None,
+            "agent": {
+                "id": "risk_analysis",
+                "name": "Risk Analysis Agent",
+                "mode": "materialized model analysis",
+                "degraded": False,
+                "errors": [],
+            },
+            "summary": {},
+            "items": [],
+        }
     )
-    ttl = max(
-        10,
-        min(
-            int(
-                os.environ.get(
-                    "THOS_RISK_CACHE_SECONDS",
-                    str(
-                        get_value(
-                            "autonomy", "risk_cache_seconds", default=60
-                        )
-                    ),
-                )
-            ),
-            600,
-        ),
+    result = filter_risk_payload(
+        payload, bounded_limit, bounded_hours or None
     )
-    await asyncio.to_thread(
-        cache.cache_set, "actionable_risks", cache_payload, result, ttl
-    )
-    return {**result, "cache_hit": False}
+    return {
+        **result,
+        "materialized": True,
+        "refresh": {
+            "status": str(snapshot.get("status") or "pending")
+            if snapshot else "pending",
+            "reason": str(snapshot.get("refresh_reason") or "")
+            if snapshot else "",
+            "error": str(snapshot.get("error_msg") or "")
+            if snapshot else "",
+            "updated_at": snapshot.get("updated_at") if snapshot else None,
+        },
+    }
 
 
 @app.post("/audit/events", dependencies=[Depends(require_api_key)], status_code=202)
@@ -651,6 +784,7 @@ async def analyze_scheduled_sigma_detection(run_id: str):
     saved = await audit.save_sigma_ai_analysis(run_id, result)
     if saved is None:
         raise HTTPException(status_code=503, detail="could not persist detection analysis")
+    _schedule_risk_refresh(f"detection_analysis:{run_id}")
     return {**result, "cached": False}
 
 
@@ -702,6 +836,10 @@ async def run_scheduled_sigma(request: ScheduledSigmaRequest):
             if case:
                 result["case_id"] = str(case["case_id"])
         stored = await audit.log_sigma_detection(result)
+        if int(result.get("events_matched") or 0) > 0:
+            _schedule_risk_refresh(
+                f"detection_completed:{result.get('rule_id') or request.rule_id}"
+            )
         return stored or result
     except Exception as exc:  # noqa: BLE001 - persist a failed scheduled execution
         await audit.log_sigma_detection({
@@ -748,6 +886,8 @@ async def run_scheduled_sigma_batch(request: ScheduledSigmaBatchRequest):
                 result["case_id"] = str(case["case_id"])
         stored = await audit.log_sigma_detection(result)
         stored_results.append(stored or result)
+    if any(int(item.get("events_matched") or 0) > 0 for item in results):
+        _schedule_risk_refresh(f"detection_batch_completed:{request.schedule_id}")
     return {
         "execution_mode": "wazuh_msearch",
         "rules_submitted": len(request.rule_ids),
@@ -1137,6 +1277,7 @@ async def _create_review_artifacts(hunt_id: str, final_state: dict, owner: str) 
 
 def _audit_outcome(state: dict) -> dict:
     enrichment = state.get("enrichment") or {}
+    verifier = state.get("verifier_result") or {}
     return {
         "report_status": state.get("report_status"),
         "report_path": state.get("report_path"),
@@ -1145,6 +1286,13 @@ def _audit_outcome(state: dict) -> dict:
         "reasoning_attempts": state.get("reasoning_attempts", 0),
         "reasoning_error": state.get("reasoning_error"),
         "reasoning_skip_reason": state.get("reasoning_skip_reason"),
+        "verification_status": verifier.get("status"),
+        "verification_checked_citations": verifier.get(
+            "checked_citations", 0
+        ),
+        "verification_invalid_references": verifier.get(
+            "invalid_references", []
+        ),
         "hunt_completeness": state.get("hunt_completeness") or {},
         "retrieval_attempt_count": len(state.get("retrieval_attempts") or []),
         "source_diagnostics": state.get("source_diagnostics") or {},
@@ -1225,6 +1373,7 @@ async def run_hunt(req: HuntRequest):
             await _create_review_artifacts(hunt_id, final_state, req.hunter_name)
             if final_state.get("report_path"):
                 await audit.log_report(hunt_id, final_state["report_path"], final_state.get("reasoning_summary", ""))
+                _schedule_risk_refresh(f"hunt_report_generated:{hunt_id}")
 
             logger.info("hunt completed")
             return final_state
@@ -1360,6 +1509,8 @@ async def run_hunt_stream(req: HuntRequest):
             await audit.log_hunt_complete(
                 hunt_id, "completed", outcome=_audit_outcome(final_state),
             )
+            if final_state.get("report_path"):
+                _schedule_risk_refresh(f"hunt_report_generated:{hunt_id}")
             terminal_recorded = True
             logger.info("hunt completed")
             await publish({"event": "hunt_complete", "hunt_id": hunt_id, "state": final_state})

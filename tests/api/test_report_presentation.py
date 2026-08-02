@@ -1,4 +1,4 @@
-from services.api.ui_gateway import _clean_report_presentation
+from services.api.ui_gateway import _clean_report_presentation, _hunt_id
 
 
 def test_historical_report_presentation_removes_icons_and_legacy_wording():
@@ -33,3 +33,15 @@ def test_historical_negative_claim_is_not_presented_as_hard_evidence():
 
     assert "- [circumstantial] No evidence of unauthorized outbound traffic" in cleaned
     assert "- [hard-evidence] Nmap execution observed" in cleaned
+
+
+def test_structured_report_table_hunt_id_is_linked_to_audit_history():
+    hunt_id = "ec5c4569-69fd-4b97-9f74-31b5c86dcd3a"
+    source = f"""# Threat Hunt Report
+
+> | Field | Value |
+> |---|---|
+> | Hunt ID | `{hunt_id}` |
+"""
+
+    assert _hunt_id(source) == hunt_id

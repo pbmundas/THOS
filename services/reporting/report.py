@@ -290,11 +290,19 @@ REPORT_TEMPLATE = """\
 ### Key Evidence
 {evidence_highlights_section}
 
+### Validation Snapshot
+{summary_validation_status}
+
 ---
 
 ## Hypothesis and Scope
 
+- **Hunt ID:** `{hunt_id}`
 - **Hypothesis ID:** {hypothesis_id}
+- **Requested by / Analyst:** {hunter_name}
+- **Hunt Started:** {hunt_started_at}
+- **Hunt Completed:** {hunt_completed_at}
+- **Report Generated:** {report_generated_at}
 - **MITRE ATT&CK Tactic:** {tactic}
 - **MITRE ATT&CK Technique:** {technique_name} ({technique_id})
 - **Telemetry Source:** {log_source}
@@ -305,6 +313,12 @@ REPORT_TEMPLATE = """\
 
 ### Investigation Requirements
 {investigation_contract_section}
+
+### Hunt Plan
+{hunt_plan_section}
+
+### Prior Hunt Context
+{hunt_memory_section}
 
 ---
 
@@ -336,6 +350,18 @@ REPORT_TEMPLATE = """\
 
 ### Hunt Completeness
 {hunt_completeness_section}
+
+### Prompt-Injection Guardrail
+{guardrail_section}
+
+### Analysis Reliability
+{reasoning_reliability_section}
+
+### Verifier / Critic Validation
+{verifier_section}
+
+### Case Status
+{case_section}
 
 ### Representative Evidence
 ```json
@@ -377,6 +403,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   coverage_assessment: dict | None = None,
                   hunt_memory: list[dict] | None = None,
                   evidence_highlights: list[dict] | None = None,
+                  behavioral_evidence: list[dict] | None = None,
                   reasoning_mode: str = "model",
                   reasoning_degraded: bool = False,
                   reasoning_attempts: int = 0,
@@ -558,23 +585,26 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         case_section = "No case was generated for this hunt. (Telemetry and findings were clean, or audit write failed)"
 
     highlights = evidence_highlights or []
-    if highlights:
+    behaviors = behavioral_evidence or []
+    key_evidence = [*highlights, *behaviors]
+    if key_evidence:
         evidence_highlights_section = "\n".join(
             f"- **Record {item.get('record_index', 'n/a')} — "
-            f"{', '.join(item.get('matched_artifacts') or ['artifact match'])}:** "
-            f"{item.get('evidence') or item.get('event') or 'Normalized evidence matched.'}"
-            for item in highlights[:10]
+            f"{', '.join(item.get('matched_artifacts') or item.get('matched_literals') or [item.get('kind') or 'evidence'])}:** "
+            f"{item.get('claim') or item.get('evidence') or item.get('event') or 'Normalized evidence matched.'}"
+            for item in key_evidence[:10]
         )
     else:
         evidence_highlights_section = (
-            "No technique-specific literal artifact was identified. Review the detection-rule results, "
-            "findings, and coverage assessment below; absence of a highlight is not proof of absence."
+            "No hypothesis-relevant artifact or behavioral evidence was selected. "
+            "Review the retrieval, detection-rule, findings, and coverage sections below; "
+            "absence of selected key evidence is not proof of absence."
         )
     summary_validation_status = (
         f"- **Verifier:** `{vr_status}`\n"
         f"- **Reasoning mode:** `{reasoning_mode or 'model'}`\n"
         f"- **Records analyzed:** `{records_analyzed}`\n"
-        f"- **Technique-specific highlights:** `{len(highlights)}`\n"
+        f"- **Selected key evidence:** `{len(key_evidence)}`\n"
         f"- **Case:** `{case_id or 'none'}`"
     )
     requirements = investigation_requirements or {}
@@ -678,6 +708,10 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         evidence_highlights_section=evidence_highlights_section,
         summary_validation_status=summary_validation_status,
         hunt_id=hunt_id,
+        hunter_name=hunter_name or "n/a",
+        hunt_started_at=_format_local_timestamp(hunt_started_at, timestamp),
+        hunt_completed_at=_format_local_timestamp(hunt_completed_at, timestamp),
+        report_generated_at=_format_local_timestamp(timestamp),
         timestamp=timestamp.isoformat(),
         hypothesis_id=hypothesis_id or "n/a",
         log_source=log_source or "not recorded",
@@ -802,6 +836,7 @@ async def write_report_node(state: dict) -> dict:
         coverage_assessment=state.get("coverage_assessment"),
         hunt_memory=state.get("hunt_memory"),
         evidence_highlights=state.get("evidence_highlights"),
+        behavioral_evidence=state.get("behavioral_evidence"),
         reasoning_mode=state.get("reasoning_mode") or "model",
         reasoning_degraded=state.get("reasoning_degraded", False),
         reasoning_attempts=state.get("reasoning_attempts", 0),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from services.agents.decision import AgentDecisionError, decide_json
@@ -75,6 +76,18 @@ Return only schema-valid JSON with exact supplied record_index values."""
 
 def _record_text(record: dict) -> str:
     return json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _contains_literal(text: str, literal: str) -> bool:
+    """Match a governed value without accepting it inside a larger token."""
+    value = str(literal or "").strip()
+    if not value:
+        return False
+    return re.search(
+        rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])",
+        text,
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _model_record(record: dict, char_cap: int) -> dict:
@@ -170,18 +183,18 @@ async def select_hunt_evidence(
         {"governed_indicators": indicators},
     )
     searchable_literals = [
-        literal.casefold()
+        literal
         for literal in grounded_literals
         if len(literal.strip()) >= 3
     ]
     grounded_candidate_refs = []
     grounded_candidate_literals: dict[int, list[str]] = {}
     for index, record in enumerate(logs):
-        record_text = _record_text(record).casefold()
+        record_text = _record_text(record)
         matched = {
             literal
             for literal in searchable_literals
-            if literal in record_text
+            if _contains_literal(record_text, literal)
         }
         if len(matched) >= 2:
             grounded_candidate_refs.append(index)
@@ -252,7 +265,7 @@ async def select_hunt_evidence(
             claim = str(item.get("claim") or "").strip()
             if not claim:
                 raise ValueError("evidence claim was empty")
-            record_text = _record_text(logs[index]).lower()
+            record_text = _record_text(logs[index])
             literals = list(dict.fromkeys(
                 str(value).strip()
                 for value in item.get("matched_literals") or []
@@ -260,7 +273,10 @@ async def select_hunt_evidence(
             ))
             if not literals:
                 raise ValueError("evidence omitted matched literals")
-            if any(literal.lower() not in record_text for literal in literals):
+            if any(
+                not _contains_literal(record_text, literal)
+                for literal in literals
+            ):
                 raise ValueError(
                     f"evidence for record {index} cited a non-literal value"
                 )

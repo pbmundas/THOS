@@ -144,7 +144,7 @@ async def run_forensic_case(
         ),
         function=plan_forensic_tools,
         args=(verified, triage),
-        model_agent="forensic_planner",
+        model_agent="forensic_followup",
     )
     followup_tools = sum(
         len(item.get("tools") or [])

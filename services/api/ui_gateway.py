@@ -436,7 +436,12 @@ async def dashboard_operations(request: Request, hours: int = 24):
 
 
 @app.get("/api/risks")
-async def actionable_risks(request: Request, limit: int = 500, hours: int = 0):
+async def actionable_risks(
+    request: Request,
+    limit: int = 500,
+    hours: int = 0,
+    refresh: bool = False,
+):
     control_plane.require_feature(request, "reports")
     return await _upstream_json(
         "GET",
@@ -445,6 +450,7 @@ async def actionable_risks(request: Request, limit: int = 500, hours: int = 0):
         params={
             "limit": max(1, min(limit, 2000)),
             "hours": max(1, min(hours, 24 * 365 * 10)) if hours else 0,
+            "refresh": bool(refresh),
         }
     )
 
@@ -593,6 +599,10 @@ def _first_heading(markdown: str, fallback: str) -> str:
 
 def _hunt_id(markdown: str) -> str:
     patterns = (
+        # Current structured reports render identifiers in a blockquoted table.
+        # Keep the parser format-aware rather than deriving IDs from filenames so
+        # renamed/imported reports continue to associate with their audit row.
+        r"(?mi)^\s*>?\s*\|\s*Hunt ID\s*\|\s*`?([0-9a-fA-F-]{20,})",
         r"\*\*Hunt ID:?\*\*\s*[:|]?\s*`?([0-9a-fA-F-]{20,})",
         r"Hunt\s+`([0-9a-fA-F-]{20,})`",
     )

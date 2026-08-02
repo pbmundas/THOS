@@ -313,6 +313,14 @@ async def coverage_gap_node(state: HuntState) -> dict:
                     default=640,
                 )
             ),
+            transport_retries=int(get_value(
+                "autonomy", "coverage_transport_retries", default=0
+            )),
+            timeout_seconds=float(get_value(
+                "autonomy",
+                "coverage_decision_timeout_seconds",
+                default=120,
+            )),
         )
         degraded = False
         error = ""

@@ -1,6 +1,7 @@
+import asyncio
 import subprocess
 
-from services.forensics import analysis, tools
+from services.forensics import analysis, interpretation, planner, tools
 
 
 def test_command_adapter_never_uses_shell_and_caps_output(monkeypatch, tmp_path):
@@ -138,3 +139,142 @@ def test_clamav_signature_result_becomes_a_fact_not_an_auto_verdict(monkeypatch)
     assert fact["status"] == "completed"
     assert fact["evidence_refs"] == ["E0001"]
     assert result["activity_assessments"] == []
+
+
+def test_forensic_planner_model_owns_capability_complete_tool_selection(
+    monkeypatch, tmp_path
+):
+    sample = tmp_path / "sample.exe"
+    sample.write_bytes(b"MZ" + b"\x00" * 64)
+    captured = {}
+    monkeypatch.setattr(planner, "tool_status", lambda: {
+        "tools": [
+            {"tool_id": "file", "status": "available", "capabilities": ["identify", "file"]},
+            {"tool_id": "pefile", "status": "available", "capabilities": ["pe", "static"]},
+        ]
+    })
+
+    async def fake_decide_json(**kwargs):
+        captured.update(kwargs)
+        return kwargs["validator"]({
+            "case_objective": "Identify and structurally examine the executable.",
+            "analysis_strategy": "rapid",
+            "artifacts": [{
+                "evidence_id": "E0001",
+                "reasoning": "Content identification and PE structure answer the first-pass questions.",
+                "required_capabilities": ["identify", "pe"],
+                "deferred_tools": [],
+                "tools": [
+                    {"tool_id": "file", "objective": "Confirm the content type.", "plugins": []},
+                    {"tool_id": "pefile", "objective": "Inspect PE structure.", "plugins": []},
+                ],
+            }],
+        })
+
+    monkeypatch.setattr(planner, "decide_json", fake_decide_json)
+    result = asyncio.run(planner.plan_forensic_tools({
+        "evidence": [{
+            "evidence_id": "E0001",
+            "original_name": "sample.exe",
+            "sha256": "a" * 64,
+            "path": str(sample),
+            "artifact_type": "suspicious_file",
+        }],
+    }))
+
+    assert captured["agent"] == "forensic_planner"
+    assert captured["attempts"] == 2
+    assert captured["transport_retries"] == 0
+    assert result["analysis_strategy"] == "rapid"
+    assert result["artifacts"][0]["required_capabilities"] == ["identify", "pe"]
+    assert [item["tool_id"] for item in result["artifacts"][0]["tools"]] == ["file", "pefile"]
+
+
+def test_model_selected_pcap_and_sqlite_adapters_are_content_gated(
+    monkeypatch, tmp_path
+):
+    pcap = tmp_path / "capture.bin"
+    pcap.write_bytes(bytes.fromhex("0a0d0d0a") + b"\x00" * 64)
+    database = tmp_path / "browser-cache.bin"
+    database.write_bytes(b"SQLite format 3\x00" + b"\x00" * 64)
+    commands = []
+
+    def fake_run(tool_id, command, timeout=None):
+        commands.append((tool_id, command, timeout))
+        return tools._result(tool_id, "completed")
+
+    monkeypatch.setattr(tools, "_run", fake_run)
+    pcap_result = tools.run_static_triage(
+        pcap,
+        sha256="a" * 64,
+        tool_plan=[{"tool_id": "tshark", "objective": "Parse packets."}],
+    )
+    sqlite_result = tools.run_static_triage(
+        database,
+        sha256="b" * 64,
+        tool_plan=[{"tool_id": "sqlite", "objective": "Inventory schema."}],
+    )
+
+    assert pcap_result["profile"]["signatures"]["pcap"] is True
+    assert sqlite_result["profile"]["signatures"]["sqlite"] is True
+    tshark = next(command for tool_id, command, _timeout in commands if tool_id == "tshark")
+    sqlite = next(command for tool_id, command, _timeout in commands if tool_id == "sqlite")
+    assert tshark[:4] == ["tshark", "-n", "-r", str(pcap)]
+    assert "-c" in tshark
+    assert sqlite[:3] == ["sqlite3", "-readonly", str(database)]
+
+
+def test_interpretation_package_keeps_material_facts_and_referenced_records(
+    monkeypatch
+):
+    limits = {
+        "interpretation_record_cap": 3,
+        "interpretation_record_char_cap": 200,
+        "interpretation_fact_cap": 2,
+        "interpretation_fact_char_cap": 200,
+    }
+    monkeypatch.setattr(
+        interpretation,
+        "get_value",
+        lambda _section, key, default=None: limits.get(key, default),
+    )
+    records = [
+        {"_record_ref": f"E0001:{index}", "detail": f"event-{index}"}
+        for index in range(10)
+    ]
+    facts = [
+        {
+            "fact_id": f"F{index}",
+            "fact_type": "tool_observation",
+            "status": "completed",
+            "evidence_refs": [f"E0001:{index}"],
+        }
+        for index in range(4)
+    ]
+    facts.append({
+        "fact_id": "F-MATERIAL",
+        "fact_type": "yara_rule_match",
+        "status": "completed",
+        "evidence_refs": ["E0001:9"],
+    })
+
+    package = interpretation._bounded_evidence_package(
+        {"records": records, "inventory": [], "warnings": []},
+        {"evidence_facts": facts, "event_histogram": {}},
+    )
+
+    assert len(package["evidence_facts"]) == 2
+    assert package["evidence_facts"][0]["fact_id"] == "F-MATERIAL"
+    assert len(package["records"]) == 3
+    assert package["records"][0]["_record_ref"] == "E0001:9"
+    assert package["resource_bounds"] == {
+        "total_records": 10,
+        "records_supplied": 3,
+        "records_omitted": 7,
+        "total_facts": 5,
+        "facts_supplied": 2,
+        "facts_omitted": 3,
+        "total_inventory_items": 0,
+        "inventory_items_supplied": 0,
+        "inventory_items_omitted": 0,
+    }

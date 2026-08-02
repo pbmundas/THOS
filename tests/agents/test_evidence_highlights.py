@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from services.hunting import evidence_selector
 from services.reasoning.reasoning import _slim_log
 
@@ -154,3 +156,48 @@ def test_grounded_literal_fallback_retains_verified_evidence(monkeypatch):
     )
     assert result["evidence"][0]["record_index"] == 0
     assert len(result["evidence"][0]["matched_literals"]) >= 2
+
+
+def test_grounded_literal_matching_rejects_numeric_substrings(monkeypatch):
+    record = {
+        "event": "Network connection",
+        "evidence_summary": "TCP SYN to destination port 3389",
+    }
+    captured = {}
+
+    async def fake_decide_json(**kwargs):
+        captured.update(kwargs)
+        return kwargs["validator"]({
+            "assessment": "Only exact governed values are accepted.",
+            "evidence": [{
+                "record_index": 0,
+                "kind": "behavioral",
+                "claim": "The record contains an exact destination port.",
+                "matched_literals": ["3389"],
+            }],
+        })
+
+    monkeypatch.setattr(evidence_selector, "decide_json", fake_decide_json)
+    asyncio.run(evidence_selector.select_hunt_evidence(
+        logs=[record],
+        hypothesis_text="Investigate TCP SYN on ports 3389 and 389",
+        technique_id="T1046",
+        technique_name="Network Service Discovery",
+        tactic="Discovery",
+        objective="Retrieve scanner evidence",
+        indicators={},
+        detection_rule_refs=[],
+    ))
+
+    prompt = json.loads(captured["prompt"])
+    assert prompt["grounded_candidate_refs"] == [0]
+    with pytest.raises(ValueError, match="non-literal"):
+        captured["validator"]({
+            "assessment": "Invalid substring citation.",
+            "evidence": [{
+                "record_index": 0,
+                "kind": "behavioral",
+                "claim": "Port 389 was present.",
+                "matched_literals": ["389"],
+            }],
+        })

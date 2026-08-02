@@ -51,6 +51,15 @@ def target_for(agent: str) -> ModelTarget:
         get_value("model_routing", "default_tier", default="reasoning")
     ).strip() or "reasoning"
     tier = str(routes.get(agent, default_tier)) if isinstance(routes, dict) else default_tier
+    overrides = get_value("model_routing", "overrides", default={})
+    override = (
+        overrides.get(agent, {})
+        if isinstance(overrides, dict) and isinstance(overrides.get(agent), dict)
+        else {}
+    )
+    override_tier = str(override.get("tier") or "").strip()
+    if override_tier:
+        tier = override_tier
     suffix = tier.upper()
     runtime_model = str(get_value("models", "default_model", default="") or "").strip()
     configured_model = os.environ.get(f"THOS_MODEL_{suffix}", _DEFAULT_MODEL)
@@ -58,7 +67,22 @@ def target_for(agent: str) -> ModelTarget:
     # Query generation, Ask THOS, communication, and lightweight extraction keep
     # their dedicated low-latency models so changing the default cannot
     # accidentally put the larger reasoning model on a latency-critical path.
-    selected_model = configured_model if tier in {"query", "fast"} else (runtime_model or configured_model)
+    selected_model = (
+        configured_model
+        if tier in {"query", "fast", "guard"}
+        else (runtime_model or configured_model)
+    )
+    explicit_model = str(override.get("model") or "").strip()
+    auto_select = bool(get_value("model_routing", "auto_select", default=False))
+    assignments = get_value("model_routing", "auto_assignments", default={})
+    automatic_model = (
+        str((assignments.get(agent) or {}).get("model") or "").strip()
+        if isinstance(assignments, dict) and isinstance(assignments.get(agent), dict)
+        else ""
+    )
+    selected_model = explicit_model or (
+        automatic_model if auto_select else ""
+    ) or selected_model
     profile = get_value("model_routing", "profiles", tier, default={})
     if not isinstance(profile, dict):
         profile = {}
@@ -66,8 +90,8 @@ def target_for(agent: str) -> ModelTarget:
     default_num_predict = str(profile.get("num_predict") or 1024)
     host = os.environ.get(f"THOS_OLLAMA_{suffix}_HOST", _DEFAULT_HOST).rstrip("/")
     model = selected_model
-    num_ctx = int(os.environ.get(f"THOS_{suffix}_NUM_CTX", default_num_ctx))
-    num_predict = int(os.environ.get(
+    num_ctx = int(override.get("num_ctx") or os.environ.get(f"THOS_{suffix}_NUM_CTX", default_num_ctx))
+    num_predict = int(override.get("num_predict") or os.environ.get(
         f"THOS_{suffix}_NUM_PREDICT",
         default_num_predict,
     ))

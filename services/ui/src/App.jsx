@@ -47,7 +47,7 @@ import Risks from "./Risks";
 
 const CONFIGURATION_TABS = new Set([
   "account", "general", "rules", "yara", "ioc", "schedules",
-  "audit", "knowledge", "users",
+  "audit", "models", "knowledge", "users",
 ]);
 const SAFE_DYNAMIC_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const SAFE_REPORT_NAME = /^[A-Za-z0-9._-]{1,255}$/;
@@ -306,7 +306,7 @@ function HuntProgressPanel({
   return (
     <section className="hunt-console panel" id="hunt-progress-details">
       <div className="console-header">
-        <div><StatusPill tone={running ? "amber" : huntError ? "red" : "green"}>{running ? <ClockIcon /> : huntError ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}{running ? "Hunt running" : huntError ? "Needs attention" : "Hunt completed"}</StatusPill><h2>{huntTitle}</h2><p>{huntId ? `Hunt ${huntId}` : "Waiting for hunt identifierâ€¦"}</p></div>
+        <div><StatusPill tone={running ? "amber" : huntError ? "red" : "green"}>{running ? <ClockIcon /> : huntError ? <ExclamationTriangleIcon /> : <CheckCircleIcon />}{running ? "Hunt running" : huntError ? "Needs attention" : "Hunt completed"}</StatusPill><h2>{huntTitle}</h2><p>{huntId ? `Hunt ${huntId}` : "Waiting for hunt identifier…"}</p></div>
         <div className="console-actions">
           {huntError && lastRun && !huntLocked && <button className="secondary-button" onClick={() => runHunt(lastRun)}><ArrowPathIcon /> Retry hunt</button>}
           {finalState?.report_path && <button className="primary-button" onClick={openLatestHuntReport}><DocumentTextIcon /> View report</button>}
@@ -322,7 +322,7 @@ function HuntProgressPanel({
         {progress.map((item, index) => (
           <div className="progress-entry" key={item.id || `${item.node}-${index}`}><button className="progress-row" onClick={() => setExpandedNode(expandedNode === `${item.node}-${index}` ? "" : `${item.node}-${index}`)}>
             <span className="progress-check"><CheckCircleIcon /></span>
-            <div><strong>{item.agentName}</strong><p>{item.reason}</p><small>{item.label} Â· {item.modelName ? `${item.modelName} (${item.modelTier} tier)` : "deterministic/tool stage"}</small></div>
+            <div><strong>{item.agentName}</strong><p>{item.reason}</p><small>{item.label} · {item.modelName ? `${item.modelName} (${item.modelTier} tier)` : "deterministic/tool stage"}</small></div>
             <time title="Local completion timestamp">{item.completedAt}</time>
           </button>{expandedNode === `${item.node}-${index}` && <div className="module-detail"><pre>{JSON.stringify(item.details, null, 2)}</pre></div>}</div>
         ))}
@@ -1081,7 +1081,11 @@ function App() {
               <div className="hunt-history-heading"><div><h2>Hunt Run Audit History</h2><p>Every started hunt is retained with its terminal outcome and failure reason.</p></div><div className="history-heading-actions"><span>{huntHistory.length} runs</span>{session.role === "Admin" && <button className="danger-button" disabled={!huntHistory.length || platformHuntActive} onClick={clearHuntHistory}><TrashIcon /> Clear history</button>}</div></div>
               <div className="hunt-history-list">
                 {huntHistory.map((hunt) => {
-                  const report = reports.find((item) => item.hunt_id === hunt.hunt_id);
+                  const auditFilename = String(hunt.report_path || "").split(/[\\/]/).pop();
+                  const report = reports.find((item) => (
+                    item.hunt_id === hunt.hunt_id
+                    || (auditFilename && item.filename === auditFilename)
+                  ));
                   const failed = hunt.status === "failed";
                   const failureReason = hunt.failure_reason || (failed ? "Hunt failed before a detailed reason was recorded." : "");
                   return <article key={hunt.hunt_id} className={`hunt-history-row ${hunt.status}`}>

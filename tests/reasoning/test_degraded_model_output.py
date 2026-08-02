@@ -76,8 +76,8 @@ def test_ollama_schema_avoids_unsupported_regex_grammar():
 
 
 @pytest.mark.asyncio
-async def test_reasoning_retries_until_third_attempt_succeeds(monkeypatch):
-    responses = ["", '{"summary": "unfinished"', _valid_response()]
+async def test_reasoning_retries_until_second_attempt_succeeds(monkeypatch):
+    responses = ["", _valid_response()]
     prompts = []
 
     async def fake_generate(prompt, **kwargs):
@@ -95,15 +95,15 @@ async def test_reasoning_retries_until_third_attempt_succeeds(monkeypatch):
 
     assert raw
     assert parsed["summary"].startswith("The available evidence")
-    assert attempts == 3
+    assert attempts == 2
     assert error is None
     assert "RETRY CORRECTION" not in prompts[0]
     assert "RETRY CORRECTION" in prompts[1]
-    assert "incomplete or invalid JSON" in prompts[2]
+    assert "model returned an empty response" in prompts[1]
 
 
 @pytest.mark.asyncio
-async def test_reasoning_stops_after_exactly_three_failed_attempts(monkeypatch):
+async def test_reasoning_stops_after_configured_failed_attempts(monkeypatch):
     calls = 0
 
     async def empty_generate(*args, **kwargs):
@@ -120,8 +120,8 @@ async def test_reasoning_stops_after_exactly_three_failed_attempts(monkeypatch):
     raw, parsed, attempts, error = await _reason_with_three_strikes("prompt")
 
     assert raw is None and parsed is None
-    assert calls == attempts == 3
-    assert "attempt 3" in error
+    assert calls == attempts == 2
+    assert "attempt 2" in error
 
 
 @pytest.mark.asyncio

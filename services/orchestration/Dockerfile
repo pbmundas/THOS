@@ -5,7 +5,8 @@ WORKDIR /repo
 COPY requirements.txt /repo/requirements.txt
 COPY requirements-forensics.txt /repo/requirements-forensics.txt
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         binutils \
         clamav \
         clamav-freshclam \
@@ -15,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         g++ \
         libimage-exiftool-perl \
         regripper \
+        sqlite3 \
         sleuthkit \
+        tshark \
     && pip install --prefer-binary --no-cache-dir \
         -r requirements.txt \
         -r requirements-forensics.txt \

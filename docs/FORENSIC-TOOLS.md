@@ -23,6 +23,8 @@ evidence-cited assessment. Submitted samples are not executed.
 | libewf tools | E01/Ex01 evidence-container metadata |
 | The Sleuth Kit | Disk layout, filesystem metadata, and deleted-file evidence |
 | RegRipper | Offline Windows Registry hive parsing |
+| TShark | Bounded PCAP/PCAPNG endpoint, port, protocol, and timeline extraction |
+| SQLite | Read-only database integrity and schema inventory for browser and application artifacts |
 
 ## Analysis flow
 
@@ -31,8 +33,11 @@ evidence-cited assessment. Submitted samples are not executed.
 2. Integrity verification recomputes the file size and SHA-256.
 3. The Forensic Planning Agent receives artifact facts and the installed tool
    capabilities, then selects an applicable first-pass plan.
-4. Tools run read-only with time, output, and file-size limits.
-5. The planner can select a second pass from the remaining installed tools.
+4. Independent tools run concurrently under configured worker, time, output,
+   record, and file-size limits; result ordering stays deterministic.
+5. A compact fast-tier follow-up planner can select a second pass from the
+   remaining installed tools only when the first pass leaves a material
+   evidentiary question unresolved.
 6. The interpretation stage cites only returned evidence, record, and tool-fact
    identifiers.
 7. The report states proven facts, assessments, unresolved anomalies, timeline,

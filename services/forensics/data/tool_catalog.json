@@ -112,6 +112,22 @@
       "capabilities": ["registry", "windows", "timeline"],
       "availability": "command:regripper",
       "deployment": "bundled"
+    },
+    {
+      "tool_id": "tshark",
+      "name": "TShark",
+      "purpose": "Bounded packet-capture protocol, endpoint, port, and timestamp extraction",
+      "capabilities": ["pcap", "network", "protocol", "timeline"],
+      "availability": "command:tshark",
+      "deployment": "bundled"
+    },
+    {
+      "tool_id": "sqlite",
+      "name": "SQLite",
+      "purpose": "Read-only SQLite integrity, table, index, trigger, and schema inventory",
+      "capabilities": ["sqlite", "database", "browser", "application"],
+      "availability": "command:sqlite3",
+      "deployment": "bundled"
     }
   ]
 }

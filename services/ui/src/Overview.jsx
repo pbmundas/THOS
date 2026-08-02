@@ -83,11 +83,17 @@ export default function Overview({ onNavigate }) {
     setLoading(true);
     setError("");
     try {
-      const [operations, risks] = await Promise.all([
+      const [operationsResult, risksResult] = await Promise.allSettled([
         api(`/api/dashboard/operations?hours=${hours}`),
         api(`/api/risks?limit=1000&hours=${hours}`),
       ]);
-      setData({ ...operations, risks });
+      const operations = operationsResult.status === "fulfilled" ? operationsResult.value : {};
+      const risks = risksResult.status === "fulfilled" ? risksResult.value : { summary: {}, items: [] };
+      setData((current) => ({ ...(current || {}), ...operations, risks }));
+      const failures = [operationsResult, risksResult]
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason?.message || "Data source unavailable");
+      if (failures.length) setError(failures.join(" · "));
     } catch (reason) {
       setError(reason.message);
     } finally {

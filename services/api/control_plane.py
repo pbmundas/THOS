@@ -24,6 +24,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from services.agents.registry import AGENT_SPECS
 from services.integrations.api_connector import IntegrationConfigError, test_connection
 from services.integrations.catalog import (
     INTEGRATION_CATALOG,
@@ -31,6 +32,8 @@ from services.integrations.catalog import (
     public_catalog,
 )
 from services.runtime_config import get_value, read_config, write_config
+from services.reasoning.capabilities import recommend_models, resource_snapshot
+from services.reasoning.model_router import target_for
 from services.scheduling.planner import select_scheduled_targets
 from services.security.configuration import required_secret
 
@@ -229,6 +232,18 @@ class GeneralSettings(BaseModel):
     default_model: str = ""
     default_iterations: int = Field(default=2, ge=1, le=5)
     default_siem: str = Field(default="folder", min_length=1, max_length=128)
+
+
+class AgentModelRouteSettings(BaseModel):
+    tier: str = Field(pattern="^(query|fast|reasoning|cyber|verifier|coding|guard)$")
+    model: str = Field(default="", max_length=256)
+    num_ctx: int | None = Field(default=None, ge=1024, le=262144)
+    num_predict: int | None = Field(default=None, ge=64, le=32768)
+
+
+class ModelRoutingSettings(BaseModel):
+    auto_select: bool = False
+    routes: dict[str, AgentModelRouteSettings] = Field(default_factory=dict)
 
 
 class UserCreate(BaseModel):
@@ -472,11 +487,138 @@ async def available_models(request: Request):
         raise HTTPException(status_code=503, detail=f"Could not list Ollama models: {exc}") from exc
     return {
         "models": [
-            {"name": item.get("name") or item.get("model"), "size": item.get("size", 0), "modified_at": item.get("modified_at", "")}
+            {
+                "name": item.get("name") or item.get("model"),
+                "size": item.get("size", 0),
+                "modified_at": item.get("modified_at", ""),
+                "details": item.get("details") or {},
+            }
             for item in models
         ],
         "default_model": read_config()["models"].get("default_model", ""),
     }
+
+
+def _agent_route_catalog(config: dict[str, Any]) -> dict[str, dict[str, str]]:
+    catalog: dict[str, dict[str, str]] = {}
+    for spec in AGENT_SPECS:
+        if not spec.model_route:
+            continue
+        item = catalog.setdefault(spec.model_route, {
+            "id": spec.model_route,
+            "name": spec.name,
+            "purpose": spec.purpose,
+        })
+        if spec.name not in item["name"]:
+            item["name"] += f" / {spec.name}"
+    for route in (config.get("model_routing") or {}).get("agents", {}):
+        catalog.setdefault(str(route), {
+            "id": str(route),
+            "name": str(route).replace("_", " ").title(),
+            "purpose": "Configured local-model agent route.",
+        })
+    return catalog
+
+
+async def _resident_models() -> list[dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(f"{OLLAMA_HOST}/api/ps")
+            response.raise_for_status()
+            return [
+                item for item in response.json().get("models", [])
+                if isinstance(item, dict)
+            ]
+    except Exception:  # best-effort capacity telemetry
+        return []
+
+
+@router.get("/settings/model-routing")
+async def model_routing_settings(request: Request):
+    require_feature(request, "settings", admin_only=True)
+    inventory = await available_models(request)
+    config = read_config()
+    routing = config.get("model_routing") or {}
+    tiers = routing.get("agents") or {}
+    overrides = routing.get("overrides") or {}
+    resources = resource_snapshot(await _resident_models())
+    recommendations = recommend_models(inventory.get("models") or [], tiers, resources)
+    catalog = _agent_route_catalog(config)
+    agents = []
+    for route_id, descriptor in sorted(catalog.items()):
+        tier = str(tiers.get(route_id) or routing.get("default_tier") or "reasoning")
+        override = overrides.get(route_id) if isinstance(overrides.get(route_id), dict) else {}
+        effective = target_for(route_id)
+        recommended = recommendations.get(route_id) or {}
+        agents.append({
+            **descriptor,
+            "tier": tier,
+            "model": str(override.get("model") or ""),
+            "num_ctx": override.get("num_ctx"),
+            "num_predict": override.get("num_predict"),
+            "effective_model": effective.model,
+            "effective_num_ctx": effective.num_ctx,
+            "effective_num_predict": effective.num_predict,
+            "recommended_model": recommended.get("model", ""),
+            "recommendation_reason": recommended.get("reason", ""),
+        })
+    return {
+        "auto_select": bool(routing.get("auto_select", False)),
+        "agents": agents,
+        "models": inventory.get("models") or [],
+        "profiles": routing.get("profiles") or {},
+        "resources": resources,
+        "recommendations": recommendations,
+    }
+
+
+@router.put("/settings/model-routing")
+async def save_model_routing(settings: ModelRoutingSettings, request: Request):
+    require_feature(request, "settings", admin_only=True)
+    inventory = await available_models(request)
+    installed_names = {
+        str(item.get("name")) for item in inventory.get("models") or []
+        if item.get("name")
+    }
+    config = read_config()
+    routing = config.setdefault("model_routing", {})
+    allowed_routes = set(_agent_route_catalog(config))
+    unknown = set(settings.routes) - allowed_routes
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown agent model routes: {sorted(unknown)}",
+        )
+    overrides: dict[str, dict[str, Any]] = {}
+    tiers = dict(routing.get("agents") or {})
+    for route_id, route in settings.routes.items():
+        if route.model and route.model not in installed_names:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Model {route.model} is not currently installed in Ollama",
+            )
+        tiers[route_id] = route.tier
+        values = {
+            "model": route.model,
+            "num_ctx": route.num_ctx,
+            "num_predict": route.num_predict,
+        }
+        normalized = {
+            key: value for key, value in values.items()
+            if value not in (None, "")
+        }
+        if normalized:
+            overrides[route_id] = normalized
+    resources = resource_snapshot(await _resident_models())
+    recommendations = recommend_models(
+        inventory.get("models") or [], tiers, resources
+    )
+    routing["agents"] = tiers
+    routing["overrides"] = overrides
+    routing["auto_select"] = settings.auto_select
+    routing["auto_assignments"] = recommendations if settings.auto_select else {}
+    write_config(config)
+    return await model_routing_settings(request)
 
 
 @router.get("/settings/users")

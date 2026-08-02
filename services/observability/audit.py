@@ -229,6 +229,7 @@ async def ensure_agentic_schema() -> None:
         """CREATE TABLE IF NOT EXISTS forensic_cases (case_id UUID PRIMARY KEY, case_title TEXT NOT NULL, examiner TEXT NOT NULL, evidence_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, report_path TEXT, summary TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS forensic_steps (step_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES forensic_cases(case_id) ON DELETE CASCADE, stage TEXT NOT NULL, agent_name TEXT NOT NULL, activity TEXT, status TEXT NOT NULL DEFAULT 'ok', duration_ms INTEGER, model_tier TEXT, model_name TEXT, output JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id TEXT NOT NULL, rule_id TEXT NOT NULL, rule_title TEXT, rule_source TEXT, level TEXT, siem_type TEXT NOT NULL, status TEXT NOT NULL, events_matched INTEGER NOT NULL DEFAULT 0, matched_events JSONB NOT NULL DEFAULT '[]'::jsonb, analysis JSONB NOT NULL DEFAULT '{}'::jsonb, compiled_query TEXT, query_backend TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS risk_snapshots (snapshot_key TEXT PRIMARY KEY, source_version TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', payload JSONB NOT NULL DEFAULT '{}'::jsonb, refresh_reason TEXT, error_msg TEXT, generated_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS platform_audit_logs (log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), level TEXT NOT NULL DEFAULT 'INFO', service TEXT NOT NULL, category TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, resource TEXT, status_code INTEGER, duration_ms INTEGER, message TEXT NOT NULL, context JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE INDEX IF NOT EXISTS idx_platform_audit_logs_created_at ON platform_audit_logs (created_at DESC)""",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
@@ -237,6 +238,80 @@ async def ensure_agentic_schema() -> None:
     )
     for statement in statements:
         await asyncio.to_thread(_execute, statement, ())
+
+
+async def get_risk_snapshot(snapshot_key: str = "current") -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        SELECT snapshot_key, source_version, status, payload, refresh_reason,
+               error_msg, generated_at, updated_at
+        FROM risk_snapshots WHERE snapshot_key = %s LIMIT 1
+    """, (snapshot_key,))
+    return rows[0] if rows else None
+
+
+async def mark_risk_refresh_started(
+    source_version: str,
+    reason: str,
+    snapshot_key: str = "current",
+) -> None:
+    await asyncio.to_thread(_execute, """
+        INSERT INTO risk_snapshots (
+            snapshot_key, source_version, status, refresh_reason, updated_at
+        ) VALUES (%s, %s, 'refreshing', %s, now())
+        ON CONFLICT (snapshot_key) DO UPDATE SET
+            source_version = EXCLUDED.source_version,
+            status = 'refreshing',
+            refresh_reason = EXCLUDED.refresh_reason,
+            error_msg = NULL,
+            updated_at = now()
+    """, (snapshot_key, source_version, reason[:500]))
+
+
+async def save_risk_snapshot(
+    source_version: str,
+    payload: dict,
+    reason: str,
+    snapshot_key: str = "current",
+) -> None:
+    await asyncio.to_thread(_execute, """
+        INSERT INTO risk_snapshots (
+            snapshot_key, source_version, status, payload, refresh_reason,
+            generated_at, updated_at
+        ) VALUES (%s, %s, 'completed', %s, %s, now(), now())
+        ON CONFLICT (snapshot_key) DO UPDATE SET
+            source_version = EXCLUDED.source_version,
+            status = 'completed',
+            payload = EXCLUDED.payload,
+            refresh_reason = EXCLUDED.refresh_reason,
+            error_msg = NULL,
+            generated_at = now(),
+            updated_at = now()
+    """, (
+        snapshot_key,
+        source_version,
+        json.dumps(payload, default=str),
+        reason[:500],
+    ))
+
+
+async def fail_risk_refresh(
+    source_version: str,
+    error_msg: str,
+    reason: str,
+    snapshot_key: str = "current",
+) -> None:
+    await asyncio.to_thread(_execute, """
+        INSERT INTO risk_snapshots (
+            snapshot_key, source_version, status, refresh_reason, error_msg,
+            updated_at
+        ) VALUES (%s, %s, 'failed', %s, %s, now())
+        ON CONFLICT (snapshot_key) DO UPDATE SET
+            source_version = EXCLUDED.source_version,
+            status = 'failed',
+            refresh_reason = EXCLUDED.refresh_reason,
+            error_msg = EXCLUDED.error_msg,
+            updated_at = now()
+    """, (snapshot_key, source_version, reason[:500], error_msg[:4000]))
 
 
 async def create_forensic_case(
@@ -363,6 +438,28 @@ async def reconcile_incomplete_hunts() -> None:
                updated_at = now()
            WHERE status = 'failed'
              AND (failure_reason IS NULL OR btrim(failure_reason) = '')""",
+        (),
+    )
+
+
+async def reconcile_incomplete_forensic_cases() -> None:
+    """Close forensic jobs whose worker disappeared during a process restart."""
+    await asyncio.to_thread(
+        _execute,
+        """UPDATE forensic_cases
+           SET status = 'failed',
+               error_msg = COALESCE(
+                   NULLIF(btrim(error_msg), ''),
+                   CONCAT(
+                       'Forensic workflow did not reach a terminal event because '
+                       'the orchestrator stopped during ',
+                       COALESCE(NULLIF(current_stage, ''), 'startup'),
+                       '.'
+                   )
+               ),
+               current_stage = NULL,
+               updated_at = now()
+           WHERE status IN ('queued', 'running')""",
         (),
     )
 
@@ -754,15 +851,21 @@ async def operations_dashboard(hours: int = 24) -> dict:
         GROUP BY 1 ORDER BY events DESC, runs DESC
     """, (bounded_hours,))
     top_hypotheses = await asyncio.to_thread(_fetch, """
-        SELECT COALESCE(hypothesis_id, 'dynamic') AS hypothesis_id,
-               LEFT(MAX(COALESCE(hypothesis_text, 'Dynamic hypothesis')), 220) AS title,
+        SELECT COALESCE(h.hypothesis_id, 'dynamic') AS hypothesis_id,
+               LEFT(MAX(COALESCE(
+                   NULLIF(hs.output->>'hypothesis_title', ''),
+                   NULLIF(h.hypothesis_text, ''),
+                   'Dynamic hypothesis'
+               )), 220) AS title,
                COUNT(*)::INTEGER AS runs,
-               COUNT(*) FILTER (WHERE status = 'completed')::INTEGER AS completed,
-               COUNT(*) FILTER (WHERE status = 'failed')::INTEGER AS failed,
-               MAX(created_at) AS last_run_at
-        FROM hunts
-        WHERE created_at >= now() - (%s * INTERVAL '1 hour')
-        GROUP BY hypothesis_id
+               COUNT(*) FILTER (WHERE h.status = 'completed')::INTEGER AS completed,
+               COUNT(*) FILTER (WHERE h.status = 'failed')::INTEGER AS failed,
+               MAX(h.created_at) AS last_run_at
+        FROM hunts h
+        LEFT JOIN hunt_steps hs
+          ON hs.hunt_id = h.hunt_id AND hs.node_name = 'hypothesis'
+        WHERE h.created_at >= now() - (%s * INTERVAL '1 hour')
+        GROUP BY h.hypothesis_id
         ORDER BY runs DESC, last_run_at DESC LIMIT 8
     """, (bounded_hours,))
     agents = await asyncio.to_thread(_fetch, """

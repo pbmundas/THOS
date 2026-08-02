@@ -400,6 +400,13 @@ async def plan_hunt_node(state: HuntState) -> dict:
         schema=plan_schema,
         validator=validate,
         num_predict=_decision_token_budget(),
+        attempts=int(get_value(
+            "autonomy", "supervisor_decision_attempts", default=2
+        )),
+        transport_retries=0,
+        timeout_seconds=float(get_value(
+            "autonomy", "supervisor_decision_timeout_seconds", default=120
+        )),
     )
     return {
         "plan": list(REQUIRED_ORDER),
@@ -535,12 +542,25 @@ async def adaptive_replan_node(state: HuntState) -> dict:
     }
     try:
         decision = await decide_json(
-            agent="supervisor",
+            agent="adaptive_replan",
             system=REPLAN_SYSTEM,
-            prompt=json.dumps(context, indent=2, default=str)[:120000],
+            prompt=json.dumps(context, separators=(",", ":"), default=str)[
+                :max(4000, int(get_value(
+                    "autonomy",
+                    "adaptive_replan_prompt_char_cap",
+                    default=24000,
+                )))
+            ],
             schema=REPLAN_SCHEMA,
             validator=validate,
             num_predict=_decision_token_budget(),
+            attempts=int(get_value(
+                "autonomy", "adaptive_replan_attempts", default=1
+            )),
+            transport_retries=0,
+            timeout_seconds=float(get_value(
+                "autonomy", "adaptive_replan_timeout_seconds", default=90
+            )),
         )
     except AgentDecisionError as exc:
         return {

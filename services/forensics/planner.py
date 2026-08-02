@@ -6,12 +6,17 @@ from typing import Any
 
 from services.agents.decision import AgentDecisionError, decide_json
 from services.forensics.tools import artifact_profile, tool_status
+from services.runtime_config import get_value
 
 
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
         "case_objective": {"type": "string"},
+        "analysis_strategy": {
+            "type": "string",
+            "enum": ["rapid", "balanced", "deep"],
+        },
         "artifacts": {
             "type": "array",
             "items": {
@@ -19,6 +24,21 @@ PLAN_SCHEMA = {
                 "properties": {
                     "evidence_id": {"type": "string"},
                     "reasoning": {"type": "string"},
+                    "required_capabilities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "deferred_tools": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool_id": {"type": "string"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["tool_id", "reason"],
+                        },
+                    },
                     "tools": {
                         "type": "array",
                         "items": {
@@ -37,11 +57,14 @@ PLAN_SCHEMA = {
                         },
                     },
                 },
-                "required": ["evidence_id", "reasoning", "tools"],
+                "required": [
+                    "evidence_id", "reasoning", "required_capabilities",
+                    "deferred_tools", "tools"
+                ],
             },
         },
     },
-    "required": ["case_objective", "artifacts"],
+    "required": ["case_objective", "analysis_strategy", "artifacts"],
 }
 
 
@@ -58,12 +81,20 @@ Plan a complete but resource-conscious examination:
   than a fixed plugin list;
 - use capa for supported static executables;
 - select only tools present in the installed capability catalog;
+- declare every material capability required to answer the artifact's
+  evidentiary questions, then cover each declared capability with a selected
+  tool; explicitly defer remaining applicable tools with a reason;
+- select independent complementary tools together because THOS can execute
+  read-only adapters concurrently;
+- use rapid for cheap identification/triage, balanced for normal cases, and
+  deep only when artifact facts or prior observations justify expensive work;
 - do not treat a tool match as a maliciousness verdict;
 - never invent an artifact, tool, plugin, or prior result.
 
 Return only schema-valid JSON. Every selected tool needs a concrete evidentiary
-objective. An empty tool list is allowed only when no available capability can
-examine that artifact, and the reasoning must explain the limitation."""
+objective. The initial pass must select at least one installed tool for every
+artifact when tools are available. A follow-up pass may be empty when the prior
+results answer the material questions."""
 
 
 def _profiles(verified: dict) -> list[dict]:
@@ -81,6 +112,51 @@ def _profiles(verified: dict) -> list[dict]:
     return profiles
 
 
+def _compact_prior_analysis(prior: dict | None) -> dict:
+    if not prior:
+        return {}
+    result_cap = max(
+        1, int(get_value("forensics", "planner_prior_result_cap", default=40))
+    )
+    char_cap = max(
+        200, int(get_value("forensics", "planner_prior_char_cap", default=1200))
+    )
+    results = []
+    for artifact in prior.get("static_analysis") or []:
+        for item in artifact.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            results.append({
+                "evidence_id": artifact.get("evidence_id"),
+                "tool_id": item.get("tool_id"),
+                "status": item.get("status"),
+                "duration_ms": item.get("duration_ms"),
+                "exit_code": item.get("exit_code"),
+                "data": str(item.get("data") or "")[:char_cap],
+                "output": str(item.get("output") or "")[:char_cap],
+                "error": str(item.get("error") or "")[:400],
+                "note": str(item.get("note") or "")[:400],
+            })
+            if len(results) >= result_cap:
+                break
+        if len(results) >= result_cap:
+            break
+    return {
+        "tool_results": results,
+        "warnings": list(prior.get("warnings") or [])[:20],
+        "record_count": len(prior.get("records") or []),
+        "archive_count": len(prior.get("archives") or []),
+        "disk_image_count": len(prior.get("disk_images") or []),
+        "omitted_tool_results": max(
+            0,
+            sum(
+                len(item.get("results") or [])
+                for item in prior.get("static_analysis") or []
+            ) - len(results),
+        ),
+    }
+
+
 async def plan_forensic_tools(
     verified: dict,
     prior_analysis: dict | None = None,
@@ -92,6 +168,21 @@ async def plan_forensic_tools(
         for item in status.get("tools") or []
         if item.get("status") in {"available", "degraded"}
     }
+    capability_names = {
+        str(capability)
+        for item in available.values()
+        for capability in item.get("capabilities") or []
+    }
+    phase = "followup" if prior_analysis else "initial"
+    max_tools = max(
+        1,
+        min(
+            int(get_value(
+                "forensics", "planner_max_tools_per_artifact", default=8
+            )),
+            32,
+        ),
+    )
     evidence_ids = {
         str(item.get("evidence_id")) for item in verified.get("evidence") or []
     }
@@ -147,9 +238,46 @@ async def plan_forensic_tools(
                     "objective": objective[:1000],
                     "parameters": {"plugins": plugins} if plugins else {},
                 })
+            if phase == "initial" and available and not tools:
+                raise ValueError(
+                    f"initial plan selected no installed tool for {evidence_id}"
+                )
+            if len(tools) > max_tools:
+                raise ValueError(
+                    f"artifact plan exceeded the {max_tools}-tool limit"
+                )
+            required_capabilities = list(dict.fromkeys(
+                str(value).strip()
+                for value in artifact.get("required_capabilities") or []
+                if str(value).strip()
+            ))
+            unknown_capabilities = set(required_capabilities) - capability_names
+            if unknown_capabilities:
+                raise ValueError(
+                    f"plan invented capabilities: {sorted(unknown_capabilities)}"
+                )
+            covered_capabilities = {
+                str(capability)
+                for tool in tools
+                for capability in available[tool["tool_id"]].get("capabilities") or []
+            }
+            uncovered = set(required_capabilities) - covered_capabilities
+            if uncovered:
+                raise ValueError(
+                    f"selected tools do not cover required capabilities: {sorted(uncovered)}"
+                )
+            deferred = []
+            for item in artifact.get("deferred_tools") or []:
+                tool_id = str(item.get("tool_id") or "")
+                reason = str(item.get("reason") or "").strip()
+                if tool_id not in available or tool_id in selected or not reason:
+                    raise ValueError("deferred tool entry was invalid")
+                deferred.append({"tool_id": tool_id, "reason": reason[:500]})
             normalized.append({
                 "evidence_id": evidence_id,
                 "reasoning": str(artifact.get("reasoning") or "")[:2000],
+                "required_capabilities": required_capabilities[:20],
+                "deferred_tools": deferred[:20],
                 "tools": tools,
             })
         missing = evidence_ids - seen
@@ -157,28 +285,54 @@ async def plan_forensic_tools(
             raise ValueError(f"plan omitted evidence: {sorted(missing)}")
         return {
             "case_objective": str(payload.get("case_objective") or "")[:2000],
+            "analysis_strategy": str(
+                payload.get("analysis_strategy") or "balanced"
+            ),
+            "phase": phase,
             "artifacts": normalized,
         }
 
     prompt = (
         "Chain-of-custody artifact facts:\n"
-        f"{json.dumps(_profiles(verified), indent=2, default=str)}\n\n"
+        f"{json.dumps(_profiles(verified), separators=(',', ':'), default=str)}\n\n"
         "Live tool capabilities and availability:\n"
-        f"{json.dumps(status, indent=2, default=str)}\n\n"
+        f"{json.dumps(status, separators=(',', ':'), default=str)}\n\n"
         "Prior tool results, if this is a follow-up planning pass:\n"
-        f"{json.dumps(prior_analysis or {}, indent=2, default=str)[:50000]}"
+        f"{json.dumps(_compact_prior_analysis(prior_analysis), separators=(',', ':'), default=str)}"
     )
     try:
+        schema = json.loads(json.dumps(PLAN_SCHEMA))
+        schema["properties"]["artifacts"]["items"]["properties"][
+            "tools"
+        ]["maxItems"] = max_tools
         return await decide_json(
-            agent="forensic_planner",
+            agent="forensic_followup" if prior_analysis else "forensic_planner",
             system=SYSTEM_PROMPT,
             prompt=prompt,
-            schema=PLAN_SCHEMA,
+            schema=schema,
             validator=validate,
+            attempts=int(get_value(
+                "forensics",
+                "followup_attempts" if prior_analysis else "planner_attempts",
+                default=1,
+            )),
+            num_predict=int(get_value(
+                "forensics",
+                "followup_num_predict" if prior_analysis else "planner_num_predict",
+                default=512 if prior_analysis else 768,
+            )),
+            transport_retries=0,
+            timeout_seconds=float(get_value(
+                "forensics",
+                "followup_timeout_seconds" if prior_analysis else "planner_timeout_seconds",
+                default=90 if prior_analysis else 120,
+            )),
         )
     except AgentDecisionError as exc:
         return {
             "case_objective": "Planner unavailable; no analytical tool was selected.",
+            "analysis_strategy": "rapid",
+            "phase": phase,
             "artifacts": [
                 {
                     "evidence_id": evidence_id,

@@ -120,7 +120,7 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         "adaptive_replan", "Adaptive Replanning Agent",
         "Uses zero-hit, cap/noise, selected-source, entity-pivot, and ATT&CK coverage context to schedule bounded source-aware retrieval refinements.",
         "services.orchestration.supervisor", "adaptive_replan_node", "tests/orchestration/test_agentic_foundations.py",
-        graph_node="adaptive_replan", model_route="supervisor",
+        graph_node="adaptive_replan", model_route="adaptive_replan",
         safety_boundary="Bounded refinement budget; selected sources only; every generated query is dialect-validated before execution",
     ),
     AgentSpec(
@@ -200,6 +200,14 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         safety_boundary="Read-only; never promotes unverified findings or performs containment",
     ),
     AgentSpec(
+        "risk_reconsideration", "Risk Reconsideration Agent",
+        "Re-evaluates only a risk candidate whose detailed write-up could not ground a required entity or valid score presentation.",
+        "services.risk.risk_agent", "_eligibility_decision", "tests/risk/test_risk_agent.py",
+        model_route="risk_reconsideration", execution="bounded cybersecurity-tier eligibility reconsideration",
+        resource_profile="One short local-model decision only after fast-tier validation is exhausted",
+        safety_boundary="Read-only; cannot create a risk and can only confirm or reject the supplied candidate's eligibility",
+    ),
+    AgentSpec(
         "cyber_knowledge", "Cybersecurity Knowledge Agent",
         "Retrieves provenance-labelled excerpts from the governed primary-source cybersecurity corpus and rejects low-relevance or uncited material.",
         "services.knowledge.cyber_retrieval", "search", "tests/knowledge/test_cyber_corpus.py",
@@ -242,6 +250,15 @@ AGENT_SPECS: tuple[AgentSpec, ...] = (
         model_route="forensic_planner", execution="local LLM + capability validation",
         resource_profile="Two bounded planning calls per case",
         safety_boundary="Can select only installed tools from the governed capability catalog",
+    ),
+    AgentSpec(
+        "forensic_followup", "Forensic Follow-up Planning Agent",
+        "Reviews compact first-pass tool facts and decides whether remaining installed tools are needed to resolve a material evidentiary question.",
+        "services.forensics.planner", "plan_forensic_tools",
+        "tests/forensics/test_forensic_tools.py",
+        model_route="forensic_followup", execution="fast local LLM + capability validation",
+        resource_profile="One compact bounded decision; may select no follow-up tools",
+        safety_boundary="Can select only unexecuted installed tools from the governed capability catalog",
     ),
     AgentSpec(
         "forensic_correlation", "Forensic Evidence Correlation Agent",

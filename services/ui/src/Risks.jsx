@@ -45,11 +45,11 @@ export default function Risks({ onOpenRisk }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true);
     setError("");
     try {
-      setPayload(await api("/api/risks?limit=1000"));
+      setPayload(await api(`/api/risks?limit=1000${force ? "&refresh=true" : ""}`));
     } catch (reason) {
       setError(reason.message);
     } finally {
@@ -57,7 +57,11 @@ export default function Risks({ onOpenRisk }) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(() => load(false), 15_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
   const items = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -103,7 +107,7 @@ export default function Risks({ onOpenRisk }) {
         <h1>Actionable security risks</h1>
         <p>Prioritized risks produced from verifier-supported hunt findings and detections with matched events.</p>
       </div>
-      <div className="page-heading-actions"><button className="secondary-button" onClick={exportRisks} disabled={!items.length}><ArrowDownTrayIcon /> Export risks</button><button className="secondary-button" onClick={load} disabled={loading}><ArrowPathIcon className={loading ? "spinning" : ""} /> Refresh risks</button></div>
+      <div className="page-heading-actions"><button className="secondary-button" onClick={exportRisks} disabled={!items.length}><ArrowDownTrayIcon /> Export risks</button><button className="secondary-button" onClick={() => load(true)} disabled={loading}><ArrowPathIcon className={loading ? "spinning" : ""} /> Re-analyze risks</button></div>
     </section>
 
     <section className="risk-summary-grid">
@@ -121,6 +125,8 @@ export default function Risks({ onOpenRisk }) {
     </section>
 
     {error && <div className="alert error-alert"><ExclamationTriangleIcon />{error}</div>}
+    {(["pending", "refreshing"].includes(payload.refresh?.status)) && <div className="alert"><ArrowPathIcon className="spinning" />The Risk Analysis Agent is processing newly persisted reports and detections. Existing results remain available and this page refreshes automatically.</div>}
+    {payload.refresh?.status === "failed" && <div className="alert error-alert"><ExclamationTriangleIcon />The latest risk refresh failed. The previous verified snapshot remains available. {payload.refresh?.error}</div>}
 
     <section className="risk-register panel">
       <div className="risk-register-head"><span>Risk</span><span>Description and rationale</span><span>Entity</span><span>Score</span><span>Severity</span><span>Age</span><span /></div>

@@ -12,9 +12,6 @@ from services.hunting.evidence_selector import _model_record
 from services.runtime_config import get_value
 
 logger = logging.getLogger(__name__)
-REASONING_MAX_ATTEMPTS = int(
-    get_value("autonomy", "reasoning_attempts", default=3)
-)
 _REASONING_REF = re.compile(
     r"^(?:histogram|\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*)$",
     re.IGNORECASE,
@@ -123,6 +120,11 @@ Write a thorough analysis, not a one-line verdict. Specifically:
   4. Recommendations must be specific and actionable — name the exact
      audit policy, GPO setting, Sysmon config, or log source to check,
      not generic phrases like "review manually."
+     Never invent an event ID, policy name, configuration path, command,
+     or product setting. A concrete identifier may appear only when it is
+     present in the supplied hypothesis, evidence, or governed reference
+     knowledge; otherwise describe the required telemetry or control by
+     its observable purpose without guessing an identifier.
   5. Follow a supported lead through adjacent host, user, process, network,
      and time context only when those relationships are present in the
      supplied evidence. Request a follow-up only when it can retrieve
@@ -470,9 +472,16 @@ def _parse_complete_reasoning(raw: str) -> dict:
 
 
 async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | None, int, str | None]:
-    """Run exactly three independent reasoning attempts, stopping on success."""
+    """Run a configured number of independent attempts, stopping on success."""
+    maximum_attempts = max(
+        1,
+        min(
+            int(get_value("autonomy", "reasoning_attempts", default=2)),
+            5,
+        ),
+    )
     failures: list[str] = []
-    for attempt in range(1, REASONING_MAX_ATTEMPTS + 1):
+    for attempt in range(1, maximum_attempts + 1):
         try:
             attempt_prompt = prompt
             if failures:
@@ -495,8 +504,13 @@ async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | No
                     default=512,
                 )),
                 # The strike loop owns retries. Avoid hidden nested attempts so
-                # "three strikes" always means exactly three model requests.
+                # the configured attempt count equals the model request count.
                 transport_retries=0,
+                timeout_seconds=float(get_value(
+                    "autonomy",
+                    "reasoning_generation_timeout_seconds",
+                    default=300,
+                )),
             )
             parsed = _parse_complete_reasoning(raw)
             return raw, parsed, attempt, None
@@ -506,12 +520,10 @@ async def _reason_with_three_strikes(prompt: str) -> tuple[str | None, dict | No
             logger.warning(
                 "reasoning strike %d/%d failed: %s",
                 attempt,
-                REASONING_MAX_ATTEMPTS,
+                maximum_attempts,
                 reason,
             )
-            if attempt < REASONING_MAX_ATTEMPTS:
-                await asyncio.sleep(attempt)
-    return None, None, REASONING_MAX_ATTEMPTS, "; ".join(failures)
+    return None, None, maximum_attempts, "; ".join(failures)
 
 
 def _negative_screening_result(state: HuntState, histogram: dict) -> dict | None:
@@ -678,16 +690,16 @@ async def reason_node(state: HuntState) -> dict:
 
     evidence_refs = sorted(set(sigma_matched_refs + behavioral_refs + artifact_refs))
     model_record_cap = max(1, int(get_value(
-        "autonomy", "reasoning_model_record_cap", default=8
+        "autonomy", "reasoning_model_record_cap", default=4
     )))
     record_char_cap = max(400, int(get_value(
-        "autonomy", "reasoning_record_char_cap", default=1400
+        "autonomy", "reasoning_record_char_cap", default=900
     )))
     context_item_cap = max(1, int(get_value(
-        "autonomy", "reasoning_context_item_cap", default=8
+        "autonomy", "reasoning_context_item_cap", default=4
     )))
     retrieval_attempt_cap = max(1, int(get_value(
-        "autonomy", "reasoning_retrieval_attempt_cap", default=8
+        "autonomy", "reasoning_retrieval_attempt_cap", default=4
     )))
     diverse = _diverse_sample(
         reasoning_logs,
@@ -708,7 +720,15 @@ async def reason_node(state: HuntState) -> dict:
             bounded["_rule_match"] = True
         sample.append(bounded)
 
-    kb_context = await _build_kb_context(state)
+    kb_context = await _build_kb_context(
+        state,
+        max_chunks=max(1, int(get_value(
+            "autonomy", "reasoning_kb_chunk_cap", default=2
+        ))),
+        max_chars=max(200, int(get_value(
+            "autonomy", "reasoning_kb_char_cap", default=400
+        ))),
+    )
     kb_section = (
         f"Relevant reference knowledge (organizational and governed cybersecurity sources):\n"
         f"{kb_context}\n\n"
@@ -836,9 +856,16 @@ async def reason_node(state: HuntState) -> dict:
     reasoning_mode = "model"
     if parsed is None:
         strike_error = reasoning_error or "No valid response was returned."
+        configured_attempts = max(
+            1,
+            min(
+                int(get_value("autonomy", "reasoning_attempts", default=2)),
+                5,
+            ),
+        )
         reasoning_error = (
             f"Reasoning model did not return a complete, validated response after "
-            f"{REASONING_MAX_ATTEMPTS} attempts. {strike_error}"
+            f"{configured_attempts} attempts. {strike_error}"
         )
         logger.error("reasoning model exhausted all strikes: %s", reasoning_error)
         return {

@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Materialized output from the model-owned Risk Analysis Agent.  Pages read
+-- this snapshot immediately; report/detection completion refreshes it in the
+-- background so an interactive request never waits on model inference.
+CREATE TABLE IF NOT EXISTS risk_snapshots (
+    snapshot_key   TEXT PRIMARY KEY,
+    source_version TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'pending', -- pending|refreshing|completed|failed
+    payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    refresh_reason TEXT,
+    error_msg      TEXT,
+    generated_at   TIMESTAMPTZ,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS platform_audit_logs (
     log_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     level        TEXT NOT NULL DEFAULT 'INFO',

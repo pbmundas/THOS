@@ -52,7 +52,11 @@ def test_risk_route_uses_extended_local_model_timeout(monkeypatch):
     assert captured["method"] == "GET"
     assert captured["path"] == "/risks"
     assert captured["upstream_timeout"].read == 300.0
-    assert captured["params"] == {"limit": 1000, "hours": 24}
+    assert captured["params"] == {
+        "limit": 1000,
+        "hours": 24,
+        "refresh": False,
+    }
 
 
 def test_unrated_catalog_hypotheses_are_valid_schedule_targets():

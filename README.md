@@ -294,6 +294,13 @@ into entity-level risks. Each risk includes a score, severity, age, discovery
 explanation, evidence source, export support, and a link to its originating
 detection or report.
 
+Risk results are materialized after reports and positive detections are
+persisted, so Overview and Risks load without waiting for model inference and
+refresh automatically from the latest evidence. Per-agent local-model routing,
+server-aware recommendations, and forensic/hunt performance controls are
+documented in
+[`docs/PERFORMANCE-AND-AGENT-MODEL-ROUTING.md`](docs/PERFORMANCE-AND-AGENT-MODEL-ROUTING.md).
+
 Audit logs record timestamps, actor, action, outcome, request context, and
 workflow identifiers to support troubleshooting and reconstruction.
 
