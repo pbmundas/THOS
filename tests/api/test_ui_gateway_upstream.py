@@ -59,6 +59,47 @@ def test_risk_route_uses_extended_local_model_timeout(monkeypatch):
     }
 
 
+def test_admin_can_resolve_risk_through_gateway(monkeypatch):
+    captured = {}
+
+    async def upstream(method, path, **kwargs):
+        captured.update({"method": method, "path": path, **kwargs})
+        return {"risk_id": "risk-1", "status": "resolved", "active": False}
+
+    monkeypatch.setattr(ui_gateway, "_upstream_json", upstream)
+    request = SimpleNamespace(state=SimpleNamespace(
+        analyst="admin-user", role="Admin", permissions=set()
+    ))
+
+    result = asyncio.run(ui_gateway.resolve_actionable_risk(
+        "risk-1", ui_gateway.RiskResolutionRequest(note="mitigated"), request
+    ))
+
+    assert result["active"] is False
+    assert captured == {
+        "method": "PATCH",
+        "path": "/risks/risk-1/resolve",
+        "json": {
+            "actor": "admin-user",
+            "role": "Admin",
+            "note": "mitigated",
+        },
+    }
+
+
+def test_expert_cannot_resolve_risk(monkeypatch):
+    request = SimpleNamespace(state=SimpleNamespace(
+        analyst="expert-user", role="Expert", permissions={"reports"}
+    ))
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(ui_gateway.resolve_actionable_risk(
+            "risk-1", ui_gateway.RiskResolutionRequest(), request
+        ))
+
+    assert exc_info.value.status_code == 403
+
+
 def test_unrated_catalog_hypotheses_are_valid_schedule_targets():
     assert control_plane.hypothesis_severity({"id": "H111"}) == "unrated"
 

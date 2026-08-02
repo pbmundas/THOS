@@ -22,6 +22,7 @@ Passed: all citations validated.
         encoding="utf-8",
     )
     now = datetime.now(timezone.utc)
+    review_systems = []
 
     async def decide(**kwargs):
         candidate_id = "report:hunt-1:0"
@@ -32,6 +33,7 @@ Passed: all citations validated.
                 "rationale": "Validated exposure requires detailed scoring.",
             })
         if kwargs["schema"] is risk_agent.RISK_REVIEW_SCHEMA:
+            review_systems.append(kwargs["system"])
             return kwargs["validator"]({
                 "approved": True,
                 "rationale": "The proposed risk is grounded in the evidence.",
@@ -80,6 +82,7 @@ Passed: all citations validated.
         "name": "172.20.0.5",
     }
     assert payload["items"][0]["score"] == 72
+    assert "source or initiating actor" in review_systems[0]
 
 
 def test_unverified_report_never_reaches_risk_model(tmp_path, monkeypatch):
@@ -109,6 +112,27 @@ def test_unverified_report_never_reaches_risk_model(tmp_path, monkeypatch):
 
     assert called is False
     assert payload["items"] == []
+
+
+def test_explicitly_negative_verified_report_is_not_a_risk_candidate(tmp_path):
+    report = tmp_path / "negative.md"
+    report.write_text(
+        "# Hunt\n\n### Findings\n- [hard-evidence] No evidence of port scanning was observed",
+        encoding="utf-8",
+    )
+    candidates = risk_agent._report_candidates([{
+        "hunt_id": "hunt-negative",
+        "status": "completed",
+        "report_path": str(report),
+        "outcome": {
+            "verification_status": "passed",
+            "report_status": "generated",
+            "reasoning_mode": "model",
+            "reasoning_degraded": False,
+        },
+    }], tmp_path)
+
+    assert candidates == []
 
 
 def test_legacy_textual_verifier_marker_cannot_seed_risk(tmp_path, monkeypatch):
@@ -183,6 +207,50 @@ def test_materialized_risk_view_filters_without_model_inference():
     assert result["summary"]["total"] == 1
     assert result["summary"]["high"] == 1
     assert result["summary"]["report_findings"] == 1
+    assert result["summary"]["reviewed_candidates"] == 1
+
+
+def test_resolved_risk_is_retained_as_inactive_and_excluded_from_open_summary():
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "items": [
+            {
+                "id": "risk-open",
+                "severity": "high",
+                "score": 80,
+                "identified_at": now,
+                "source_type": "hunt_report",
+                "entity": {"type": "host", "name": "server-1"},
+            },
+            {
+                "id": "risk-resolved",
+                "severity": "critical",
+                "score": 95,
+                "identified_at": now,
+                "source_type": "detection",
+                "entity": {"type": "user", "name": "analyst-1"},
+            },
+        ],
+    }
+    resolutions = [{
+        "risk_id": "risk-resolved",
+        "status": "resolved",
+        "resolved_by": "sme-user",
+        "resolved_at": now,
+        "note": "Mitigated",
+    }]
+
+    overlaid = risk_agent.apply_risk_resolutions(payload, resolutions)
+    result = risk_agent.filter_risk_payload(overlaid, limit=10)
+
+    assert len(result["items"]) == 2
+    assert result["items"][1]["active"] is False
+    assert result["items"][1]["resolved_by"] == "sme-user"
+    assert result["summary"]["total"] == 1
+    assert result["summary"]["inactive"] == 1
+    assert result["summary"]["high"] == 1
+    assert result["summary"]["critical"] == 0
+    assert result["summary"]["reviewed_candidates"] == 2
 
 
 def test_risk_source_version_changes_with_persisted_evidence(tmp_path):
@@ -222,6 +290,12 @@ def test_detection_candidate_bounds_raw_event_context(monkeypatch):
         "run_id": "run-1",
         "rule_id": "rule-1",
         "events_matched": 3,
+        "analysis": {
+            "method": "scheduled query",
+            "total_hits": 9,
+            "triage": {"note": "Rule-title-derived claim"},
+            "ai_analysis": {"analysis_lines": ["Unsupported claim"]},
+        },
         "matched_events": [
             {
                 "host": f"server-{index}",
@@ -236,6 +310,41 @@ def test_detection_candidate_bounds_raw_event_context(monkeypatch):
     assert len(events) == 2
     assert all(len(event["detail"]) == 800 for event in events)
     assert all("duplicated_raw_payload" not in event for event in events)
+    assert candidates[0]["analysis"] == {
+        "method": "scheduled query",
+        "total_hits": 9,
+    }
+
+
+def test_detection_candidate_requires_rule_title_support_in_raw_events():
+    unrelated = {
+        "run_id": "run-cron",
+        "rule_id": "rule-cron",
+        "rule_title": "Modifying Crontab",
+        "events_matched": 1,
+        "matched_events": [{
+            "host": "linux-victim",
+            "event": "sca",
+            "detail": "CIS check: Ensure LDAP client is not installed.",
+        }],
+    }
+    defender = {
+        "run_id": "run-defender",
+        "rule_id": "rule-defender",
+        "rule_title": "Windows Defender Threat Detected / Blocked",
+        "events_matched": 1,
+        "matched_events": [{
+            "host": "server-1",
+            "event": "EventID-1116",
+            "detail": "Provider Microsoft-Windows-Windows Defender",
+        }],
+    }
+
+    candidates = risk_agent._detection_candidates([unrelated, defender])
+
+    assert [item["candidate_id"] for item in candidates] == [
+        "detection:run-defender"
+    ]
 
 
 def test_candidate_batches_preserve_complete_json_objects():

@@ -163,6 +163,43 @@ def siem_field_mapping(siem_type: str) -> dict:
     return siem_kb.get_field_mapping(siem_type)
 
 
+@mcp.tool()
+def validate_siem_query(
+    query: str,
+    portable_query: str,
+    siem_type: str,
+) -> dict:
+    """Validate one analyst query as read-only and schema-constrained.
+
+    Manual log search uses the same deterministic final gate as governed hunt
+    queries.  Live schema fields and normalized mapping alternatives form the
+    allowlist for JSON-query SIEMs; supplied literals must remain grounded in
+    the analyst-authored portable query.
+    """
+    from services.hunting.query_generator import validate_and_normalize_query
+
+    mapping = siem_kb.get_field_mapping(siem_type)
+    allowed_fields: list[str] = []
+    for normalized, vendor in mapping.items():
+        if normalized == "available_fields":
+            allowed_fields.extend(
+                field.strip() for field in str(vendor).split(",")
+                if field.strip()
+            )
+            continue
+        allowed_fields.extend(
+            field.strip() for field in str(vendor).split(" / ")
+            if field.strip()
+        )
+    return validate_and_normalize_query(
+        query,
+        portable_query,
+        siem_type,
+        allowed_fields=list(dict.fromkeys(allowed_fields)) or None,
+        grounding_text=portable_query,
+    )
+
+
 # ---------------------------------------------------------------
 # Query generation (LLM-assisted, grounded in SIEM-KB)
 # ---------------------------------------------------------------

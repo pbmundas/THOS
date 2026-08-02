@@ -44,6 +44,7 @@ import ThreatIntelligence from "./ThreatIntelligence";
 import Help from "./Help";
 import Overview from "./Overview";
 import Risks from "./Risks";
+import LogSearch from "./LogSearch";
 
 const CONFIGURATION_TABS = new Set([
   "account", "general", "rules", "yara", "ioc", "schedules",
@@ -61,6 +62,7 @@ function parseBrowserRoute(pathname = window.location.pathname) {
     return { page: "overview", canonicalPath: "/overview", invalid: true };
   }
   if (!segments.length || segments[0] === "overview") return { page: "overview", canonicalPath: "/overview" };
+  if (segments.length === 1 && segments[0] === "log-search") return { page: "log-search", canonicalPath: "/log-search" };
   if (segments.length === 1 && segments[0] === "risks") return { page: "risks", canonicalPath: "/risks" };
   if (segments[0] === "detections" && segments.length <= 2 && (!segments[1] || SAFE_DYNAMIC_ID.test(segments[1]))) {
     return { page: "detections", detectionId: segments[1] || "", canonicalPath: segments[1] ? `/detections/${encodeURIComponent(segments[1])}` : "/detections" };
@@ -98,6 +100,7 @@ function parseBrowserRoute(pathname = window.location.pathname) {
 function pagePath(target, detail = {}) {
   const base = {
     overview: "/overview",
+    "log-search": "/log-search",
     risks: "/risks",
     detections: "/detections",
     hunts: "/hunt-board",
@@ -418,6 +421,7 @@ function App() {
     { id: "wazuh", label: "Wazuh" },
     { id: "folder", label: "Local folder" },
   ]);
+  const [defaultTelemetrySource, setDefaultTelemetrySource] = useState("folder");
   const [siemType, setSiemType] = useState("wazuh");
   const [folderPath, setFolderPath] = useState("/data/log_sources");
   const [coverStyle, setCoverStyle] = useState("1");
@@ -469,12 +473,14 @@ function App() {
       const payload = await api("/api/telemetry-sources");
       const items = Array.isArray(payload.items) && payload.items.length ? payload.items : [{ id: "folder", label: "Local folder" }];
       setActiveSources(items);
+      setDefaultTelemetrySource(payload.default || items[0].id || "folder");
       const primary = items.some((item) => item.id === "wazuh")
         ? "wazuh"
         : (payload.default || items[0].id || "folder");
       setSiemType(primary);
     } catch {
       setActiveSources([{ id: "folder", label: "Local folder" }]);
+      setDefaultTelemetrySource("folder");
       setSiemType("folder");
     }
   }, []);
@@ -588,6 +594,7 @@ function App() {
     const roleAllows = (feature) => privileged || permissions.has(feature);
     const allowed = {
       overview: true,
+      "log-search": roleAllows("hunts"),
       risks: roleAllows("reports"),
       hunts: roleAllows("hunts"),
       forensics: roleAllows("forensics"),
@@ -823,7 +830,7 @@ function App() {
 
   const initials = analyst.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AN";
   const can = (feature) => ["Admin", "SME"].includes(session.role) || session.permissions?.includes(feature);
-  const pageLabel = page === "overview" ? "Overview" : page === "risks" ? "Risks" : page === "hunts" ? "Hunt Operations" : page === "forensics" ? "Forensic" : page === "reports" ? "Investigation Reports" : page === "detections" ? "Detection Operations" : page === "threat-intel" ? "Threat Intelligence" : page === "integrations" ? "Security Integrations" : page === "help" ? "Help & Documentation" : page === "settings" ? "Configuration" : page === "create-hypothesis" ? "Hypothesis Authoring" : "Workspace";
+  const pageLabel = page === "overview" ? "Overview" : page === "log-search" ? "Log Search" : page === "risks" ? "Risks" : page === "hunts" ? "Hunt Operations" : page === "forensics" ? "Forensic" : page === "reports" ? "Investigation Reports" : page === "detections" ? "Detection Operations" : page === "threat-intel" ? "Threat Intelligence" : page === "integrations" ? "Security Integrations" : page === "help" ? "Help & Documentation" : page === "settings" ? "Configurations" : page === "create-hypothesis" ? "Hypothesis Authoring" : "Workspace";
   const huntLocked = running || platformHuntActive;
   const completedModules = new Set(progress.map((item) => item.node)).size;
   const workflowTimestamp = progress.at(-1)?.completedAt || formatLocalTimestamp(finalState?.hunt_started_at);
@@ -879,29 +886,32 @@ function App() {
           <button className={page === "overview" ? "active" : ""} onClick={() => navigate("overview")}>
             <ChartBarSquareIcon /><span>Overview</span><ChevronRightIcon className="nav-chevron" />
           </button>
-          {can("reports") && <button className={page === "risks" ? "active" : ""} onClick={() => navigate("risks")}>
-            <FireIcon /><span>Risks</span><ChevronRightIcon className="nav-chevron" />
-          </button>}
-          {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => navigate("detections")}>
-            <ShieldExclamationIcon /><span>Detections</span><ChevronRightIcon className="nav-chevron" />
-          </button>}
           {can("hunts") && <button className={page === "hunts" ? "active" : ""} onClick={() => navigate("hunts")}>
             <Squares2X2Icon /><span>Hunt Board</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           {can("forensics") && <button className={page === "forensics" ? "active" : ""} onClick={() => navigate("forensics")}>
             <FingerPrintIcon /><span>Forensic</span><ChevronRightIcon className="nav-chevron" />
           </button>}
+          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => navigate("reports")}>
+            <DocumentTextIcon /><span>Reports</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
+          {can("reports") && <button className={page === "risks" ? "active" : ""} onClick={() => navigate("risks")}>
+            <FireIcon /><span>Risks</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
+          {can("reports") && <button className={page === "detections" ? "active" : ""} onClick={() => navigate("detections")}>
+            <ShieldExclamationIcon /><span>Detections</span><ChevronRightIcon className="nav-chevron" />
+          </button>}
           {can("threat_intel") && <button className={page === "threat-intel" ? "active" : ""} onClick={() => navigate("threat-intel")}>
             <GlobeAltIcon /><span>Threat Intelligence</span><ChevronRightIcon className="nav-chevron" />
           </button>}
-          {can("reports") && <button className={page === "reports" ? "active" : ""} onClick={() => navigate("reports")}>
-            <DocumentTextIcon /><span>Reports</span><ChevronRightIcon className="nav-chevron" />
+          {can("hunts") && <button className={page === "log-search" ? "active" : ""} onClick={() => navigate("log-search")}>
+            <MagnifyingGlassIcon /><span>Log Search</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           {["Admin", "SME"].includes(session.role) && <button className={page === "integrations" ? "active" : ""} onClick={() => navigate("integrations")}>
             <CircleStackIcon /><span>Integrations</span><ChevronRightIcon className="nav-chevron" />
           </button>}
           <button className={page === "settings" ? "active" : ""} onClick={() => navigate("settings")}>
-            <Cog6ToothIcon /><span>Configuration</span><ChevronRightIcon className="nav-chevron" />
+            <Cog6ToothIcon /><span>Configurations</span><ChevronRightIcon className="nav-chevron" />
           </button>
         </nav>
       </aside>
@@ -922,7 +932,7 @@ function App() {
           </div>
         </header>
 
-        {page === "overview" ? <Overview onNavigate={navigate} /> : page === "risks" ? <Risks onOpenRisk={openRiskSource} /> : page === "hunts" ? (
+        {page === "overview" ? <Overview onNavigate={navigate} /> : page === "log-search" ? <LogSearch activeSources={activeSources} defaultSource={defaultTelemetrySource} /> : page === "risks" ? <Risks onOpenRisk={openRiskSource} session={session} /> : page === "hunts" ? (
           <div className="page-wrap">
             <section className="page-heading">
               <div>

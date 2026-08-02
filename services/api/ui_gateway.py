@@ -143,7 +143,7 @@ app = FastAPI(
 )
 
 _SPA_STATIC_ROUTES = {
-    "/", "/overview", "/risks", "/detections", "/hunt-board",
+    "/", "/overview", "/log-search", "/risks", "/detections", "/hunt-board",
     "/forensic", "/forensic/evidence", "/forensic/yara",
     "/threat-intelligence", "/reports", "/integrations", "/configuration",
     "/help", "/hypotheses/new", "/workspace",
@@ -278,6 +278,139 @@ class HuntRequest(BaseModel):
         if not (self.hypothesis_id or "").strip() and not (self.hypothesis_text or "").strip():
             raise ValueError("hypothesis_id or hypothesis_text is required")
         return self
+
+
+class LogSearchTranslateRequest(BaseModel):
+    portable_query: str = Field(min_length=3, max_length=8_000)
+    siem_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    lookback_minutes: int = Field(default=1440, ge=1, le=525_600)
+
+
+class LogSearchRunRequest(LogSearchTranslateRequest):
+    query: str = Field(min_length=1, max_length=8_000)
+    limit: int = Field(default=250, ge=1, le=2_000)
+    log_source_path: str | None = Field(default=None, max_length=4_096)
+
+
+class LogSearchExportRequest(BaseModel):
+    portable_query: str = Field(min_length=1, max_length=8_000)
+    query: str = Field(min_length=1, max_length=8_000)
+    siem_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    lookback_minutes: int = Field(default=1440, ge=1, le=525_600)
+    executed_at: str = Field(default="", max_length=100)
+    field_mapping: dict[str, str] = Field(default_factory=dict)
+    logs: list[dict] = Field(default_factory=list, max_length=2_000)
+
+
+class RiskResolutionRequest(BaseModel):
+    note: str = Field(default="", max_length=1000)
+
+
+def _excel_safe_value(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        value = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(value))[:32_767]
+    if text.startswith(("=", "+", "-", "@")):
+        text = "'" + text
+    return text
+
+
+def _flatten_log_record(record: dict, prefix: str = "") -> dict[str, object]:
+    flattened: dict[str, object] = {}
+    for key, value in record.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            flattened.update(_flatten_log_record(value, name))
+        else:
+            flattened[name] = _excel_safe_value(value)
+    return flattened
+
+
+def _build_log_search_workbook(payload: LogSearchExportRequest) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    workbook = Workbook()
+    logs_sheet = workbook.active
+    logs_sheet.title = "Logs"
+    flattened = [_flatten_log_record(record) for record in payload.logs]
+    priority = [
+        "@timestamp", "timestamp", "event_time", "agent.name", "host.name",
+        "host", "user.name", "user", "process.name", "process.command_line",
+        "source.ip", "src_ip", "destination.ip", "dst_ip", "rule.id",
+        "rule.description", "message", "full_log",
+    ]
+    discovered = list(dict.fromkeys(
+        key for record in flattened for key in record
+    ))
+    columns = [key for key in priority if key in discovered]
+    columns.extend(key for key in discovered if key not in columns)
+    columns = columns[:200]
+    header_fill = PatternFill("solid", fgColor="263B80")
+    header_font = Font(color="FFFFFF", bold=True)
+    if columns:
+        logs_sheet.append(columns)
+        for cell in logs_sheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        for record in flattened:
+            logs_sheet.append([record.get(column) for column in columns])
+        logs_sheet.freeze_panes = "A2"
+        logs_sheet.auto_filter.ref = logs_sheet.dimensions
+        logs_sheet.row_dimensions[1].height = 30
+        for index, column in enumerate(columns, start=1):
+            sample = [str(column), *[
+                str(record.get(column) or "") for record in flattened[:100]
+            ]]
+            logs_sheet.column_dimensions[logs_sheet.cell(1, index).column_letter].width = min(
+                60, max(12, max(len(value) for value in sample) + 2)
+            )
+    else:
+        logs_sheet.append(["No records returned"])
+        logs_sheet["A1"].fill = header_fill
+        logs_sheet["A1"].font = header_font
+        logs_sheet.column_dimensions["A"].width = 24
+
+    metadata = workbook.create_sheet("Search metadata")
+    metadata.append(["Property", "Value"])
+    metadata_rows = [
+        ("Telemetry source", payload.siem_type),
+        ("Portable query", payload.portable_query),
+        ("Executed target query", payload.query),
+        ("Lookback minutes", payload.lookback_minutes),
+        ("Executed at", payload.executed_at),
+        ("Exported at", datetime.now(timezone.utc).isoformat()),
+        ("Exported records", len(payload.logs)),
+    ]
+    for row in metadata_rows:
+        metadata.append([_excel_safe_value(row[0]), _excel_safe_value(row[1])])
+    for cell in metadata[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    metadata.freeze_panes = "A2"
+    metadata.column_dimensions["A"].width = 24
+    metadata.column_dimensions["B"].width = 100
+    for row in metadata.iter_rows(min_row=2, max_col=2):
+        row[1].alignment = Alignment(vertical="top", wrap_text=True)
+
+    mappings = workbook.create_sheet("Field mapping")
+    mappings.append(["Normalized field", "Target SIEM field"])
+    for normalized, vendor in sorted(payload.field_mapping.items()):
+        mappings.append([_excel_safe_value(normalized), _excel_safe_value(vendor)])
+    for cell in mappings[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    mappings.freeze_panes = "A2"
+    mappings.auto_filter.ref = mappings.dimensions
+    mappings.column_dimensions["A"].width = 28
+    mappings.column_dimensions["B"].width = 70
+
+    stream = BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
 
 
 class LoginRequest(BaseModel):
@@ -452,6 +585,88 @@ async def actionable_risks(
             "hours": max(1, min(hours, 24 * 365 * 10)) if hours else 0,
             "refresh": bool(refresh),
         }
+    )
+
+
+@app.patch("/api/risks/{risk_id}/resolve")
+async def resolve_actionable_risk(
+    risk_id: str,
+    payload: RiskResolutionRequest,
+    request: Request,
+):
+    control_plane.require_feature(request, "reports")
+    if request.state.role not in {"Admin", "SME"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only Admin and SME users can resolve risks",
+        )
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", risk_id):
+        raise HTTPException(status_code=422, detail="Invalid risk identifier")
+    return await _upstream_json(
+        "PATCH",
+        f"/risks/{risk_id}/resolve",
+        json={
+            "actor": request.state.analyst,
+            "role": request.state.role,
+            "note": payload.note,
+        },
+    )
+
+
+def _require_active_log_source(request: Request, siem_type: str) -> None:
+    control_plane.require_feature(request, "hunts")
+    if not control_plane.is_active_telemetry_source(siem_type):
+        raise HTTPException(
+            status_code=422,
+            detail="Select a connected telemetry source before running log search",
+        )
+
+
+@app.get("/api/log-search/context/{siem_type}")
+async def log_search_context(siem_type: str, request: Request):
+    _require_active_log_source(request, siem_type)
+    return await _upstream_json("GET", f"/log-search/context/{siem_type}")
+
+
+@app.post("/api/log-search/translate")
+async def translate_log_search(payload: LogSearchTranslateRequest, request: Request):
+    _require_active_log_source(request, payload.siem_type)
+    return await _upstream_json(
+        "POST",
+        "/log-search/translate",
+        upstream_timeout=httpx.Timeout(300.0, connect=10.0),
+        json=payload.model_dump(),
+    )
+
+
+@app.post("/api/log-search/run")
+async def run_log_search(payload: LogSearchRunRequest, request: Request):
+    _require_active_log_source(request, payload.siem_type)
+    return await _upstream_json(
+        "POST",
+        "/log-search/run",
+        upstream_timeout=httpx.Timeout(300.0, connect=10.0),
+        json=payload.model_dump(),
+    )
+
+
+@app.post("/api/log-search/export")
+async def export_log_search(payload: LogSearchExportRequest, request: Request):
+    _require_active_log_source(request, payload.siem_type)
+    workbook = await asyncio.to_thread(_build_log_search_workbook, payload)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return StreamingResponse(
+        BytesIO(workbook),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="thos-log-search-{payload.siem_type}-{stamp}.xlsx"'
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

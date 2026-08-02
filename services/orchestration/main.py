@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
 import uuid
 import asyncio
@@ -52,6 +53,7 @@ from services.reasoning.model_router import (
 )
 from services.risk.risk_agent import (
     analyze_actionable_risks,
+    apply_risk_resolutions,
     filter_risk_payload,
     risk_source_version,
 )
@@ -385,6 +387,12 @@ class AuditEventRequest(BaseModel):
     context: dict = Field(default_factory=dict)
 
 
+class RiskResolutionRequest(BaseModel):
+    actor: str = Field(min_length=1, max_length=160)
+    role: str = Field(pattern="^(Admin|SME)$")
+    note: str = Field(default="", max_length=1000)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=16_000)
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
@@ -439,6 +447,18 @@ class ForensicStaticScanRequest(BaseModel):
         default="suspicious_file",
         pattern="^(evidence|suspicious_file|memory_dump|process_dump)$",
     )
+
+
+class LogSearchTranslateRequest(BaseModel):
+    portable_query: str = Field(min_length=3, max_length=8_000)
+    siem_type: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    lookback_minutes: int = Field(default=1440, ge=1, le=525_600)
+
+
+class LogSearchRunRequest(LogSearchTranslateRequest):
+    query: str = Field(min_length=1, max_length=8_000)
+    limit: int = Field(default=250, ge=1, le=2_000)
+    log_source_path: str | None = Field(default=None, max_length=4_096)
 
 
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
@@ -565,9 +585,10 @@ async def actionable_risks(
             "items": [],
         }
     )
-    result = filter_risk_payload(
-        payload, bounded_limit, bounded_hours or None
+    payload = apply_risk_resolutions(
+        payload, await audit.list_risk_resolutions()
     )
+    result = filter_risk_payload(payload, bounded_limit, bounded_hours or None)
     return {
         **result,
         "materialized": True,
@@ -583,10 +604,139 @@ async def actionable_risks(
     }
 
 
+@app.patch("/risks/{risk_id}/resolve", dependencies=[Depends(require_api_key)])
+async def resolve_actionable_risk(
+    risk_id: str,
+    request: RiskResolutionRequest,
+):
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", risk_id):
+        raise HTTPException(status_code=422, detail="Invalid risk identifier")
+    snapshot = await audit.get_risk_snapshot()
+    items = ((snapshot or {}).get("payload") or {}).get("items") or []
+    if not any(str(item.get("id") or "") == risk_id for item in items if isinstance(item, dict)):
+        raise HTTPException(status_code=404, detail="Risk not found")
+    resolution = await audit.resolve_risk(risk_id, request.actor, request.note)
+    await audit.log_platform_event({
+        "service": "thos-risk",
+        "category": "risk_management",
+        "actor": request.actor,
+        "action": "risk_resolved",
+        "resource": risk_id,
+        "message": f"Risk {risk_id} was marked resolved and made inactive",
+        "context": {"role": request.role, "note": request.note},
+    })
+    return {**resolution, "active": False}
+
+
 @app.post("/audit/events", dependencies=[Depends(require_api_key)], status_code=202)
 async def record_audit_event(request: AuditEventRequest):
     await audit.log_platform_event(request.model_dump())
     return {"recorded": True}
+
+
+@app.get("/log-search/context/{siem_type}", dependencies=[Depends(require_api_key)])
+async def log_search_context(siem_type: str):
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", siem_type):
+        raise HTTPException(status_code=422, detail="invalid telemetry source")
+    mapping, schema = await asyncio.gather(
+        call_tool("siem_field_mapping", {"siem_type": siem_type}),
+        call_tool("get_cached_siem_schema", {"siem_type": siem_type}),
+    )
+    normalized_mapping = mapping if isinstance(mapping, dict) else {}
+    field_rows = schema.get("fields") if isinstance(schema, dict) else []
+    return {
+        "siem_type": siem_type,
+        "field_mapping": {
+            str(key): str(value)
+            for key, value in normalized_mapping.items()
+            if key != "available_fields" and str(value).strip()
+        },
+        "schema": {
+            "fields": field_rows[:500] if isinstance(field_rows, list) else [],
+            "field_count": int(schema.get("field_count") or 0)
+            if isinstance(schema, dict) else 0,
+            "last_verified": schema.get("last_verified")
+            if isinstance(schema, dict) else None,
+            "stale": bool(schema.get("stale", True))
+            if isinstance(schema, dict) else True,
+        },
+    }
+
+
+@app.post("/log-search/translate", dependencies=[Depends(require_api_key)])
+async def translate_log_search(request: LogSearchTranslateRequest):
+    result = await call_tool("generate_siem_query", {
+        "hypothesis_text": request.portable_query,
+        "siem_type": request.siem_type,
+        "objective": (
+            "Translate the analyst-authored portable correlation query into "
+            "one bounded, read-only target-SIEM query. Preserve its literal "
+            "values and boolean intent, and use only mapped available fields."
+        ),
+        "investigation_context": {
+            "manual_log_search": True,
+            "lookback_minutes": request.lookback_minutes,
+        },
+    })
+    if not isinstance(result, dict) or not str(result.get("query") or "").strip():
+        detail = (
+            result.get("query_validation_error")
+            if isinstance(result, dict) else ""
+        ) or "Could not translate the portable query into validated SIEM syntax"
+        raise HTTPException(status_code=422, detail=str(detail))
+    return {
+        "siem_type": request.siem_type,
+        "portable_query": request.portable_query,
+        "query": result["query"],
+        "generation_mode": result.get("query_generation_mode", "model"),
+        "warnings": result.get("query_generation_warnings") or [],
+        "lookback_minutes": request.lookback_minutes,
+    }
+
+
+@app.post("/log-search/run", dependencies=[Depends(require_api_key)])
+async def run_log_search(request: LogSearchRunRequest):
+    validation = await call_tool("validate_siem_query", {
+        "query": request.query,
+        "portable_query": request.portable_query,
+        "siem_type": request.siem_type,
+    })
+    if not isinstance(validation, dict) or validation.get("validation_error"):
+        raise HTTPException(
+            status_code=422,
+            detail=str(
+                validation.get("validation_error")
+                if isinstance(validation, dict)
+                else "Query validation failed"
+            ),
+        )
+    normalized_query = str(validation.get("query") or "").strip()
+    if not normalized_query:
+        raise HTTPException(status_code=422, detail="Query validation returned no executable query")
+    started = time.perf_counter()
+    result = await call_tool("fetch_siem_logs", {
+        "query": normalized_query,
+        "limit": request.limit,
+        "siem_type": request.siem_type,
+        "log_source_path": request.log_source_path or "",
+        "bypass_cache": True,
+        "lookback_minutes": request.lookback_minutes,
+    })
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="Telemetry source returned an invalid response")
+    if result.get("error"):
+        raise HTTPException(status_code=422, detail=str(result["error"]))
+    logs = [item for item in result.get("logs") or [] if isinstance(item, dict)]
+    return {
+        **result,
+        "siem_type": request.siem_type,
+        "query": normalized_query,
+        "logs": logs[:request.limit],
+        "record_count": len(logs[:request.limit]),
+        "lookback_minutes": request.lookback_minutes,
+        "duration_ms": int((time.perf_counter() - started) * 1000),
+        "executed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
 
 
 @app.get("/audit/logs", dependencies=[Depends(require_api_key)])

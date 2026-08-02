@@ -139,14 +139,21 @@ def _grounded_query_literals(
     hypothesis_text: str,
     objective: str,
     investigation_context: dict | None,
+    field_tokens: Iterable[str] | None = None,
 ) -> list[str]:
     """Build model choices only from governed input text and scalar context."""
     values: list[str] = []
+    normalized_field_tokens = {
+        str(value).strip().casefold()
+        for value in field_tokens or []
+        if str(value).strip()
+    }
 
     def add(value):
         text = str(value or "").strip()
         if (
             1 < len(text) <= 200
+            and text.casefold() not in normalized_field_tokens
             and not re.fullmatch(r"(?:[A-Za-z]\.)+[A-Za-z]?", text)
         ):
             values.append(text)
@@ -190,6 +197,15 @@ def _grounded_query_literals(
     # not evidence observables and must never become query values. Observable
     # literals come from the hypothesis and explicitly governed context.
     combined = hypothesis_text
+    for quote_match in re.finditer(r"(['\"])(.+?)\1", combined):
+        add(quote_match.group(2))
+    for operator_match in re.finditer(
+        r"(?:==|!=|>=|<=|\bcontains\b|\bhas\b|\bstarts?with\b|\bends?with\b)"
+        r"\s+([A-Za-z0-9_.:/-]+)",
+        combined,
+        re.IGNORECASE,
+    ):
+        add(operator_match.group(1))
     for token in re.findall(
         r"\b(?:[A-Za-z][A-Za-z0-9_.:/-]{2,}|[0-9]{2,})\b",
         combined,
@@ -201,6 +217,12 @@ def _grounded_query_literals(
             or any(character.isupper() for character in token[1:])
         ):
             add(token)
+    if not values and not re.search(
+        r"(?:==|!=|>=|<=|\bcontains\b|\bhas\b|\bstarts?with\b|\bends?with\b)",
+        combined,
+        re.IGNORECASE,
+    ):
+        add(combined)
     for value in list(values):
         match = re.fullmatch(r"(.+)\.([A-Za-z0-9]{2,8})", value)
         if match and len(match.group(1)) > 1:
@@ -454,6 +476,8 @@ def _literal_kinds(
             and not literal.startswith(".")
         ):
             kinds.update({"domain", "entity"})
+        if not kinds:
+            kinds.add("phrase")
         output[lowered] = kinds
     return output
 
@@ -845,7 +869,7 @@ async def generate_query(
     # entries without flushing unrelated hypotheses.
     # Version query-generation behavior so cached output is invalidated when
     # validation or prompt contracts change.
-    cache_version = "v19"
+    cache_version = "v20"
     field_signature = json.dumps(field_map, sort_keys=True, separators=(",", ":"))
     query_field_catalog = _query_field_catalog(
         field_map,
@@ -857,6 +881,10 @@ async def generate_query(
         hypothesis_text,
         objective,
         investigation_context,
+        [
+            *query_field_catalog["normalized_fields"].keys(),
+            *query_field_catalog["allowed_fields"],
+        ],
     )
     required_data_sources: list[str] = []
 

@@ -26,6 +26,7 @@
     "host": ["entity"],
     "rule_id": ["identifier"],
     "rule_description": ["technique", "phrase", "artifact"],
+    "message": ["technique", "phrase", "artifact", "protocol"],
     "rule_groups": ["technique", "phrase"],
     "mitre_technique": ["technique"]
   },
@@ -44,6 +45,7 @@
     "host": 70,
     "rule_id": 90,
     "rule_description": 85,
+    "message": 90,
     "rule_groups": 80,
     "mitre_technique": 100
   },
@@ -66,6 +68,7 @@
     "host": "agent.name",
     "rule_id": "rule.id",
     "rule_description": "rule.description",
+    "message": "full_log",
     "rule_groups": "rule.groups",
     "mitre_technique": "rule.mitre.id"
   },

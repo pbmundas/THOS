@@ -86,7 +86,7 @@ RISK_REVIEW_SCHEMA = {
     "required": ["approved", "rationale"],
 }
 
-RISK_DECISION_POLICY_VERSION = "eligibility-and-review-v2"
+RISK_DECISION_POLICY_VERSION = "eligibility-and-review-v6"
 
 
 SYSTEM_PROMPT = """You are THOS's senior cyber-risk analysis agent. Review
@@ -100,6 +100,12 @@ Requirements:
   not establish a plausible security risk;
 - controlled-test evidence can still reveal a risk when it proves an exposed
   control, vulnerable asset, missing containment, or operational gap;
+- treat verified suspicious or malicious activity and confirmed attack
+  attempts as actionable when they identify an affected entity and warrant
+  investigation or mitigation; proven compromise is not required;
+- an affected entity may be the evidence-grounded source or initiating actor,
+  target or victim, account, process, or asset whose behavior or exposure
+  requires investigation; it is not limited to the attack target;
 - explain what the risk is, why it matters, how it was discovered, and which
   entity is affected;
 - score 1-100 by evidence-supported likelihood, impact, exposure, asset
@@ -108,6 +114,8 @@ Requirements:
 - select an entity only when its literal value appears in the candidate;
 - never convert a rule, reputation, IOC, anomaly, or model label directly into
   a verdict;
+- for detection candidates, raw matched_events take precedence over the rule
+  title and any execution metadata; exclude unrelated raw matches;
 - cite every risk with one or more exact candidate identifiers.
 
 Keep each explanation concise and within the response schema's field limits.
@@ -121,9 +129,14 @@ Decide only whether one supplied, verifier-supported evidence candidate proves
 an actionable security exposure that warrants a risk-register entry.
 
 Exclude negative or unsupported findings, absence of activity, routine expected
-behavior, and detections that do not establish exposure. Controlled testing is
-actionable only when it proves a residual vulnerable asset, exposed control,
-missing containment, or operational gap. Use only supplied evidence. Return the
+behavior, and detections whose matched records are unrelated to the rule.
+For detection candidates, treat raw matched_events as authoritative over rule
+titles and execution metadata; a rule title alone never proves its behavior.
+Verified suspicious or malicious activity and confirmed attack attempts are
+actionable when they identify an affected entity and warrant investigation or
+mitigation; do not require proof of compromise. Controlled testing is actionable
+only when it proves a residual vulnerable asset, exposed control, missing
+containment, or operational gap. Use only supplied evidence. Return the
 exact candidate ID, one boolean decision, and one short evidence-grounded
 rationale. Candidate association is handled by the caller because exactly one
 candidate is supplied. Do not perform the detailed risk write-up in this step."""
@@ -131,12 +144,17 @@ candidate is supplied. Do not perform the detailed risk write-up in this step.""
 
 RISK_REVIEW_SYSTEM_PROMPT = """You are THOS's independent cyber-risk review
 agent. Review one proposed risk against its supplied evidence candidate.
-Approve only when the evidence directly supports both an affected entity and
-an actionable security exposure. Reject rule hits, tool names, reputation,
-rarity, missing telemetry, or speculation when they do not establish exposure.
-Reject a proposal whose own explanation says the behavior may be benign or
-does not establish a plausible risk. Do not add facts or rewrite the proposal.
-Return one boolean decision and a short evidence-grounded rationale."""
+Eligibility has already decided that the candidate warrants a risk-register
+entry. Review factual grounding and internal consistency only; do not re-decide
+eligibility, demand malicious intent, a named attack tool, attribution, or
+proven compromise. The affected entity may be the source or initiating actor,
+target or victim, account, process, or asset named in the evidence. Approve
+when the proposal stays within the raw evidence. Reject when raw matched events
+are unrelated to the rule or proposal, when derived summaries conflict with
+raw records, or when the proposal adds unsupported facts or describes benign
+behavior as malicious. Raw records take precedence over rule titles, triage
+text, and prior model output. Do not add facts or rewrite the proposal. Return
+one boolean decision and a short evidence-grounded rationale."""
 
 
 def _timestamp(value: Any) -> str:
@@ -172,6 +190,17 @@ def _section_bullets(markdown: str, heading: str) -> list[str]:
     ]
 
 
+def _explicitly_negative_finding(finding: str) -> bool:
+    text = re.sub(r"^\s*\[[^\]]+\]\s*", "", str(finding)).strip()
+    return bool(re.match(
+        r"^(?:no\s+(?:evidence|indication|signs?|matching|observed)|"
+        r"nothing\s+(?:indicates|suggests)|"
+        r"(?:the\s+)?activity\s+was\s+not\s+observed)\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
+
+
 def _verified_report(hunt: dict, markdown: str) -> bool:
     outcome = (
         hunt.get("outcome")
@@ -204,6 +233,8 @@ def _report_candidates(hunts: list[dict], reports_root: Path) -> list[dict]:
             continue
         findings = _section_bullets(markdown, "Findings")
         for index, finding in enumerate(findings):
+            if _explicitly_negative_finding(finding):
+                continue
             candidate_id = f"report:{hunt.get('hunt_id')}:{index}"
             candidates.append({
                 "candidate_id": candidate_id,
@@ -228,6 +259,33 @@ def _report_candidates(hunts: list[dict], reports_root: Path) -> list[dict]:
                 ),
             })
     return candidates
+
+
+_RULE_RELEVANCE_STOPWORDS = {
+    "activity", "attempt", "attempted", "detected", "detection", "event",
+    "events", "possible", "potential", "rule", "suspicious", "the",
+    "using", "with",
+}
+
+
+def _raw_events_support_rule_title(
+    rule_title: str,
+    events: list[dict],
+) -> bool:
+    """Reject broad-query matches with no lexical support in raw evidence."""
+    terms = {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9_.-]+", str(rule_title))
+        if len(token) >= 4
+        and token.casefold() not in _RULE_RELEVANCE_STOPWORDS
+    }
+    if not terms or not events:
+        return True
+    evidence = json.dumps(events, ensure_ascii=False, default=str).casefold()
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", evidence)
+        for term in terms
+    )
 
 
 def _detection_candidates(detections: list[dict]) -> list[dict]:
@@ -272,22 +330,48 @@ def _detection_candidates(detections: list[dict]) -> list[dict]:
                 }.items()
                 if value not in (None, "")
             })
+        raw_analysis = (
+            detection.get("analysis")
+            if isinstance(detection.get("analysis"), dict)
+            else {}
+        )
+        # Risk decisions must be based on persisted raw matches. Detection
+        # triage and previous AI analysis are useful in their own workflow but
+        # can repeat the rule title even when a broad query returned unrelated
+        # records. Only objective execution metadata is carried forward here.
+        objective_analysis = {
+            key: raw_analysis.get(key)
+            for key in (
+                "method", "total_hits", "duration_ms", "generated_at",
+                "deduplication", "first_event_at", "last_event_at",
+                "distinct_hosts", "distinct_users", "top_hosts",
+                "top_users", "top_event_types", "multi_search_requests",
+            )
+            if raw_analysis.get(key) not in (None, "", [], {})
+        }
+        explicit_rule_title = str(detection.get("rule_title") or "").strip()
+        rule_title = str(
+            explicit_rule_title or detection.get("rule_id") or "Detection"
+        )
+        if (
+            explicit_rule_title
+            and not _raw_events_support_rule_title(
+                explicit_rule_title, compact_events
+            )
+        ):
+            continue
         candidates.append({
             "candidate_id": f"detection:{run_id}",
             "source_type": "detection",
             "source_id": str(detection.get("rule_id") or ""),
-            "source_label": str(
-                detection.get("rule_title")
-                or detection.get("rule_id")
-                or "Detection"
-            ),
+            "source_label": rule_title,
             "detection_run_id": run_id,
             "events_matched": matched,
             "rule_metadata": {
                 key: detection.get(key)
                 for key in ("rule_id", "rule_title", "level", "siem_type")
             },
-            "analysis": detection.get("analysis") or {},
+            "analysis": objective_analysis,
             "matched_events": compact_events,
             "identified_at": _timestamp(detection.get("created_at")),
             "last_seen_at": _timestamp(
@@ -672,26 +756,58 @@ def _candidate_batches(
 
 
 def _risk_summary(risks: list[dict]) -> dict:
+    active_risks = [
+        item for item in risks
+        if item.get("active", str(item.get("status") or "open").lower() != "resolved")
+    ]
     entities = {
-        f"{item['entity']['type']}:{item['entity']['name']}" for item in risks
+        f"{item['entity']['type']}:{item['entity']['name']}" for item in active_risks
     }
     return {
-        "total": len(risks),
-        "critical": sum(item["severity"] == "critical" for item in risks),
-        "high": sum(item["severity"] == "high" for item in risks),
-        "medium": sum(item["severity"] == "medium" for item in risks),
-        "low": sum(item["severity"] == "low" for item in risks),
+        "total": len(active_risks),
+        "inactive": len(risks) - len(active_risks),
+        "critical": sum(item["severity"] == "critical" for item in active_risks),
+        "high": sum(item["severity"] == "high" for item in active_risks),
+        "medium": sum(item["severity"] == "medium" for item in active_risks),
+        "low": sum(item["severity"] == "low" for item in active_risks),
         "affected_entities": len(entities),
         "average_score": round(
-            sum(item["score"] for item in risks) / len(risks), 1
-        ) if risks else 0,
+            sum(item["score"] for item in active_risks) / len(active_risks), 1
+        ) if active_risks else 0,
         "report_findings": sum(
-            item["source_type"] == "hunt_report" for item in risks
+            item["source_type"] == "hunt_report" for item in active_risks
         ),
         "detection_findings": sum(
-            item["source_type"] == "detection" for item in risks
+            item["source_type"] == "detection" for item in active_risks
         ),
     }
+
+
+def apply_risk_resolutions(payload: dict, resolutions: list[dict]) -> dict:
+    """Overlay durable analyst decisions without modifying model evidence."""
+    resolved_by_id = {
+        str(item.get("risk_id") or ""): item
+        for item in resolutions
+        if isinstance(item, dict) and item.get("risk_id")
+    }
+    items = []
+    for source in payload.get("items") or []:
+        if not isinstance(source, dict):
+            continue
+        item = dict(source)
+        resolution = resolved_by_id.get(str(item.get("id") or ""))
+        if resolution and str(resolution.get("status") or "").lower() == "resolved":
+            item.update({
+                "status": "resolved",
+                "active": False,
+                "resolved_by": resolution.get("resolved_by"),
+                "resolved_at": resolution.get("resolved_at"),
+                "resolution_note": resolution.get("note") or "",
+            })
+        else:
+            item.update({"status": "open", "active": True})
+        items.append(item)
+    return {**payload, "items": items}
 
 
 def filter_risk_payload(
@@ -719,7 +835,14 @@ def filter_risk_payload(
                 retained.append(item)
         risks = retained
     risks = risks[:max(1, min(int(limit), 2000))]
-    return {**payload, "summary": _risk_summary(risks), "items": risks}
+    summary = _risk_summary(risks)
+    candidate_count = len(payload.get("_candidate_fingerprints") or {})
+    excluded_count = len(payload.get("_excluded_candidate_ids") or [])
+    summary.update({
+        "reviewed_candidates": candidate_count or len(risks) + excluded_count,
+        "excluded_candidates": excluded_count,
+    })
+    return {**payload, "summary": summary, "items": risks}
 
 
 async def analyze_actionable_risks(

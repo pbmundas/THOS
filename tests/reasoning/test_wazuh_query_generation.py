@@ -1,5 +1,7 @@
 import json
 
+from services.siem.siem_kb import get_field_mapping
+
 from services.hunting.query_generator import (
     _compile_grounded_branch_query,
     _compile_wazuh_plan,
@@ -274,6 +276,45 @@ def test_grounded_literals_exclude_supervisor_resource_controls():
     assert "14" not in literals
     assert "2000" not in literals
     assert "Review all relevant records." not in literals
+
+
+def test_portable_wazuh_field_name_is_not_treated_as_query_value():
+    literals = _grounded_query_literals(
+        'rule_description contains "malware"',
+        "Translate the portable query",
+        {"manual_log_search": True},
+        field_tokens=["rule_description"],
+    )
+
+    assert literals == ["malware"]
+    query = _compile_wazuh_plan(
+        json.dumps({
+            "clauses": [{
+                "field": "rule.description",
+                "operator": "match_phrase",
+                "value": "malware",
+            }],
+        }),
+        ["rule.description"],
+        literals,
+        field_value_kinds={"rule.description": ["phrase"]},
+    )
+
+    assert json.loads(query) == {
+        "query": {"match_phrase": {"rule.description": "malware"}},
+    }
+
+    unquoted = _grounded_query_literals(
+        "rule_description contains malware",
+        "Translate the portable query",
+        {"manual_log_search": True},
+        field_tokens=["rule_description", "rule.description"],
+    )
+    assert unquoted == ["malware"]
+
+
+def test_wazuh_exposes_raw_message_as_a_normalized_search_field():
+    assert get_field_mapping("wazuh")["message"] == "full_log"
 
 
 def test_structured_wazuh_plan_rejects_invented_values():

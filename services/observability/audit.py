@@ -230,6 +230,7 @@ async def ensure_agentic_schema() -> None:
         """CREATE TABLE IF NOT EXISTS forensic_steps (step_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), case_id UUID NOT NULL REFERENCES forensic_cases(case_id) ON DELETE CASCADE, stage TEXT NOT NULL, agent_name TEXT NOT NULL, activity TEXT, status TEXT NOT NULL DEFAULT 'ok', duration_ms INTEGER, model_tier TEXT, model_name TEXT, output JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS scheduled_sigma_detections (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id TEXT NOT NULL, rule_id TEXT NOT NULL, rule_title TEXT, rule_source TEXT, level TEXT, siem_type TEXT NOT NULL, status TEXT NOT NULL, events_matched INTEGER NOT NULL DEFAULT 0, matched_events JSONB NOT NULL DEFAULT '[]'::jsonb, analysis JSONB NOT NULL DEFAULT '{}'::jsonb, compiled_query TEXT, query_backend TEXT, error_msg TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS risk_snapshots (snapshot_key TEXT PRIMARY KEY, source_version TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', payload JSONB NOT NULL DEFAULT '{}'::jsonb, refresh_reason TEXT, error_msg TEXT, generated_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
+        """CREATE TABLE IF NOT EXISTS risk_resolutions (risk_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'resolved', resolved_by TEXT NOT NULL, resolved_at TIMESTAMPTZ NOT NULL DEFAULT now(), note TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE TABLE IF NOT EXISTS platform_audit_logs (log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), level TEXT NOT NULL DEFAULT 'INFO', service TEXT NOT NULL, category TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, resource TEXT, status_code INTEGER, duration_ms INTEGER, message TEXT NOT NULL, context JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())""",
         """CREATE INDEX IF NOT EXISTS idx_platform_audit_logs_created_at ON platform_audit_logs (created_at DESC)""",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
@@ -247,6 +248,33 @@ async def get_risk_snapshot(snapshot_key: str = "current") -> dict | None:
         FROM risk_snapshots WHERE snapshot_key = %s LIMIT 1
     """, (snapshot_key,))
     return rows[0] if rows else None
+
+
+async def list_risk_resolutions() -> list[dict]:
+    return await asyncio.to_thread(_fetch, """
+        SELECT risk_id, status, resolved_by, resolved_at, COALESCE(note, '') AS note,
+               updated_at
+        FROM risk_resolutions
+        WHERE status = 'resolved'
+        ORDER BY resolved_at DESC
+    """, ())
+
+
+async def resolve_risk(risk_id: str, actor: str, note: str = "") -> dict:
+    rows = await asyncio.to_thread(_fetch, """
+        INSERT INTO risk_resolutions (
+            risk_id, status, resolved_by, resolved_at, note, updated_at
+        ) VALUES (%s, 'resolved', %s, now(), %s, now())
+        ON CONFLICT (risk_id) DO UPDATE SET
+            status = 'resolved',
+            resolved_by = EXCLUDED.resolved_by,
+            resolved_at = now(),
+            note = EXCLUDED.note,
+            updated_at = now()
+        RETURNING risk_id, status, resolved_by, resolved_at,
+                  COALESCE(note, '') AS note, updated_at
+    """, (risk_id, actor[:160], note[:1000]))
+    return rows[0]
 
 
 async def mark_risk_refresh_started(
