@@ -11,8 +11,14 @@ When the evidence does not support a conclusion, THOS records the outcome
 without manufacturing one.
 
 <p align="center">
-  <img src="docs/images/thos-architecture.png" alt="THOS architecture showing the analyst workspace, protected API gateway, orchestrator, governed tools, local inference, telemetry sources, and platform data stores." width="100%">
+  <img src="docs/images/thos-architecture.svg" alt="THOS product architecture showing the analyst workspace, protected UI and API gateway, LangGraph orchestrator, governed tools and knowledge, read-only telemetry and evidence, local Ollama inference, platform data, portable Log Search, and the automatic evidence-backed risk lifecycle." width="100%">
 </p>
+
+The primary request path moves from the protected analyst workspace through the
+UI/API gateway into the orchestrator. Governed tools retrieve and validate
+read-only evidence before local model reasoning is allowed. Log Search and risk
+materialization use the same source schemas, field mappings, evidence controls,
+and auditable platform state shown in the diagram.
 
 ## Product at a glance
 

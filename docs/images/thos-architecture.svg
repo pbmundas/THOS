@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title description">
+  <title id="title">THOS product architecture</title>
+  <desc id="description">Architecture diagram showing the THOS analyst workspace, protected gateway, LangGraph orchestration, governed tools and knowledge, telemetry and evidence sources, local AI, platform data, portable Log Search, and the evidence-gated risk lifecycle.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#0b1930"/>
+    </linearGradient>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2436b8"/>
+      <stop offset="1" stop-color="#075c8d"/>
+    </linearGradient>
+    <linearGradient id="accentCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111f38"/>
+      <stop offset="1" stop-color="#0b1729"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#000814" flood-opacity="0.55"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#23c7ea"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#6e8baa"/>
+    </marker>
+    <style>
+      .title { font: 700 54px Inter, Segoe UI, Arial, sans-serif; fill: #f7fbff; letter-spacing: 0.5px; }
+      .subtitle { font: 400 21px Inter, Segoe UI, Arial, sans-serif; fill: #a8bfd6; }
+      .card { fill: url(#accentCard); stroke: #315274; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .card-accent { stroke: #22c6e8; }
+      .card-title { font: 700 23px Inter, Segoe UI, Arial, sans-serif; fill: #ffffff; }
+      .card-kicker { font: 600 14px Inter, Segoe UI, Arial, sans-serif; fill: #68dcf3; letter-spacing: 1.4px; }
+      .item { font: 500 17px Inter, Segoe UI, Arial, sans-serif; fill: #d7e6f4; }
+      .item-small { font: 500 15px Inter, Segoe UI, Arial, sans-serif; fill: #d7e6f4; }
+      .muted { font: 400 14px Inter, Segoe UI, Arial, sans-serif; fill: #93abc2; }
+      .number { font: 700 16px Inter, Segoe UI, Arial, sans-serif; fill: #06121f; text-anchor: middle; dominant-baseline: middle; }
+      .flow { stroke: #23c7ea; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .flow-bi { stroke: #6e8baa; stroke-width: 3; fill: none; marker-end: url(#arrowMuted); }
+      .divider { stroke: #294660; stroke-width: 1.5; }
+      .pill { fill: #102c42; stroke: #1f7597; stroke-width: 1.2; rx: 12; }
+      .pill-text { font: 600 13px Inter, Segoe UI, Arial, sans-serif; fill: #bcefff; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1040" fill="url(#background)"/>
+  <circle cx="1450" cy="80" r="210" fill="#14346d" opacity="0.14"/>
+  <circle cx="120" cy="960" r="260" fill="#08789c" opacity="0.08"/>
+
+  <text x="52" y="72" class="title">THOS Product Architecture</text>
+  <text x="54" y="108" class="subtitle">Local-first security operations with bounded retrieval, verified evidence, governed model reasoning, and auditable outcomes</text>
+
+  <!-- Primary request path -->
+  <rect x="38" y="148" width="262" height="492" class="card card-accent"/>
+  <rect x="38" y="148" width="262" height="72" rx="18" fill="url(#header)"/>
+  <text x="60" y="174" class="card-kicker">ANALYST EXPERIENCE</text>
+  <text x="60" y="205" class="card-title">Workspace</text>
+  <text x="60" y="252" class="item">Overview</text>
+  <text x="60" y="287" class="item">Hunt Board</text>
+  <text x="60" y="322" class="item">Forensic</text>
+  <text x="60" y="357" class="item">Reports</text>
+  <text x="60" y="392" class="item">Risks</text>
+  <text x="60" y="427" class="item">Detections</text>
+  <text x="60" y="462" class="item">Threat Intelligence</text>
+  <text x="60" y="497" class="item">Log Search</text>
+  <text x="60" y="532" class="item">Integrations</text>
+  <text x="60" y="567" class="item">Configurations</text>
+  <line x1="60" y1="590" x2="278" y2="590" class="divider"/>
+  <text x="60" y="617" class="muted">Ask THOS · Help · protected routes</text>
+
+  <rect x="348" y="192" width="238" height="404" class="card"/>
+  <rect x="348" y="192" width="238" height="72" rx="18" fill="url(#header)"/>
+  <text x="370" y="218" class="card-kicker">TRUST BOUNDARY</text>
+  <text x="370" y="249" class="card-title">UI &amp; API Gateway</text>
+  <circle cx="380" cy="307" r="13" fill="#23c7ea"/><text x="380" y="307" class="number">1</text>
+  <text x="405" y="313" class="item">React + Vite</text>
+  <circle cx="380" cy="359" r="13" fill="#23c7ea"/><text x="380" y="359" class="number">2</text>
+  <text x="405" y="365" class="item">FastAPI gateway</text>
+  <circle cx="380" cy="411" r="13" fill="#23c7ea"/><text x="380" y="411" class="number">3</text>
+  <text x="405" y="403" class="item-small">Signed session, role</text>
+  <text x="405" y="423" class="item-small">&amp; feature validation</text>
+  <circle cx="380" cy="472" r="13" fill="#23c7ea"/><text x="380" y="472" class="number">4</text>
+  <text x="405" y="464" class="item-small">Route, identifier</text>
+  <text x="405" y="484" class="item-small">&amp; request validation</text>
+  <circle cx="380" cy="533" r="13" fill="#23c7ea"/><text x="380" y="533" class="number">5</text>
+  <text x="405" y="539" class="item">Audit events</text>
+
+  <rect x="632" y="148" width="350" height="492" class="card card-accent"/>
+  <rect x="632" y="148" width="350" height="72" rx="18" fill="url(#header)"/>
+  <text x="654" y="174" class="card-kicker">CONTROL PLANE</text>
+  <text x="654" y="205" class="card-title">LangGraph Orchestrator</text>
+  <text x="654" y="254" class="item">Hunt workflow &amp; scheduler</text>
+  <text x="654" y="291" class="item">Portable Log Search</text>
+  <text x="654" y="328" class="item">Detection monitoring</text>
+  <text x="654" y="365" class="item">Forensic planning &amp; analysis</text>
+  <text x="654" y="402" class="item">Risk materialization</text>
+  <text x="654" y="439" class="item">Threat-intel correlation</text>
+  <text x="654" y="476" class="item">Ask THOS delegation</text>
+  <line x1="654" y1="503" x2="960" y2="503" class="divider"/>
+  <rect x="654" y="527" width="306" height="82" rx="14" fill="#2b2414" stroke="#e9a23b" stroke-width="2"/>
+  <text x="674" y="556" class="card-kicker" fill="#ffd18b">EVIDENCE GATE</text>
+  <text x="674" y="581" class="item-small">No supported signal → no hunt reasoning,</text>
+  <text x="674" y="601" class="item-small">no finding, and no generated report</text>
+
+  <rect x="1028" y="148" width="246" height="492" class="card"/>
+  <rect x="1028" y="148" width="246" height="72" rx="18" fill="url(#header)"/>
+  <text x="1050" y="174" class="card-kicker">GOVERNED EXECUTION</text>
+  <text x="1050" y="205" class="card-title">Tools &amp; Knowledge</text>
+  <text x="1050" y="254" class="item">MCP security tools</text>
+  <text x="1050" y="291" class="item">Sigma detections</text>
+  <text x="1050" y="328" class="item">YARA catalog</text>
+  <text x="1050" y="365" class="item">Forensic toolchain</text>
+  <text x="1050" y="402" class="item">IOC correlation</text>
+  <text x="1050" y="439" class="item">ATT&amp;CK + HEARTH</text>
+  <text x="1050" y="476" class="item">Private knowledge / RAG</text>
+  <line x1="1050" y1="503" x2="1252" y2="503" class="divider"/>
+  <text x="1050" y="534" class="item-small">Bounded inputs · fixed tools</text>
+  <text x="1050" y="558" class="item-small">timeouts · output caps</text>
+  <text x="1050" y="582" class="item-small">record-reference verification</text>
+
+  <rect x="1318" y="148" width="244" height="492" class="card"/>
+  <rect x="1318" y="148" width="244" height="72" rx="18" fill="url(#header)"/>
+  <text x="1340" y="174" class="card-kicker">READ-ONLY INPUTS</text>
+  <text x="1340" y="205" class="card-title">Telemetry &amp; Evidence</text>
+  <text x="1340" y="254" class="item">Wazuh</text>
+  <text x="1340" y="291" class="item">Elasticsearch</text>
+  <text x="1340" y="328" class="item">Splunk</text>
+  <text x="1340" y="365" class="item">IBM QRadar</text>
+  <text x="1340" y="402" class="item">LogRhythm</text>
+  <text x="1340" y="439" class="item">Folder logs / PCAP</text>
+  <text x="1340" y="476" class="item">Files &amp; memory</text>
+  <text x="1340" y="513" class="item">IOC feeds</text>
+  <line x1="1340" y1="540" x2="1540" y2="540" class="divider"/>
+  <text x="1340" y="570" class="item-small">Schema discovery</text>
+  <text x="1340" y="594" class="item-small">allowlisted evidence roots</text>
+
+  <!-- Main arrows -->
+  <path d="M300 394 H337" class="flow"/>
+  <path d="M586 394 H621" class="flow"/>
+  <path d="M982 302 H1017" class="flow-bi"/>
+  <path d="M1274 302 H1307" class="flow-bi"/>
+
+  <!-- Supporting services and product flows -->
+  <rect x="38" y="690" width="350" height="274" class="card"/>
+  <text x="62" y="721" class="card-kicker">LOCAL MODEL PLANE</text>
+  <text x="62" y="755" class="card-title">Ollama Inference</text>
+  <text x="62" y="798" class="item">Fast / query generation</text>
+  <text x="62" y="833" class="item">Reasoning / investigation</text>
+  <text x="62" y="868" class="item">Verification / review</text>
+  <text x="62" y="903" class="item">Guard / prompt screening</text>
+  <rect x="62" y="925" width="118" height="24" class="pill"/><text x="121" y="942" class="pill-text">LOCAL ONLY</text>
+  <rect x="192" y="925" width="172" height="24" class="pill"/><text x="278" y="942" class="pill-text">TASK-TIER ROUTING</text>
+
+  <rect x="416" y="690" width="350" height="274" class="card"/>
+  <text x="440" y="721" class="card-kicker">PERSISTENCE &amp; COORDINATION</text>
+  <text x="440" y="755" class="card-title">Platform Data</text>
+  <text x="440" y="798" class="item">PostgreSQL · operational &amp; audit state</text>
+  <text x="440" y="833" class="item">Redis · cache, locks &amp; schedules</text>
+  <text x="440" y="868" class="item">ChromaDB · semantic retrieval</text>
+  <text x="440" y="903" class="item">Managed reports &amp; evidence</text>
+  <rect x="440" y="925" width="150" height="24" class="pill"/><text x="515" y="942" class="pill-text">INTERNAL NETWORK</text>
+  <rect x="602" y="925" width="140" height="24" class="pill"/><text x="672" y="942" class="pill-text">AUDITABLE</text>
+
+  <rect x="794" y="690" width="370" height="274" class="card card-accent"/>
+  <text x="818" y="721" class="card-kicker">ANALYST-DRIVEN SEARCH FLOW</text>
+  <text x="818" y="755" class="card-title">Portable Log Search</text>
+  <circle cx="836" cy="798" r="13" fill="#23c7ea"/><text x="836" y="798" class="number">1</text>
+  <text x="862" y="804" class="item">Normalized KQL-like intent</text>
+  <circle cx="836" cy="837" r="13" fill="#23c7ea"/><text x="836" y="837" class="number">2</text>
+  <text x="862" y="843" class="item">Discovered schema + field map</text>
+  <circle cx="836" cy="876" r="13" fill="#23c7ea"/><text x="836" y="876" class="number">3</text>
+  <text x="862" y="882" class="item">Background read-only translation</text>
+  <circle cx="836" cy="915" r="13" fill="#23c7ea"/><text x="836" y="915" class="number">4</text>
+  <text x="862" y="921" class="item">Bounded logs + Excel export</text>
+
+  <rect x="1192" y="690" width="370" height="274" class="card card-accent"/>
+  <text x="1216" y="721" class="card-kicker">AUTOMATIC RISK LIFECYCLE</text>
+  <text x="1216" y="755" class="card-title">Evidence-backed Risks</text>
+  <circle cx="1234" cy="798" r="13" fill="#23c7ea"/><text x="1234" y="798" class="number">1</text>
+  <text x="1260" y="804" class="item">Verified reports + relevant detections</text>
+  <circle cx="1234" cy="837" r="13" fill="#23c7ea"/><text x="1234" y="837" class="number">2</text>
+  <text x="1260" y="843" class="item">Raw evidence precedence &amp; review</text>
+  <circle cx="1234" cy="876" r="13" fill="#23c7ea"/><text x="1234" y="876" class="number">3</text>
+  <text x="1260" y="882" class="item">Materialized score, entity &amp; severity</text>
+  <circle cx="1234" cy="915" r="13" fill="#23c7ea"/><text x="1234" y="915" class="number">4</text>
+  <text x="1260" y="921" class="item">Admin / SME resolve → inactive</text>
+
+  <path d="M720 640 V664 H213 V679" class="flow-bi"/>
+  <path d="M850 640 V664 H591 V679" class="flow-bi"/>
+  <path d="M884 640 V679" class="flow-bi"/>
+  <path d="M944 640 V664 H1377 V679" class="flow-bi"/>
+
+  <text x="800" y="1010" text-anchor="middle" class="muted">Every published finding retains source attribution, evidence references, actor context, and audit history.</text>
+</svg>
