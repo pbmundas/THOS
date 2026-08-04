@@ -196,8 +196,13 @@ available source plan was complete.
 
 The principal latency and reliability corrections are configuration driven:
 
-- evidence-selector model input is capped at four compact records;
-- evidence output is capped at three records;
+- evidence-selector model input is capped at four compact representative records;
+- every fetched record is evaluated into a complete deterministic evidence
+  inventory; grounded, detection-corroborated, literal-only, and detection-only
+  records are counted separately and repeated records are grouped without
+  dropping their references;
+- model-selected evidence is a bounded qualitative sample and is never reported
+  as the total evidence set;
 - evidence-selector attempts and transport retries are bounded;
 - a model-generation timeout and an outer stage timeout prevent indefinite stalls;
 - the selector uses the configured fast local route;

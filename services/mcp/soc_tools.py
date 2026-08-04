@@ -180,13 +180,13 @@ async def run_soc_tools_node(state: HuntState) -> dict:
         for item in selected_evidence.get("evidence") or []
         if item.get("kind") == "artifact"
     ]
-    llm_refs = {
+    evidence_refs = {
         int(item["record_index"])
         for item in selected_evidence.get("evidence") or []
         if isinstance(item.get("record_index"), int)
     }
     for index, record in enumerate(processed_logs):
-        record["_llm_indicator_match"] = index in llm_refs
+        record["_llm_indicator_match"] = index in evidence_refs
     rule_matches.sort(key=lambda item: item.get("matched_count", 0), reverse=True)
 
     mode_text = ("locally evaluated because the source has no query engine" if siem_type in LOCAL_SOURCES
@@ -205,9 +205,14 @@ async def run_soc_tools_node(state: HuntState) -> dict:
             f"#   [{match['source']}][{match['level']}] {match['rule_id']} — {match['title']}: "
             f"{match['matched_count']} match(es)\n"
         )
+    inventory_counts = selected_evidence.get("inventory_counts") or {}
     sigma_rule_text += (
-        f"# Evidence Selection Agent cited {len(llm_refs)} hypothesis-relevant "
-        "record(s) after literal-reference validation.\n"
+        "# Complete evidence inventory evaluated "
+        f"{inventory_counts.get('records_evaluated', len(processed_logs))} record(s), "
+        f"retained {inventory_counts.get('direct_evidence_records', len(evidence_refs))} "
+        "direct evidence record(s), and retained "
+        f"{inventory_counts.get('literal_candidates', 0) + inventory_counts.get('detection_only_candidates', 0)} "
+        "candidate record(s) for analyst review.\n"
     )
 
     sigmahq_matches = [item for item in rule_matches if item.get("source") == "sigmahq"]
@@ -220,6 +225,9 @@ async def run_soc_tools_node(state: HuntState) -> dict:
                                for item in rule_matches],
         "evidence_highlights": evidence_highlights,
         "behavioral_evidence": behavioral_evidence,
+        "evidence_inventory": selected_evidence.get("evidence_inventory") or [],
+        "evidence_groups": selected_evidence.get("evidence_groups") or [],
+        "evidence_inventory_counts": inventory_counts,
         "enrichment": {
             "technique_id": technique_id, "log_count_analyzed": len(processed_logs),
             "sigma_execution_mode": coverage.get("mode"), "sigma_query_coverage": coverage,
@@ -234,6 +242,7 @@ async def run_soc_tools_node(state: HuntState) -> dict:
             "sigma_matched_records": len(sigma_refs),
             "governed_indicators": indicators,
             "evidence_selection": selected_evidence,
-            "llm_indicator_matched_records": len(llm_refs),
+            "llm_indicator_matched_records": len(evidence_refs),
+            "evidence_inventory_counts": inventory_counts,
         },
     }

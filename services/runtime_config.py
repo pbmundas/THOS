@@ -122,10 +122,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "indicator_transport_retries": 0,
         "indicator_generation_timeout_seconds": 45,
         "indicator_stage_timeout_seconds": 75,
-        "evidence_selection_record_cap": 500,
         "evidence_selection_model_record_cap": 4,
         "evidence_selection_record_char_cap": 1200,
-        "evidence_selection_evidence_cap": 3,
+        # Bounds only the representative subset sent through model review.
+        # The deterministic evidence inventory has no separate item cap.
+        "evidence_selection_model_evidence_cap": 4,
         "evidence_selection_num_predict": 384,
         "evidence_selection_attempts": 1,
         "evidence_selection_transport_retries": 0,
@@ -207,6 +208,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "schema_refresh_last_completed_at": "",
         "schema_refresh_last_status": "never",
         "schema_refresh_last_error": "",
+    },
+    "capacity": {
+        "auto_scale": True,
+        "profile_override": "auto",
+    },
+    "siem_retrieval": {
+        "default_max_rows": 500,
+        "folder_max_rows": 10000,
+        "default_concurrent_requests": 2,
+        "queue_timeout_seconds": 30,
+        "sources": {},
     },
     "anomaly_monitoring": {
         "enabled": True,

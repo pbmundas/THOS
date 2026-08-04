@@ -41,9 +41,15 @@ delegate bounded work to hunt and forensic specialists.
 ## Core capabilities
 
 - Evidence-first, hypothesis-driven hunts mapped to MITRE ATT&CK.
+- Complete per-hunt evidence inventories across all retrieved records, with
+  grounded and detection-corroborated evidence separated from candidates;
+  repeated evidence is grouped without dropping record references while model
+  review remains a bounded representative sample.
 - Continuous deterministic anomaly and entity monitoring for activity spikes
   and new user-to-host relationships, with durable lead status and exact
   contributing-record samples.
+- Cgroup-aware internal capacity profiles plus centrally enforced per-SIEM row
+  and concurrency budgets for every retrieval path.
 - Automatic SIEM field discovery, normalized field mappings, safe query
   generation, bounded retrieval, and record-reference validation.
 - A SIEM-neutral manual Log Search workspace with background translation and
@@ -83,6 +89,21 @@ risk or a verdict. Selecting **Investigate** launches the normal governed hunt,
 which must retrieve supporting evidence, cite exact records, and consider
 benign explanations before any finding can reach the evidence-backed risk
 lifecycle.
+
+## Hardware scaling and enterprise SIEM volume
+
+THOS automatically sizes internal worker lanes from the CPU and memory visible
+inside its Docker/Kubernetes resource boundary. Admin and SME users can review
+the detected profile and configure global or per-SIEM maximum rows, concurrent
+requests, and queue timeout under **Configurations → General**. These source
+budgets never increase automatically with THOS hardware and are enforced below
+the UI at the common connector boundary.
+
+At 2,000–8,000 EPS, leave the complete event stream in the SIEM and use THOS
+for targeted query pushdown and bounded evidence retrieval. See
+[Enterprise capacity and SIEM safety](docs/ENTERPRISE-SCALING.md) for sizing,
+high-volume anomaly behavior, deployment steps, and the current horizontal
+scaling boundary.
 
 ## Application routes
 

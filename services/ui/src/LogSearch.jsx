@@ -85,6 +85,11 @@ export default function LogSearch({ activeSources, defaultSource = "folder" }) {
     loadContext();
   }, [loadContext]);
 
+  const serverMaxRows = Math.max(1, Number(context.retrieval_policy?.max_rows || 2000));
+  useEffect(() => {
+    setLimit((current) => Math.min(current, serverMaxRows));
+  }, [serverMaxRows]);
+
   const run = async () => {
     if (!portableQuery.trim()) {
       setError("Describe the correlation you want to search for first.");
@@ -159,6 +164,9 @@ export default function LogSearch({ activeSources, defaultSource = "folder" }) {
   const mappings = Object.entries(context.field_mapping || {});
   const schemaFields = (context.schema?.fields || []).map((item) => typeof item === "string" ? item : item.name).filter(Boolean);
   const sourceLabel = activeSources.find((item) => item.id === source)?.label || source;
+  const rowOptions = [...new Set([100, 250, 500, 1000, 2000, 5000, 10000, serverMaxRows])]
+    .filter((value) => value <= serverMaxRows)
+    .sort((left, right) => left - right);
   const fieldSpecificEmptyHint = result && Number(result.record_count || 0) === 0
     && source === "wazuh" && /\brule_description\b/i.test(portableQuery)
     ? <>No Wazuh rule descriptions matched. That field searches only <code>rule.description</code>; use <code>message contains "keyword"</code> to search the raw Wazuh <code>full_log</code> text.</>
@@ -186,7 +194,7 @@ export default function LogSearch({ activeSources, defaultSource = "folder" }) {
         <div className="log-query-controls">
           <label>Telemetry source<select value={source} onChange={(event) => setSource(event.target.value)}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label>Lookback<select value={lookbackMinutes} onChange={(event) => setLookbackMinutes(Number(event.target.value))}><option value={15}>15 minutes</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option><option value={10080}>7 days</option><option value={43200}>30 days</option></select></label>
-          <label>Maximum rows<select value={limit} onChange={(event) => setLimit(Number(event.target.value))}>{[100, 250, 500, 1000, 2000].map((value) => <option key={value} value={value}>{value.toLocaleString()}</option>)}</select></label>
+          <label>Maximum rows · server cap {serverMaxRows.toLocaleString()}<select value={limit} onChange={(event) => setLimit(Number(event.target.value))}>{rowOptions.map((value) => <option key={value} value={value}>{value.toLocaleString()}</option>)}</select></label>
           {source === "folder" && <label className="log-folder-path">Server log folder<input value={folderPath} onChange={(event) => setFolderPath(event.target.value)} /></label>}
         </div>
         <label className="log-query-editor"><span>Portable correlation intent</span><textarea value={portableQuery} onChange={(event) => { setPortableQuery(event.target.value); setTargetQuery(""); setResult(null); }} placeholder={'Example: process_name == "powershell.exe" and command_line contains "-enc"\n\nPlain language also works: Find the same user authenticating from multiple source IPs followed by privileged process execution.'} /></label>
@@ -201,7 +209,7 @@ export default function LogSearch({ activeSources, defaultSource = "folder" }) {
     </section>
 
     <section className="log-results panel">
-      <header><div><span><CircleStackIcon /></span><div><h2>2. Search results</h2><p>{result ? `${Number(result.record_count || 0).toLocaleString()} returned in ${Number(result.duration_ms || 0).toLocaleString()} ms · ${sourceLabel}` : "Run a translated query to preview matching records."}</p></div></div><button className="secondary-button" onClick={exportExcel} disabled={!result?.logs?.length || Boolean(working)}>{working === "export" ? <ArrowPathIcon className="spinning" /> : <ArrowDownTrayIcon />} Download Excel</button></header>
+      <header><div><span><CircleStackIcon /></span><div><h2>2. Search results</h2><p>{result ? `${Number(result.record_count || 0).toLocaleString()} returned in ${Number(result.duration_ms || 0).toLocaleString()} ms · ${sourceLabel}${result.retrieval_policy?.capped ? ` · request capped at ${Number(result.retrieval_policy.applied_rows || 0).toLocaleString()} rows` : ""}` : "Run a translated query to preview matching records."}</p></div></div><button className="secondary-button" onClick={exportExcel} disabled={!result?.logs?.length || Boolean(working)}>{working === "export" ? <ArrowPathIcon className="spinning" /> : <ArrowDownTrayIcon />} Download Excel</button></header>
       {flattenedLogs.length ? <><div className="log-results-table"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{flattenedLogs.slice(0, 100).map((record, index) => <tr key={index}>{columns.map((column) => <td key={column} title={displayValue(record[column])}>{displayValue(record[column])}</td>)}</tr>)}</tbody></table></div><footer>Previewing {Math.min(flattenedLogs.length, 100).toLocaleString()} of {flattenedLogs.length.toLocaleString()} rows and {columns.length} columns. Excel includes every returned row and up to 200 discovered columns.</footer></> : <div className="log-results-empty"><MagnifyingGlassIcon /><strong>{result ? "No matching logs" : "No result set yet"}</strong><span>{fieldSpecificEmptyHint || "Select Search to translate safely in the background and fetch matching records."}</span></div>}
     </section>
   </div>;

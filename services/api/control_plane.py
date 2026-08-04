@@ -33,6 +33,7 @@ from services.integrations.catalog import (
 )
 from services.runtime_config import get_value, read_config, write_config
 from services.reasoning.capabilities import recommend_models, resource_snapshot
+from services.capacity import hardware_capacity, internal_worker_limit, siem_retrieval_policy
 from services.reasoning.model_router import target_for
 from services.scheduling.planner import select_scheduled_targets
 from services.security.configuration import required_secret
@@ -65,12 +66,12 @@ BRANDING_DIR = Path(os.environ.get(
 ))
 _scheduler_task: asyncio.Task | None = None
 _scheduled_hypothesis_slot = asyncio.Semaphore(1)
-_scheduled_sigma_slots = asyncio.Semaphore(max(
-    1, int(os.environ.get("THOS_SCHEDULED_SIGMA_CONCURRENCY", "2"))
-))
-_scheduled_yara_slot = asyncio.Semaphore(max(
-    1, int(os.environ.get("THOS_SCHEDULED_YARA_CONCURRENCY", "1"))
-))
+_scheduled_sigma_slots = asyncio.Semaphore(max(1, int(
+    os.environ.get("THOS_SCHEDULED_SIGMA_CONCURRENCY", "0") or 0
+) or internal_worker_limit("scheduled_sigma")))
+_scheduled_yara_slot = asyncio.Semaphore(max(1, int(
+    os.environ.get("THOS_SCHEDULED_YARA_CONCURRENCY", "0") or 0
+) or internal_worker_limit("scheduled_yara")))
 _schedule_state_lock = asyncio.Lock()
 _schedule_run_tasks: set[asyncio.Task] = set()
 _schema_refresh_task: asyncio.Task | None = None
@@ -229,10 +230,21 @@ async def _upstream(method: str, path: str, **kwargs):
     return response.json()
 
 
+class SiemSourceBudget(BaseModel):
+    max_rows: int = Field(ge=1, le=10000)
+    concurrent_requests: int = Field(ge=1, le=32)
+
+
 class GeneralSettings(BaseModel):
     default_model: str = ""
     default_iterations: int = Field(default=2, ge=1, le=5)
     default_siem: str = Field(default="folder", min_length=1, max_length=128)
+    auto_scale: bool = True
+    capacity_profile: str = Field(default="auto", pattern="^(auto|compact|balanced|capable|enterprise)$")
+    default_siem_max_rows: int = Field(default=500, ge=1, le=10000)
+    default_siem_concurrent_requests: int = Field(default=2, ge=1, le=32)
+    siem_queue_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    siem_limits: dict[str, SiemSourceBudget] = Field(default_factory=dict)
 
 
 class AgentModelRouteSettings(BaseModel):
@@ -449,11 +461,33 @@ async def list_active_telemetry_sources(request: Request):
 async def general_settings(request: Request):
     require_feature(request, "settings", sme_only=True)
     config = read_config()
+    retrieval = config.get("siem_retrieval", {}) or {}
+    source_ids = [
+        item["id"] for item in telemetry_sources(config)["items"]
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}
+    ]
+    try:
+        capacity = await _upstream("GET", "/capacity")
+    except Exception:  # noqa: BLE001 - local fallback keeps settings usable
+        capacity = hardware_capacity(config)
     return {
         "default_model": config["models"].get("default_model", ""),
         "default_iterations": config["general"].get("default_iterations", 2),
         "default_siem": telemetry_sources(config)["default"],
         "timezone": os.environ.get("TZ") or str(datetime.now().astimezone().tzinfo),
+        "auto_scale": capacity["auto_scale"],
+        "capacity_profile": str(config.get("capacity", {}).get("profile_override", "auto")),
+        "hardware_capacity": capacity,
+        "default_siem_max_rows": int(retrieval.get("default_max_rows", 500)),
+        "default_siem_concurrent_requests": int(retrieval.get("default_concurrent_requests", 2)),
+        "siem_queue_timeout_seconds": int(retrieval.get("queue_timeout_seconds", 30)),
+        "siem_limits": {
+            source: {
+                "max_rows": siem_retrieval_policy(source, config=config)["max_rows"],
+                "concurrent_requests": siem_retrieval_policy(source, config=config)["concurrent_requests"],
+            }
+            for source in source_ids
+        },
     }
 
 
@@ -472,6 +506,22 @@ async def save_general(settings: GeneralSettings, request: Request):
         "default_iterations": settings.default_iterations,
         "default_siem": settings.default_siem,
     })
+    config["capacity"] = {
+        "auto_scale": settings.auto_scale,
+        "profile_override": settings.capacity_profile,
+    }
+    retrieval = config.setdefault("siem_retrieval", {})
+    retrieval.update({
+        "default_max_rows": settings.default_siem_max_rows,
+        "default_concurrent_requests": settings.default_siem_concurrent_requests,
+        "queue_timeout_seconds": settings.siem_queue_timeout_seconds,
+    })
+    stored_sources = dict(retrieval.get("sources") or {})
+    for source, budget in settings.siem_limits.items():
+        if source not in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}:
+            raise HTTPException(status_code=422, detail=f"Unsupported SIEM budget source: {source}")
+        stored_sources[source] = budget.model_dump()
+    retrieval["sources"] = stored_sources
     write_config(config)
     return await general_settings(request)
 
@@ -2961,10 +3011,13 @@ async def _run_anomaly_monitoring() -> None:
                 "source": source,
                 "status": result.get("status", "completed"),
                 "records_analyzed": result.get("records_analyzed", 0),
+                "total_hits": result.get("total_hits", result.get("records_analyzed", 0)),
                 "lead_count": result.get("lead_count", 0),
                 "baseline_bucket_count": result.get("baseline_bucket_count", 0),
                 "minimum_baseline_buckets": result.get("minimum_baseline_buckets", 24),
                 "warming": bool(result.get("warming", False)),
+                "sampling_limited": bool(result.get("sampling_limited", False)),
+                "sampling_message": result.get("sampling_message", ""),
             })
         except Exception as exc:  # noqa: BLE001 - isolate source failures
             errors.append(f"{source}: {exc}")

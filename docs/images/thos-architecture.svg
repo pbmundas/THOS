@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title description">
   <title id="title">THOS product architecture</title>
-  <desc id="description">Architecture diagram showing the THOS analyst workspace, protected gateway, LangGraph orchestration, continuous anomaly and entity hunt leads, governed tools and knowledge, telemetry and evidence sources, local AI, platform data, portable Log Search, and the evidence-gated risk lifecycle.</desc>
+  <desc id="description">Architecture diagram showing the THOS analyst workspace, protected gateway, hardware-aware LangGraph orchestration, continuous anomaly and entity hunt leads, governed tools and knowledge, operator-owned SIEM retrieval budgets, telemetry and evidence sources, local AI, platform data, portable Log Search, and the evidence-gated risk lifecycle.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#07111f"/>
@@ -132,6 +132,7 @@
   <line x1="1340" y1="540" x2="1540" y2="540" class="divider"/>
   <text x="1340" y="570" class="item-small">Schema discovery</text>
   <text x="1340" y="594" class="item-small">allowlisted evidence roots</text>
+  <text x="1340" y="618" class="item-small">row + concurrency budgets</text>
 
   <!-- Main arrows -->
   <path d="M300 394 H337" class="flow"/>

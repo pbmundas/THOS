@@ -120,7 +120,7 @@ def test_model_prompt_compacts_duplicate_raw_telemetry(monkeypatch):
     assert "detail" not in model_record
     assert "full_log" not in model_record
     assert "_raw" not in model_record
-    assert captured["schema"]["properties"]["evidence"]["maxItems"] == 3
+    assert captured["schema"]["properties"]["evidence"]["maxItems"] == 4
     assert captured["schema"]["properties"]["evidence"]["minItems"] == 1
     assert prompt["grounded_candidate_refs"] == [0]
     assert captured["attempts"] == 1
@@ -128,6 +128,54 @@ def test_model_prompt_compacts_duplicate_raw_telemetry(monkeypatch):
     assert captured["timeout_seconds"] == 120
     assert captured["transport_retries"] == 0
     assert result["evidence"][0]["record_index"] == 0
+
+
+def test_complete_inventory_is_not_limited_by_model_context(monkeypatch):
+    records = [
+        {
+            "event": "Process creation",
+            "evidence_summary": f"record {index}: rundll32.exe loaded payload.dll",
+        }
+        for index in range(8)
+    ]
+
+    async def fake_decide_json(**kwargs):
+        prompt = json.loads(kwargs["prompt"])
+        assert len(prompt["records"]) == 4
+        return kwargs["validator"]({
+            "assessment": "Representative records confirm the repeated behavior.",
+            "evidence": [{
+                "record_index": prompt["records"][0]["record_index"],
+                "kind": "behavioral",
+                "claim": "Rundll32 loaded a DLL.",
+                "matched_literals": ["rundll32.exe", "dll"],
+            }],
+        })
+
+    monkeypatch.setattr(evidence_selector, "decide_json", fake_decide_json)
+    result = asyncio.run(evidence_selector.select_hunt_evidence(
+        logs=records,
+        hypothesis_text="Investigate rundll32.exe proxy execution",
+        technique_id="T1218.011",
+        technique_name="Rundll32",
+        tactic="Execution",
+        objective="Find every related process record",
+        indicators={"keywords": ["rundll32.exe", "dll"]},
+        detection_rule_refs=list(range(8)),
+    ))
+
+    assert len(result["representative_evidence"]) == 1
+    assert len(result["evidence"]) == 8
+    assert len(result["evidence_inventory"]) == 8
+    assert result["inventory_counts"]["direct_evidence_records"] == 8
+    assert result["inventory_counts"]["representative_model_records"] == 1
+    assert result["records_omitted_from_model_context"] == 4
+    assert result["records_omitted_by_resource_bound"] == 0
+    assert {
+        index
+        for group in result["evidence_groups"]
+        for index in group["record_indices"]
+    } == set(range(8))
 
 
 def test_grounded_literal_fallback_retains_verified_evidence(monkeypatch):

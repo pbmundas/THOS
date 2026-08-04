@@ -19,12 +19,15 @@ import logging
 import threading
 
 from psycopg_pool import ConnectionPool
+from services.capacity import internal_worker_limit
 
 logger = logging.getLogger(__name__)
 
 POSTGRES_DSN = os.environ.get("POSTGRES_DSN", "")
 POOL_MIN_SIZE = int(os.environ.get("POSTGRES_POOL_MIN_SIZE", "1"))
-POOL_MAX_SIZE = int(os.environ.get("POSTGRES_POOL_MAX_SIZE", "10"))
+POOL_MAX_SIZE = int(os.environ.get(
+    "POSTGRES_POOL_MAX_SIZE", str(internal_worker_limit("postgres")),
+))
 
 # A single lru_cache(maxsize=1) psycopg connection used to be shared across
 # every concurrent hunt via asyncio.to_thread — sync psycopg connections

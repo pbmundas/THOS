@@ -111,6 +111,9 @@ class HuntState(TypedDict, total=False):
     sigma_rule_matches: List[Dict[str, Any]]
     evidence_highlights: List[Dict[str, Any]]
     behavioral_evidence: List[Dict[str, Any]]
+    evidence_inventory: List[Dict[str, Any]]
+    evidence_groups: List[Dict[str, Any]]
+    evidence_inventory_counts: Dict[str, Any]
     enrichment: Dict[str, Any]
 
     # Set by caller (HuntRequest) — which report cover page style to render

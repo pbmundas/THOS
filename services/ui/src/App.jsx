@@ -1031,6 +1031,7 @@ function App() {
               </header>
               {anomalyError && <div className="alert error-alert"><ExclamationTriangleIcon />{anomalyError}</div>}
               {anomalyStatus?.scheduler?.last_error && <div className="anomaly-monitor-warning"><ExclamationTriangleIcon />{anomalyStatus.scheduler.last_error}</div>}
+              {anomalyStatus?.scheduler?.results?.some((item) => item.sampling_limited) && <div className="anomaly-monitor-warning"><ExclamationTriangleIcon />The current SIEM window exceeds its configured row budget. THOS paused anomaly baseline scoring instead of treating a partial sample as complete. Narrow the monitored index/scope or use source-side aggregation.</div>}
               {!anomalyLeads.length ? (
                 <div className="anomaly-empty">
                   <ChartBarSquareIcon />

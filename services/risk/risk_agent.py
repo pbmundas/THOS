@@ -16,6 +16,7 @@ from typing import Any
 
 from services.agents.decision import AgentDecisionError, decide_json
 from services.runtime_config import get_value
+from services.capacity import internal_worker_limit
 
 
 RISK_SCHEMA = {
@@ -953,7 +954,9 @@ async def analyze_actionable_risks(
     )
     concurrency = max(1, min(
         len(batches) or 1,
-        int(get_value("autonomy", "risk_batch_concurrency", default=2)),
+        internal_worker_limit(
+            "risk", int(get_value("autonomy", "risk_batch_concurrency", default=2)),
+        ),
         4,
     ))
     semaphore = asyncio.Semaphore(concurrency)

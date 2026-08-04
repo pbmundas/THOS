@@ -22,6 +22,7 @@ from services.enrichment import ioc_management
 from services.forensics.tools import run_static_triage, tool_status
 from services.runtime_config import get_value
 from services.siem import file_log_parser
+from services.capacity import internal_worker_limit
 
 FORENSIC_ROOT = Path(os.environ.get("FORENSIC_ROOT", "/data/log_sources/forensic"))
 MANIFEST_NAME = "_thos_chain_of_custody.json"
@@ -88,7 +89,7 @@ def verify_evidence(case_dir: str | Path) -> dict:
         pending.append((item, path, actual_size))
     concurrency = max(1, min(
         len(pending) or 1,
-        int(get_value("forensics", "hash_concurrency", default=2)),
+        internal_worker_limit("forensic", int(get_value("forensics", "hash_concurrency", default=2))),
     ))
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         hashes = list(executor.map(
@@ -237,7 +238,7 @@ def analyze_artifacts(verified: dict, tool_plan: dict | None = None) -> dict:
     }
     concurrency = max(1, min(
         len(verified["evidence"]) or 1,
-        int(get_value("forensics", "artifact_concurrency", default=2)),
+        internal_worker_limit("forensic", int(get_value("forensics", "artifact_concurrency", default=2))),
     ))
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = [
@@ -329,7 +330,7 @@ def apply_followup_tool_plan(
 
     concurrency = max(1, min(
         len(jobs) or 1,
-        int(get_value("forensics", "artifact_concurrency", default=2)),
+        internal_worker_limit("forensic", int(get_value("forensics", "artifact_concurrency", default=2))),
     ))
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         results = list(executor.map(execute, jobs))

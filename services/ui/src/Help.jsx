@@ -10,7 +10,7 @@ const SECTIONS = [
     content: [
       "Connect and test a telemetry source in Settings. Only successfully tested live SIEMs are offered to hunts; the managed evidence folder remains available.",
       "Choose a hypothesis, confirm its ATT&CK technique and severity, then run it. The live timeline shows each agent, its purpose, and duration.",
-      "Start with Summary and Key Evidence in the report. Treat findings as investigative leads and verify cited records before response actions.",
+      "Start with Summary and Key Evidence in the report. Key Evidence reports the complete grounded/corroborated inventory, groups repetition without dropping record references, and lists literal-only or detection-only candidates separately. The local model reviews a bounded representative sample, not the total evidence set.",
     ],
   },
   {
@@ -49,6 +49,9 @@ const SECTIONS = [
   {
     id: "scheduling", icon: Cog6ToothIcon, title: "Scheduling and capacity", tags: "schedule daily rotation cursor time load",
     content: [
+      "Configurations → General shows the CPU and memory visible inside the orchestrator cgroup and the resulting compact, balanced, capable, or enterprise profile. Internal forensic, risk, database, and scheduled worker lanes use that profile automatically.",
+      "SIEM capacity is deliberately separate: set maximum returned rows, concurrent requests, and queue timeout globally or per connected SIEM. Every Log Search, hunt, anomaly, and detection fetch is clamped at the common connector boundary.",
+      "At 2,000–8,000 EPS, keep the full stream in the SIEM and retrieve targeted evidence. If a broad anomaly window exceeds its row budget, THOS pauses baseline scoring instead of treating a partial newest-event sample as complete.",
       "Settings → Hypothesis scheduler supports individual or severity-group schedules. Recommended maintenance windows begin with 3 critical, 8 high, 4 medium, and 1 low hunt per day.",
       "The scheduler prioritizes never-run and most-overdue critical/high hypotheses. It records rolling p50/p95 duration per hypothesis and fits each batch to its maintenance window instead of relying on fixed catalog order.",
       "Ollama memory, SIEM p95 latency, and hunt queue depth are checked before and during a batch and can stop remaining work. Point THOS_SCHEDULED_OLLAMA_HOST at a separate Ollama or GPU worker so scheduled reasoning does not contend with interactive hunts; THOS_OLLAMA_METRICS_URL can supply exact memory_used_bytes and memory_limit_bytes.",
@@ -94,6 +97,11 @@ const SECTIONS = [
 ];
 
 const FAQS = [
+  {
+    q: "Can THOS work with a SIEM receiving 2,000–8,000 EPS?",
+    a: "Yes as a bounded query and investigation layer, not as the ingestion pipeline. Keep all events indexed in the SIEM, use targeted source-side filtering or aggregation, and configure per-SIEM row and concurrency ceilings in Configurations → General. THOS enforces those ceilings for every retrieval path. Broad anomaly scoring pauses when a window exceeds the row budget so a partial sample is never presented as a complete baseline.",
+    tags: "eps enterprise scale siem limits rows concurrency anomaly",
+  },
   {
     q: "What is the minimum hardware required to run THOS?",
     a: "Use 8 x86-64 CPU cores, 16 GB RAM, and at least 50 GB of free SSD storage as the minimum supported starting point for a small deployment. A GPU is optional; CPU-only inference works but is slower. Retained telemetry, reports, model files, and forensic evidence require additional storage.",

@@ -232,11 +232,26 @@ def fetch_siem_logs(query: str, limit: int = 25, siem_type: str = "",
     Indexer. In 'folder' mode, parses every supported
     log file (evtx/log/syslog/csv/CEF/JSON/ECS/xml/txt/pcap) under
     log_source_path and returns records matching the query."""
-    return siem_connector.fetch_logs(query, limit, siem_type=siem_type or None,
-                                      log_source_path=log_source_path,
-                                      trusted_sigma=trusted_sigma,
-                                      bypass_cache=bypass_cache,
-                                      lookback_minutes=lookback_minutes)
+    from services.capacity import siem_request_slot, siem_retrieval_policy
+
+    source = (siem_type or "folder").lower()
+    policy = siem_retrieval_policy(source, limit)
+    try:
+        with siem_request_slot(policy):
+            result = siem_connector.fetch_logs(
+                query,
+                policy["applied_rows"],
+                siem_type=source,
+                log_source_path=log_source_path,
+                trusted_sigma=trusted_sigma,
+                bypass_cache=bypass_cache,
+                lookback_minutes=lookback_minutes,
+            )
+    except TimeoutError as exc:
+        return {"logs": [], "error": str(exc), "retrieval_policy": policy}
+    if not isinstance(result, dict):
+        return result
+    return {**result, "retrieval_policy": policy}
 
 
 @mcp.tool()

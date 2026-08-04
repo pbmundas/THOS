@@ -304,6 +304,92 @@ def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_
     return "\n".join(lines)
 
 
+def _compress_record_refs(values) -> str:
+    refs = sorted({int(value) for value in values})
+    if not refs:
+        return "none"
+    ranges = []
+    start = previous = refs[0]
+    for value in refs[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = value
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(ranges)
+
+
+def _render_evidence_inventory(
+    groups: list[dict],
+    counts: dict,
+    fallback_items: list[dict],
+) -> str:
+    """Render every inventoried ref, grouping repetition without truncation."""
+    if not groups and fallback_items:
+        groups = [{
+            "status": item.get("status") or "model_validated",
+            "kind": item.get("kind") or "evidence",
+            "event": item.get("event") or "unknown",
+            "matched_literals": item.get("matched_artifacts") or item.get("matched_literals") or [],
+            "claim": item.get("claim") or item.get("evidence") or "Normalized evidence matched.",
+            "record_indices": [item.get("record_index")],
+            "record_count": 1,
+        } for item in fallback_items]
+    if not groups:
+        return (
+            "No hypothesis-relevant artifact or behavioral evidence was selected. "
+            "Review retrieval, detection-rule, findings, and coverage sections; "
+            "absence of evidence is not proof of absence."
+        )
+
+    candidate_statuses = {"literal_candidate", "detection_candidate"}
+    direct_groups = [
+        item for item in groups if item.get("status") not in candidate_statuses
+    ]
+    candidate_groups = [
+        item for item in groups if item.get("status") in candidate_statuses
+    ]
+    direct_count = int(counts.get("direct_evidence_records") or sum(
+        int(item.get("record_count") or 0) for item in direct_groups
+    ))
+    inventory_count = int(counts.get("inventory_records") or sum(
+        int(item.get("record_count") or 0) for item in groups
+    ))
+    lines = [
+        f"**Complete inventory:** `{inventory_count}` record(s) considered; "
+        f"`{direct_count}` retained as direct evidence. Repeated records are "
+        "grouped below, but every record reference is preserved.",
+        "",
+        "#### Direct grounded or corroborated evidence",
+    ]
+    if direct_groups:
+        for item in direct_groups:
+            refs = _compress_record_refs(item.get("record_indices") or [])
+            count = int(item.get("record_count") or len(item.get("record_indices") or []))
+            literals = ", ".join(item.get("matched_literals") or [item.get("kind") or "evidence"])
+            record_label = f"Record {refs}" if count == 1 else f"Records {refs} ({count})"
+            lines.append(
+                f"- **{record_label} — {literals}:** "
+                f"{item.get('claim') or item.get('evidence') or 'Normalized evidence matched.'}"
+            )
+    else:
+        lines.append("- No record met the direct-evidence grounding threshold.")
+
+    if candidate_groups:
+        lines.extend(["", "#### Additional candidates requiring validation"])
+        for item in candidate_groups:
+            refs = _compress_record_refs(item.get("record_indices") or [])
+            count = int(item.get("record_count") or len(item.get("record_indices") or []))
+            literals = ", ".join(item.get("matched_literals") or [item.get("kind") or "candidate"])
+            record_label = f"Record {refs}" if count == 1 else f"Records {refs} ({count})"
+            lines.append(
+                f"- **{record_label} — {literals}:** "
+                f"{item.get('claim') or item.get('evidence') or 'Candidate requires validation.'}"
+            )
+    return "\n".join(lines)
+
+
 REPORT_TEMPLATE = """\
 # Threat Hunt Report: {title}
 
@@ -431,6 +517,8 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   hunt_memory: list[dict] | None = None,
                   evidence_highlights: list[dict] | None = None,
                   behavioral_evidence: list[dict] | None = None,
+                  evidence_groups: list[dict] | None = None,
+                  evidence_inventory_counts: dict | None = None,
                   reasoning_mode: str = "model",
                   reasoning_degraded: bool = False,
                   reasoning_attempts: int = 0,
@@ -615,24 +703,26 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
     highlights = evidence_highlights or []
     behaviors = behavioral_evidence or []
     key_evidence = [*highlights, *behaviors]
-    if key_evidence:
-        evidence_highlights_section = "\n".join(
-            f"- **Record {item.get('record_index', 'n/a')} — "
-            f"{', '.join(item.get('matched_artifacts') or item.get('matched_literals') or [item.get('kind') or 'evidence'])}:** "
-            f"{item.get('claim') or item.get('evidence') or item.get('event') or 'Normalized evidence matched.'}"
-            for item in key_evidence[:10]
-        )
-    else:
-        evidence_highlights_section = (
-            "No hypothesis-relevant artifact or behavioral evidence was selected. "
-            "Review the retrieval, detection-rule, findings, and coverage sections below; "
-            "absence of selected key evidence is not proof of absence."
-        )
+    inventory_counts = evidence_inventory_counts or {}
+    evidence_highlights_section = _render_evidence_inventory(
+        evidence_groups or [], inventory_counts, key_evidence
+    )
+    direct_evidence_count = int(
+        inventory_counts.get("direct_evidence_records", len(key_evidence))
+    )
+    inventory_record_count = int(
+        inventory_counts.get("inventory_records", len(key_evidence))
+    )
+    representative_count = int(
+        inventory_counts.get("representative_model_records", len(key_evidence))
+    )
     summary_validation_status = (
         f"- **Verifier:** `{vr_status}`\n"
         f"- **Reasoning mode:** `{reasoning_mode or 'model'}`\n"
         f"- **Records analyzed:** `{records_analyzed}`\n"
-        f"- **Selected key evidence:** `{len(key_evidence)}`\n"
+        f"- **Direct evidence records:** `{direct_evidence_count}`\n"
+        f"- **Complete evidence inventory:** `{inventory_record_count}`\n"
+        f"- **Representative records reviewed by model:** `{representative_count}`\n"
         f"- **Case:** `{case_id or 'none'}`"
     )
     requirements = investigation_requirements or {}
@@ -868,6 +958,8 @@ async def write_report_node(state: dict) -> dict:
         hunt_memory=state.get("hunt_memory"),
         evidence_highlights=state.get("evidence_highlights"),
         behavioral_evidence=state.get("behavioral_evidence"),
+        evidence_groups=state.get("evidence_groups"),
+        evidence_inventory_counts=state.get("evidence_inventory_counts"),
         reasoning_mode=state.get("reasoning_mode") or "model",
         reasoning_degraded=state.get("reasoning_degraded", False),
         reasoning_attempts=state.get("reasoning_attempts", 0),

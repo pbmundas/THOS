@@ -878,6 +878,12 @@ async def reason_node(state: HuntState) -> dict:
     completeness_section = json.dumps(
         state.get("hunt_completeness") or {}, **json_options
     )
+    evidence_inventory_section = json.dumps(
+        state.get("evidence_inventory_counts")
+        or ((state.get("enrichment") or {}).get("evidence_inventory_counts"))
+        or {},
+        **json_options,
+    )
     active_source = str(
         state.get("active_query_source") or state.get("siem_type") or "folder"
     )
@@ -892,6 +898,9 @@ async def reason_node(state: HuntState) -> dict:
         f"Evidence Selection Agent behavioral evidence:\n{behavioral_evidence_section}\n\n"
         f"Evidence Selection Agent artifact highlights:\n"
         f"{evidence_highlights_section}\n\n"
+        f"Complete deterministic evidence inventory counts (authoritative; "
+        f"the evidence examples above are bounded model context only):\n"
+        f"{evidence_inventory_section}\n\n"
         f"Prior completed hunts with similar technique context (context only, not evidence):\n{memory_section}\n\n"
         f"Retrieval-attempt ledger (authoritative query execution audit):\n{retrieval_section}\n\n"
         f"Hunt completeness assessment:\n{completeness_section}\n\n"

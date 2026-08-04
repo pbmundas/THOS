@@ -16,6 +16,7 @@ from services.mcp.mcp_client import call_tool
 from services.observability import cache
 from services.siem import wazuh as wazuh_connector
 from services.siem.log_processing import process_logs_node
+from services.capacity import siem_request_slot, siem_retrieval_policy
 
 
 LOCAL_SOURCES = {"folder", "local_folder", "file", "local", "mock"}
@@ -151,16 +152,20 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
     execution_mode = "individual_search"
     if siem_type.lower() == "wazuh" and entries:
         try:
+            policy = siem_retrieval_policy("wazuh", per_rule_limit or 100)
+
+            def bounded_multi_search():
+                with siem_request_slot(policy):
+                    return wazuh_connector.fetch_multi_logs(
+                        [
+                            {"rule_id": entry["rule_id"], "query": entry["query"]}
+                            for entry in entries
+                        ],
+                        policy["applied_rows"],
+                    )
+
             batch_results = await asyncio.to_thread(
-                wazuh_connector.fetch_multi_logs,
-                [
-                    {
-                        "rule_id": entry["rule_id"],
-                        "query": entry["query"],
-                    }
-                    for entry in entries
-                ],
-                per_rule_limit or 100,
+                bounded_multi_search,
             )
             completed = list(zip(entries, batch_results))
             execution_mode = "wazuh_msearch"
@@ -172,7 +177,12 @@ async def query_sigma_for_hunt(*, siem_type: str, technique_id: str = "", tactic
         completed = []
 
     if not completed and entries:
-        concurrency = max(1, int(os.environ.get("SIGMA_QUERY_CONCURRENCY", "6")))
+        policy_concurrency = int(siem_retrieval_policy(siem_type)["concurrent_requests"])
+        configured_concurrency = int(os.environ.get("SIGMA_QUERY_CONCURRENCY", "0") or 0)
+        concurrency = max(1, min(
+            policy_concurrency,
+            configured_concurrency or policy_concurrency,
+        ))
         semaphore = asyncio.Semaphore(concurrency)
 
         async def bounded(entry: dict):

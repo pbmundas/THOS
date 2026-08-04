@@ -288,7 +288,7 @@ class LogSearchTranslateRequest(BaseModel):
 
 class LogSearchRunRequest(LogSearchTranslateRequest):
     query: str = Field(min_length=1, max_length=8_000)
-    limit: int = Field(default=250, ge=1, le=2_000)
+    limit: int = Field(default=250, ge=1, le=10_000)
     log_source_path: str | None = Field(default=None, max_length=4_096)
 
 
@@ -299,7 +299,7 @@ class LogSearchExportRequest(BaseModel):
     lookback_minutes: int = Field(default=1440, ge=1, le=525_600)
     executed_at: str = Field(default="", max_length=100)
     field_mapping: dict[str, str] = Field(default_factory=dict)
-    logs: list[dict] = Field(default_factory=list, max_length=2_000)
+    logs: list[dict] = Field(default_factory=list, max_length=10_000)
 
 
 class RiskResolutionRequest(BaseModel):
@@ -727,7 +727,9 @@ def _require_active_log_source(request: Request, siem_type: str) -> None:
 @app.get("/api/log-search/context/{siem_type}")
 async def log_search_context(siem_type: str, request: Request):
     _require_active_log_source(request, siem_type)
-    return await _upstream_json("GET", f"/log-search/context/{siem_type}")
+    payload = await _upstream_json("GET", f"/log-search/context/{siem_type}")
+    from services.capacity import siem_retrieval_policy
+    return {**payload, "retrieval_policy": siem_retrieval_policy(siem_type)}
 
 
 @app.post("/api/log-search/translate")

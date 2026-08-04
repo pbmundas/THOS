@@ -60,6 +60,7 @@ from services.risk.risk_agent import (
 from services.detection.detection_analysis_agent import analyze_detection
 from services.security.configuration import required_secret
 from services.anomaly.service import evaluate_source as evaluate_anomaly_source
+from services.capacity import hardware_capacity
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -458,7 +459,7 @@ class LogSearchTranslateRequest(BaseModel):
 
 class LogSearchRunRequest(LogSearchTranslateRequest):
     query: str = Field(min_length=1, max_length=8_000)
-    limit: int = Field(default=250, ge=1, le=2_000)
+    limit: int = Field(default=250, ge=1, le=10_000)
     log_source_path: str | None = Field(default=None, max_length=4_096)
 
 
@@ -551,6 +552,11 @@ def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/capacity", dependencies=[Depends(require_api_key)])
+async def capacity_status():
+    return hardware_capacity()
 
 
 @app.get("/hypotheses", dependencies=[Depends(require_api_key)])

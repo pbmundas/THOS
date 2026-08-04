@@ -74,6 +74,8 @@ async def evaluate_source(
         if result.get("error"):
             raise RuntimeError(str(result["error"]))
         records = [row for row in result.get("logs") or [] if isinstance(row, dict)]
+        total_hits = max(len(records), int(result.get("total_hits") or len(records)))
+        sampling_limited = total_hits > len(records)
         normalized = await process_logs_node({
             "logs": records,
             "active_query_source": source,
@@ -81,7 +83,11 @@ async def evaluate_source(
         })
         processed = list(normalized.get("processed_logs") or [])
         record_count = len(processed)
-        observations = build_observations(processed, source, bucket)
+        # A newest-N sample is not a measured activity baseline. At enterprise
+        # EPS it can hide entities outside the row cap and create false rarity.
+        # Pause statistical scoring until the SIEM query is scoped tightly
+        # enough to fit or a source-native aggregation path is configured.
+        observations = [] if sampling_limited else build_observations(processed, source, bucket)
         observation_count = len(observations)
         history = await audit.list_anomaly_observations(
             source,
@@ -124,6 +130,13 @@ async def evaluate_source(
             "source": source,
             "status": "completed",
             "records_analyzed": record_count,
+            "total_hits": total_hits,
+            "sampling_limited": sampling_limited,
+            "sampling_message": (
+                "The SIEM window exceeded its row safety budget. Statistical baseline updates were paused; use a narrower anomaly source/index or source-native aggregation."
+                if sampling_limited else ""
+            ),
+            "retrieval_policy": result.get("retrieval_policy") or {},
             "observation_count": observation_count,
             "lead_count": lead_count,
             "closed_count": closed_count,

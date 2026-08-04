@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from services.runtime_config import get_value
+from services.capacity import internal_worker_limit
 
 
 TOOL_TIMEOUT_SECONDS = max(
@@ -545,9 +546,9 @@ def _execute_selected_tool(
             jobs.append(plugin_name)
         concurrency = max(1, min(
             len(jobs) or 1,
-            int(get_value(
+            internal_worker_limit("forensic", int(get_value(
                 "forensics", "volatility_plugin_concurrency", default=2
-            )),
+            ))),
         ))
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
@@ -610,7 +611,7 @@ def run_static_triage(
         })
     concurrency = max(1, min(
         len(accepted_plan) or 1,
-        int(get_value("forensics", "tool_concurrency", default=4)),
+        internal_worker_limit("forensic", int(get_value("forensics", "tool_concurrency", default=4))),
     ))
 
     def execute(step: dict[str, Any]) -> list[dict]:

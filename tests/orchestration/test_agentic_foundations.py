@@ -436,6 +436,43 @@ def test_hunt_report_surfaces_behavioral_key_evidence(tmp_path):
     assert "No hypothesis-relevant artifact" not in content
 
 
+def test_hunt_report_preserves_complete_grouped_evidence_inventory(tmp_path):
+    with patch("services.reporting.report.REPORTS_DIR", str(tmp_path)):
+        path = write_report(
+            hunt_id="hunt-complete-evidence-1",
+            title="Complete Evidence Test",
+            hypothesis="Investigate rundll32.exe activity.",
+            technique_id="T1218.011",
+            technique_name="Rundll32",
+            tactic="Execution",
+            summary="Repeated related process activity was observed.",
+            queries="rundll32.exe",
+            findings="Evidence requires analyst validation.",
+            recommendations="Review command lines and parent processes.",
+            log_sample="[]",
+            evidence_groups=[{
+                "status": "grounded",
+                "kind": "behavioral",
+                "event": "Process creation",
+                "matched_literals": ["rundll32.exe", "dll"],
+                "claim": "Records contain multiple governed literals.",
+                "record_indices": list(range(12)),
+                "record_count": 12,
+            }],
+            evidence_inventory_counts={
+                "inventory_records": 12,
+                "direct_evidence_records": 12,
+                "representative_model_records": 4,
+            },
+        )
+
+    content = Path(path).read_text(encoding="utf-8")
+    assert "**Complete inventory:** `12` record(s) considered" in content
+    assert "**Records 0-11 (12) — rundll32.exe, dll:**" in content
+    assert "- **Direct evidence records:** `12`" in content
+    assert "- **Representative records reviewed by model:** `4`" in content
+
+
 def test_hunt_report_escapes_dynamic_markdown_table_cells(tmp_path):
     with patch("services.reporting.report.REPORTS_DIR", str(tmp_path)):
         path = write_report(

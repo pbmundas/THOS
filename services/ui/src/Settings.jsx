@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowPathIcon, BeakerIcon, BookOpenIcon, CheckCircleIcon, ClockIcon,
-  CloudArrowUpIcon, Cog6ToothIcon, CpuChipIcon, ExclamationTriangleIcon,
+  CircleStackIcon, CloudArrowUpIcon, Cog6ToothIcon, CpuChipIcon, ExclamationTriangleIcon,
   GlobeAltIcon, KeyIcon, MagnifyingGlassIcon, PencilSquareIcon, PlusIcon, QueueListIcon, ShieldCheckIcon, TrashIcon,
   UserCircleIcon, UserGroupIcon,
 } from "@heroicons/react/24/outline";
@@ -101,7 +101,13 @@ function DayPicker({ value, onChange }) {
 
 function GeneralTab({ activeSources }) {
   const [models, setModels] = useState([]);
-  const [form, setForm] = useState({ default_model: "", default_iterations: 2, default_siem: "folder" });
+  const [form, setForm] = useState({
+    default_model: "", default_iterations: 2, default_siem: "folder",
+    auto_scale: true, capacity_profile: "auto", default_siem_max_rows: 500,
+    default_siem_concurrent_requests: 2, siem_queue_timeout_seconds: 30,
+    siem_limits: {},
+  });
+  const [capacity, setCapacity] = useState({});
   const [timezone, setTimezone] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -109,7 +115,18 @@ function GeneralTab({ activeSources }) {
     setLoading(true);
     try {
       const [general, available] = await Promise.all([api("/api/settings/general"), api("/api/settings/models")]);
-      setForm({ default_model: general.default_model || available.models?.[0]?.name || "", default_iterations: general.default_iterations, default_siem: general.default_siem });
+      setForm({
+        default_model: general.default_model || available.models?.[0]?.name || "",
+        default_iterations: general.default_iterations,
+        default_siem: general.default_siem,
+        auto_scale: general.auto_scale !== false,
+        capacity_profile: general.capacity_profile || "auto",
+        default_siem_max_rows: Number(general.default_siem_max_rows || 500),
+        default_siem_concurrent_requests: Number(general.default_siem_concurrent_requests || 2),
+        siem_queue_timeout_seconds: Number(general.siem_queue_timeout_seconds || 30),
+        siem_limits: general.siem_limits || {},
+      });
+      setCapacity(general.hardware_capacity || {});
       setTimezone(general.timezone);
       setModels(available.models || []);
     } catch (error) { setNotice(error.message); }
@@ -120,6 +137,11 @@ function GeneralTab({ activeSources }) {
     try { await api("/api/settings/general", jsonOptions("PUT", form)); setNotice("Runtime defaults saved. New hunts and model calls use them immediately."); }
     catch (error) { setNotice(error.message); }
   };
+  const liveSources = activeSources.filter((item) => ["wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"].includes(item.id));
+  const updateSiemLimit = (source, values) => setForm((current) => ({
+    ...current,
+    siem_limits: { ...current.siem_limits, [source]: { ...(current.siem_limits[source] || {}), ...values } },
+  }));
   return <div className="settings-stack"><section className="settings-card">
     <div className="settings-card-title"><span><CpuChipIcon /></span><div><h3>Model and hunt defaults</h3><p>Models are discovered from the local inference service. No hosted endpoint is used.</p></div></div>
     {notice && <Notice type={notice.includes("saved") ? "success" : "error"}>{notice}</Notice>}
@@ -129,7 +151,34 @@ function GeneralTab({ activeSources }) {
       <label>Default telemetry source<select value={form.default_siem} onChange={(event) => setForm({ ...form, default_siem: event.target.value })}>{activeSources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       <label>Scheduler timezone<input value={timezone} disabled /></label>
     </div>
-    <div className="settings-actions"><button className="secondary-button" onClick={load}><ArrowPathIcon /> Refresh models</button><button className="primary-button" onClick={save}><CheckCircleIcon /> Save defaults</button></div>
+  </section>
+  <section className="settings-card capacity-settings-card">
+    <div className="settings-card-title"><span><CpuChipIcon /></span><div><h3>Automatic hardware capacity</h3><p>THOS scales internal workers to the CPU and memory visible inside container limits. SIEM budgets apply immediately; capacity-profile or container-resource changes take effect after the normal service restart.</p></div></div>
+    <div className="model-capability-grid">
+      <div><strong>{capacity.effective_profile || "unknown"}</strong><small>effective profile</small></div>
+      <div><strong>{capacity.logical_cpus_visible || 0}</strong><small>visible logical CPUs</small></div>
+      <div><strong>{Number(capacity.memory_gb_visible || 0).toFixed(1)} GB</strong><small>visible memory</small></div>
+      <div><strong>{capacity.recommended?.internal_worker_concurrency || 1}</strong><small>internal worker lanes</small></div>
+    </div>
+    <label className="model-auto-toggle"><input type="checkbox" checked={form.auto_scale} onChange={(event) => setForm({ ...form, auto_scale: event.target.checked, capacity_profile: event.target.checked ? "auto" : "compact" })} /><span><strong>Automatically scale internal workers</strong><small>Uses cgroup CPU and memory limits, so Docker/Kubernetes resource assignments remain the deployment safety boundary.</small></span></label>
+    {!form.auto_scale && <div className="settings-form-grid"><label>Fixed capacity profile<select value={form.capacity_profile} onChange={(event) => setForm({ ...form, capacity_profile: event.target.value })}><option value="compact">Compact</option><option value="balanced">Balanced</option><option value="capable">Capable</option><option value="enterprise">Enterprise</option></select></label></div>}
+  </section>
+  <section className="settings-card siem-budget-card">
+    <div className="settings-card-title"><span><CircleStackIcon /></span><div><h3>SIEM retrieval safety budgets</h3><p>These ceilings are enforced centrally for Log Search, hunts, anomaly monitoring, and detection queries. More THOS hardware never raises them automatically.</p></div></div>
+    <div className="siem-budget-warning"><ExclamationTriangleIcon /><span>At 2,000–8,000 EPS, keep events indexed in the SIEM. THOS should retrieve targeted or aggregated result windows—not ingest the full event stream.</span></div>
+    <div className="settings-form-grid">
+      <label>Default maximum rows per query<input type="number" min="1" max="10000" value={form.default_siem_max_rows} onChange={(event) => setForm({ ...form, default_siem_max_rows: Number(event.target.value) })} /></label>
+      <label>Default concurrent requests per SIEM<input type="number" min="1" max="32" value={form.default_siem_concurrent_requests} onChange={(event) => setForm({ ...form, default_siem_concurrent_requests: Number(event.target.value) })} /></label>
+      <label>Queue timeout in seconds<input type="number" min="1" max="300" value={form.siem_queue_timeout_seconds} onChange={(event) => setForm({ ...form, siem_queue_timeout_seconds: Number(event.target.value) })} /></label>
+    </div>
+    <div className="siem-budget-list">
+      {liveSources.map((source) => {
+        const budget = form.siem_limits[source.id] || { max_rows: form.default_siem_max_rows, concurrent_requests: form.default_siem_concurrent_requests };
+        return <div className="siem-budget-row" key={source.id}><div><strong>{source.label}</strong><small>Applies to every THOS retrieval path using {source.id}</small></div><label>Maximum rows<input type="number" min="1" max="10000" value={budget.max_rows} onChange={(event) => updateSiemLimit(source.id, { max_rows: Number(event.target.value) })} /></label><label>Concurrent requests<input type="number" min="1" max="32" value={budget.concurrent_requests} onChange={(event) => updateSiemLimit(source.id, { concurrent_requests: Number(event.target.value) })} /></label></div>;
+      })}
+      {!liveSources.length && <p className="settings-muted">Connect and test a live SIEM in Integrations to configure a source-specific budget.</p>}
+    </div>
+    <div className="settings-actions"><button className="secondary-button" onClick={load}><ArrowPathIcon /> Re-detect capacity</button><button className="primary-button" onClick={save}><CheckCircleIcon /> Save capacity and SIEM limits</button></div>
   </section></div>;
 }
 
