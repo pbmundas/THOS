@@ -1436,6 +1436,7 @@ def _audit_outcome(state: dict) -> dict:
         "reasoning_attempts": state.get("reasoning_attempts", 0),
         "reasoning_error": state.get("reasoning_error"),
         "reasoning_skip_reason": state.get("reasoning_skip_reason"),
+        "related_technique_signals": state.get("related_technique_signals") or [],
         "verification_status": verifier.get("status"),
         "verification_checked_citations": verifier.get(
             "checked_citations", 0

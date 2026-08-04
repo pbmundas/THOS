@@ -216,6 +216,34 @@ def test_verifier_accepts_bounded_reference_lists_and_ranges():
     assert result["verifier_result"]["checked_citations"] == 4
 
 
+def test_verifier_checks_related_technique_signal_references():
+    result = asyncio.run(verify_findings_node({
+        "findings": "- [hard-evidence] Supported (evidence: details; ref: 0)",
+        "related_technique_signals": [{
+            "technique_id": "T1046",
+            "evidence_refs": ["3"],
+        }],
+        "processed_logs": [{}],
+    }))
+
+    assert result["verifier_result"]["status"] == "failed"
+    assert "3" in result["verifier_result"]["invalid_references"]
+
+
+def test_related_signal_citation_cannot_cover_uncited_finding():
+    result = asyncio.run(verify_findings_node({
+        "findings": "- Unsupported finding without a ref",
+        "related_technique_signals": [{
+            "technique_id": "T1046",
+            "evidence_refs": ["0"],
+        }],
+        "processed_logs": [{}],
+    }))
+
+    assert result["verifier_result"]["status"] == "failed"
+    assert result["verifier_result"]["reason"] == "finding output had no verifiable citations"
+
+
 def test_failed_verification_cannot_become_executive_headline():
     cover = _render_cover(
         cover_style="1", hunt_id="hunt-1", hypothesis_id="H013",

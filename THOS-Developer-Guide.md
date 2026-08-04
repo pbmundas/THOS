@@ -69,7 +69,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
                  ▼                ▼                        ▼
         ┌────────────────┐ ┌─────────────┐        ┌──────────────────┐
         │  Ollama (LLM)   │ │ ChromaDB     │        │ SIEM Connectors   │
-        │  qwen3:4b     │ │ (vector RAG) │        │ mock/folder/      │
+        │ Foundation-Sec│ │ (vector RAG) │        │ mock/folder/      │
         └────────────────┘ └─────────────┘        │ LogRhythm/Splunk/  │
                                                      │ QRadar             │
                                                      └──────────────────┘
@@ -95,7 +95,7 @@ THOS is a set of Dockerized microservices orchestrated by **LangGraph** (a state
 | Analyst frontend | **React + Vite** | `services/ui/`, served by a session-gated FastAPI gateway |
 | Backend API / orchestration | **FastAPI** + **LangGraph** | `services/orchestration/main.py`, `graph.py` |
 | Tool execution layer | **FastMCP** (Model Context Protocol) | `services/api/server.py` |
-| Local LLM inference | **Ollama**, default model `qwen3:4b` | No cloud calls |
+| Local LLM inference | **Ollama**, `Foundation-Sec-8B` for security/reasoning and Llama 3.1 8B Instruct Abliterated for fast/query tasks | No cloud calls; deterministic guardrails remain enforced |
 | Vector database (RAG) | **ChromaDB** | Collections: `hearth_kb`, `mitre_kb` (implicit), `siem_kb`, `custom_kb` |
 | Relational store | **PostgreSQL 16** | Audit trail: hunts, hunt_steps, tool_errors, reports |
 | Cache / rate limiting | **Redis 7** | SIEM/LLM response caching, per-hunter rate limits |
@@ -419,7 +419,9 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `CHATUI_SESSION_TTL_SECONDS` | `43200` | Analyst session lifetime (12 hours by default) |
 | `CHATUI_SECURE_COOKIE` | `0` | Set to `1` when the UI is served through HTTPS |
 | `REDIS_PASSWORD` | `thos_change_me_redis` | Redis auth |
-| `OLLAMA_MODEL` | `qwen3:4b` | Swap to `qwen2.5:14b` for better reasoning quality (needs more RAM/VRAM) |
+| `OLLAMA_MODEL` | `hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M` | Instruction-tuned security default used by reasoning/cyber tiers |
+| `THOS_MODEL_FAST` / `THOS_MODEL_QUERY` | `richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M` | Low-latency instruction and portable-query work; never used as the guard tier |
+| `THOS_MODEL_GUARD` | Foundation-Sec default | Keeps the reduced-guardrail Llama build outside prompt-injection classification |
 | `POSTGRES_USER/PASSWORD/DB` | `thos` / `thos_change_me` / `thos_audit` | Audit DB credentials |
 | `SIEM_TYPE` | `folder` | `folder` \| `logrhythm` \| `splunk` \| `qradar` \| `wazuh` \| `elasticsearch`; `mock` is isolated-test-only and fails closed unless `ALLOW_SYNTHETIC_TELEMETRY=1` |
 | `ALLOW_SYNTHETIC_TELEMETRY` | `0` | Keep `0` outside isolated development tests; prevents mock records from entering hunts or reports |
@@ -428,6 +430,11 @@ All configuration lives in `env.example` → copy to `.env`. Highlights (see the
 | `SPLUNK_BASE_URL` / `SPLUNK_TOKEN` | *(blank)* | Required for `SIEM_TYPE=splunk` |
 | `QRADAR_BASE_URL` / `QRADAR_TOKEN` | *(blank)* | Required for `SIEM_TYPE=qradar` |
 | `WAZUH_INDEXER_URL` / `WAZUH_INDEXER_USERNAME` / `WAZUH_INDEXER_PASSWORD` | *(blank)* | Required for `SIEM_TYPE=wazuh`; queries the Indexer on port 9200, not the manager API on port 55000 |
+
+Runtime routing applies an 8K context override to the bounded `coverage_gap`
+and `reasoning` hunt agents. Other cyber-tier agents, including forensic
+analysis, retain the 16K profile. This avoids unnecessary CPU spill on common
+8 GB GPU deployments without reducing forensic context capacity.
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`, applies to orchestrator/mcp/chat-ui structured logs |
 | `HUNT_RATE_LIMIT_PER_WINDOW` / `HUNT_RATE_LIMIT_WINDOW_SECONDS` | `10` / `60` | Per-hunter rate limit |
 | `*_CPU_LIMIT` / `*_MEM_LIMIT` (per service) | varies | Docker Compose resource limits, tunable per deploy |

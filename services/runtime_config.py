@@ -24,6 +24,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_tier": "reasoning",
         "auto_select": False,
         "overrides": {
+            # Bounded hunt prompts fit below 8K. Keeping these two hot-path
+            # agents at 8K lets an 8 GB GPU offload far more of the 8B
+            # security model while forensic agents retain the 16K profile.
+            "coverage_gap": {"num_ctx": 8192},
+            "reasoning": {"num_ctx": 8192},
             "risk_analysis": {"num_predict": 2048},
         },
         "auto_assignments": {},

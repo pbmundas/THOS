@@ -5,19 +5,19 @@
 **Scope:** Agent intelligence upgrades, new agent proposals, on-prem LLM/embedding model strategy, multi-model routing, fine-tuning plan, infrastructure scaling
 **Date:** July 2026
 
-> **Note on source material:** The zip you uploaded did not actually contain `THOS-Agentic-AI-Transformation-Plan.md` only the THOS codebase itself (services/orchestration, reasoning, siem, detection, hunting, knowledge, mcp, observability, reporting). Rather than guess at a plan that isn't there, this document is built directly from the real, working system: an 8-node LangGraph pipeline running on Ollama + Qwen2.5:7B, with FastAPI, ChromaDB, Postgres, Redis, and FastMCP. Everything below is grounded in what your code actually does today, with concrete file/module references.
+> **Note on source material:** The zip you uploaded did not actually contain `THOS-Agentic-AI-Transformation-Plan.md` only the THOS codebase itself (services/orchestration, reasoning, siem, detection, hunting, knowledge, mcp, observability, reporting). Rather than guess at a plan that isn't there, this document is built directly from the real, working system: a LangGraph pipeline running on Ollama with Llama 3.1 for fast/query work and Foundation-Sec-Instruct for security reasoning, plus FastAPI, ChromaDB, Postgres, Redis, and FastMCP. Everything below is grounded in the deployed code, with concrete file/module references.
 
 ---
 
 ## 1. Executive Summary
 
-THOS is already a genuinely well-engineered on-prem agentic hunting platform it has real prompt-injection defenses, dual-layer Sigma detection (SigmaHQ + custom), evidence-citation discipline in its reasoning prompt, caching, rate limiting, and a bounded concurrency gate. The gap isn't "does it work" it's **intelligence depth, model specialization, and agent count**. Today, one 7B general-purpose model does *everything*: query generation, indicator derivation, and deep security reasoning, run one-shot with no self-check and no memory across hunts.
+THOS is already a genuinely well-engineered on-prem agentic hunting platform it has real prompt-injection defenses, dual-layer Sigma detection (SigmaHQ + custom), evidence-citation discipline in its reasoning prompt, caching, rate limiting, and a bounded concurrency gate. The deployed fleet now separates latency-sensitive work from security reasoning: Llama 3.1 handles fast/query routes and Foundation-Sec-Instruct handles cyber, reasoning, and guard routes. The remaining gap is scaling that specialization without allowing sequential local inference to dominate hunt latency.
 
 This plan proposes three parallel tracks:
 
 1. **Make the existing 8 agents smarter** add self-critique/verification loops, adaptive retrieval, confidence calibration, and ReAct-style tool use instead of single-shot generation.
 2. **Add 10 new agents** a supervisor/planner, a verifier/critic, threat-intel enrichment, detection engineering, case management, coverage-gap analysis, a dedicated guardrail model, and more turning the static pipeline into a real multi-agent system.
-3. **Upgrade the model fleet** replace the single Qwen2.5:7B with a *tiered, on-prem-only* fleet (small/fast → mid reasoning → deep/escalation → coding → embeddings → guardrail), routed by task, plus a concrete on-prem fine-tuning/continuous-learning pipeline so the models keep improving from real analyst feedback.
+3. **Standardize the model fleet** use the tested Llama 3.1 and Foundation-Sec-Instruct models as a *tiered, on-prem-only* fleet (fast/query → security reasoning → coding/security → guardrail), routed by task, plus a concrete on-prem fine-tuning/continuous-learning pipeline so the models keep improving from real analyst feedback.
 
 Everything recommended stays 100% on-premises no cloud APIs, consistent with THOS's core design constraint.
 
@@ -58,7 +58,7 @@ refresh_hearth_kb → hypothesis → query_gen → siem_fetch → log_processing
 
 | Limitation | Where | Why it matters |
 |---|---|---|
-| **One generalist 7B model for every task** | `OLLAMA_MODEL=qwen2.5:7b` used for query-gen, indicator derivation, *and* deep reasoning | A 7B model is fine for short structured extraction; it is not strong enough for nuanced multi-step security reasoning, and using it for everything wastes GPU cycles better spent on a bigger model for the hard step |
+| **Two 8B models share one inference service** | Llama 3.1 serves fast/query routes and Foundation-Sec-Instruct serves cyber/reasoning/guard routes | Task specialization improves output quality, but sequential generations and model/context swaps can still dominate hunt latency on an 8 GB GPU |
 | **Single-shot reasoning, no self-check** | `reasoning.py: reason_node` | One LLM call produces the final verdict; nothing verifies it, challenges over-claiming, or checks the citation rule was actually followed |
 | **Static linear DAG** | `orchestration/graph.py` | No dynamic planning every hunt runs the identical 8 steps regardless of hypothesis complexity; no fan-out/parallelism, no supervisor deciding what's actually needed |
 | **No cross-hunt memory** | | Each hunt starts cold; nothing recalls that a similar hypothesis was hunted last week, or what an analyst corrected last time |
@@ -168,30 +168,30 @@ refresh_hearth_kb → hypothesis → SUPERVISOR (plan)
 
 ## 7. On-Prem Model Recommendations (Fully Self-Hosted, No Cloud APIs)
 
-Your instinct to move off a single Qwen2.5:7B is correct a security-reasoning agent fleet benefits from **specialization**, not one generalist model. Below is a tiered fleet, all open-weight and self-hostable on Ollama or vLLM.
+The validated deployment uses two self-hosted generation models and assigns them by task. Security reasoning benefits from **specialization**, while query and coordination paths need the lower-latency general instruction model.
 
 ### 7.1 Recommended tiers
 
 | Tier | Role in THOS | Recommended model(s) | License | Approx. size / hardware |
 |---|---|---|---|---|
-| **Tier 0 Fast/structured** | Query-gen, indicator-derivation, communication-agent rewrites, case-note summarization | **Qwen3-8B**, or **Phi-4-mini-instruct** (3.8B) for the lightest deployments | Apache-2.0 / MIT | Single consumer GPU (8–16GB) or even CPU-only for Phi-4-mini |
-| **Tier 1 Primary reasoning (replaces Qwen2.5:7B)** | Reasoning node, Supervisor/planner, Coverage-Gap analysis | **Qwen3.6-35B-A3B** (MoE, 3B active strong reasoning at low active-param cost) or **Qwen3-32B** (dense) | Apache-2.0 | Single 24–48GB GPU (quantized Q4/Q8) |
+| **Tier 0 Fast/structured** | Query-gen, indicator derivation, evidence selection, communication, planning, case-note summarization | **richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M** | See upstream model-card terms | Single consumer GPU; 8K context on the deployed 8 GB profile |
+| **Tier 1 Security reasoning** | Reasoning node, Coverage-Gap analysis, investigation specialists, risk reconsideration | **hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M** | See upstream and quantization model-card terms | Single consumer GPU; bounded hunt routes use 8K and forensic routes retain 16K |
 | **Tier 2 Escalation / Verifier / hard cases** | Verifier-Critic agent, low-confidence re-analysis, complex multi-technique hunts | **DeepSeek-R1** (or a **32B/70B distill** for lighter hardware) or **GLM-5** | MIT | Distill: single 48GB GPU; full R1/GLM-5: multi-GPU server |
-| **Coding tier** | Detection Engineering agent (Sigma/YARA drafting) | **Qwen3-Coder** (480B-A35B for max quality, or a smaller Qwen-Coder variant for practicality) | Apache-2.0 | 35B active needs a dedicated GPU node for the full model; smaller coder variants run on one GPU |
-| **Guard tier** | Prompt-Injection Sentinel agent, KB-upload screening | A fine-tuned **Phi-4-mini-instruct** or **Qwen3-8B** classifier (small, fast, purpose-tuned see Section 9) | Apache-2.0/MIT | Single small GPU, high throughput needed |
-| **Embeddings** | ChromaDB collections (HEARTH, MITRE, SIEM-KB, custom_kb) | **Qwen3-Embedding-8B** for best quality (≈16GB FP16 / ≈5GB at Q4), or **BGE-M3** if you want a lighter, well-proven multilingual workhorse | Apache-2.0 / MIT | 5–16GB depending on quantization |
+| **Coding/security tier** | Detection Engineering agent (Sigma/YARA drafting) | **Foundation-Sec-Instruct** | See upstream model-card terms | Shares the security tier; generated rules remain staged and deterministically validated |
+| **Guard tier** | Prompt-Injection Sentinel agent, KB-upload screening | **Foundation-Sec-Instruct** plus deterministic injection markers | See upstream model-card terms | Never assign the reduced-refusal Llama build to guard work |
+| **Embeddings** | ChromaDB collections (HEARTH, MITRE, SIEM-KB, custom_kb) | Existing local embedding path; **BGE-M3** is the non-generation upgrade option | MIT | Size according to the selected local embedding runtime |
 
 ### 7.2 Why this shape
 
-- **Qwen3 family** (Apache-2.0) is the safest license choice across the board and has the strongest reasoning-per-active-parameter ratio among open models right now, which matters because THOS is latency-sensitive (analysts are waiting on a hunt).
-- **MoE models (Qwen3.6-35B-A3B)** give you a bigger effective model without needing a bigger GPU only ~3B parameters are "active" per token, so inference cost tracks closer to a much smaller dense model.
+- **Llama 3.1 Instruct Abliterated** is assigned only to fast, query, coordination, evidence-selection, and communication paths. Its reduced refusal behavior is not treated as a security boundary.
+- **Foundation-Sec-Instruct** is assigned to security reasoning, coverage, forensic, coding/security, and guard paths where cybersecurity vocabulary and evidence interpretation matter most.
 - **DeepSeek-R1 / distills** are the strongest *reasoning-specific* open models available on-prem and are MIT-licensed (explicitly permits distillation, which matters if you fine-tune from its outputs later). Reserve it for the Verifier and hard-case escalation rather than every hunt it's slower per-token, so use it where the extra rigor pays off.
-- **Qwen3-Embedding-8B** materially outperforms typical default sentence-transformer embeddings on retrieval benchmarks, which directly improves your RAG-grounded reasoning and hypothesis-matching quality likely one of the highest ROI-per-effort swaps in this plan since it's a drop-in replacement in `services/siem/clients.py`'s embedding call, not an architecture change.
+- **A dedicated non-generation embedding model** remains appropriate for retrieval. Generation models should not be repurposed as embedding models merely to reduce the model count.
 - **A dedicated Guard-tier model** is worth the extra deployment because your reasoning prompt already treats log content as adversarial input a purpose-tuned classifier catches injection attempts *before* they reach any agent, rather than relying solely on the current regex list, which is defense-in-depth but not infinitely extensible against novel phrasing.
 
 ### 7.3 Serving stack
 
-- **Ollama** remains the right choice for Tier 0/Guard (simple, GGUF-quantized, low ops overhead) keep your current `ollama_client.py` pattern, just add `OLLAMA_MODEL` per agent instead of one global env var.
+- **Ollama** remains the right choice for the deployed fast, security, and guard tiers (simple, GGUF-quantized, low ops overhead); `model_router.py` resolves the configured model per agent route.
 - **vLLM** (or SGLang) is worth introducing for Tier 1/Tier 2/Coding, where you'll want higher throughput under concurrent hunts, continuous batching, and easier multi-GPU tensor parallelism than Ollama currently gives you. Both expose an OpenAI-compatible API, so your `httpx`-based client pattern barely changes swap the base URL and payload shape per tier.
 - Run each tier as its **own container/service** with its own GPU allocation, so the Tier-2 escalation model being busy never blocks Tier-0 query-gen calls this directly removes the `MAX_CONCURRENT_HUNTS=2` bottleneck, which today exists *because* everything shares one Ollama process.
 
@@ -259,7 +259,7 @@ Your `audit.py` already logs every hunt step, tool error, and report this is a t
 | **Concurrency control** | Single in-process `asyncio.Semaphore` per orchestrator process | Generalize to a **Redis-backed distributed semaphore** per model tier, so multiple orchestrator replicas share one accurate view of GPU capacity |
 | **Orchestrator** | Single FastAPI process | Stateless, horizontally scalable LangGraph checkpointing to Postgres (needed anyway for the human-approval gate) makes any replica able to resume any in-flight hunt |
 | **Vector DB** | ChromaDB (HEARTH/MITRE/SIEM-KB/custom_kb collections) | Fine as-is at current scale; if `custom_kb` grows into the tens of millions of chunks, evaluate Qdrant or pgvector (keeps you on the Postgres you already run) for better horizontal scaling not urgent today |
-| **GPU sizing (starting point)** | 1 GPU (whatever runs Qwen2.5:7B today) | Minimum viable multi-tier: 1× GPU for Tier 0 + Guard (can share, both are small/fast), 1× 48GB GPU for Tier 1, 1× 48GB+ GPU for Tier 2/Coding (can be shared/time-sliced early on since these are escalation-only, lower call volume) |
+| **GPU sizing (starting point)** | 1 GPU running the tested Llama 3.1 and Foundation-Sec-Instruct Q4 models | Minimum viable split: one consumer GPU for fast/query work and one for security/guard work; larger forensic contexts benefit from additional VRAM |
 | **Observability** | Structured JSON logging + Postgres audit trail | Extend with per-agent token/latency dashboards (which tier is the bottleneck), and Verifier pass/fail rate as a live quality metric |
 
 ---
@@ -277,7 +277,7 @@ Your `audit.py` already logs every hunt step, tool error, and report this is a t
 
 | Phase | Focus | Key deliverables |
 |---|---|---|
-| **Phase 1 (Foundations)** | Model fleet + quick wins | Deploy Tier 0/Tier 1 models, swap embedding model to Qwen3-Embedding-8B, add Verifier agent, generalize concurrency gate per tier |
+| **Phase 1 (Foundations)** | Model fleet + quick wins | Deploy the Llama 3.1/Foundation-Sec tiers, retain a dedicated non-generation embedding model, add Verifier agent, generalize concurrency gate per tier |
 | **Phase 2 (Orchestration)** | Supervisor + memory | Add Supervisor/Planner node, LangGraph checkpointing + human-approval gate, case-management store |
 | **Phase 3 (New agents)** | Fill capability gaps | Threat-Intel Enrichment (MISP/OpenCTI on-prem), Detection Engineering, Coverage-Gap agent, Communication agent |
 | **Phase 4 (Learning loop)** | Continuous improvement | Analyst feedback capture, golden regression eval harness, first LoRA/DPO fine-tune cycle |
@@ -302,14 +302,14 @@ This phasing also folds in items already on your README roadmap (Sigma/YARA gene
 
 | Model | Tier | License | Best for in THOS |
 |---|---|---|---|
-| Qwen3-8B | Tier 0 | Apache-2.0 | Query-gen, indicator derivation |
+| Llama 3.1 8B Instruct Abliterated Q4 | Tier 0 | See upstream model-card terms | Query-gen, indicator derivation, evidence selection, communication |
 | Phi-4-mini-instruct (3.8B) | Tier 0 / Guard | MIT | Lightest-hardware deployments, guard classifier base |
-| Qwen3.6-35B-A3B | Tier 1 | Apache-2.0 | Primary reasoning (replaces Qwen2.5:7B) |
-| Qwen3-32B (dense) | Tier 1 alt. | Apache-2.0 | Primary reasoning if MoE serving isn't set up yet |
+| Foundation-Sec-8B-Instruct Q4 | Tier 1 | See upstream and quantization model-card terms | Primary security reasoning, coverage, investigations |
+| Foundation-Sec-8B-Instruct Q4 (16K context) | Tier 1 forensic profile | See upstream and quantization model-card terms | Larger forensic artifact investigations |
 | DeepSeek-R1 (or 32B/70B distill) | Tier 2 | MIT | Verifier/Critic, hard-case escalation |
 | GLM-5 | Tier 2 alt. | MIT | Escalation, especially for coding-adjacent findings |
-| Qwen3-Coder | Coding | Apache-2.0 | Detection Engineering (Sigma/YARA drafting) |
-| Qwen3-Embedding-8B | Embeddings | Apache-2.0 | All ChromaDB collections (RAG quality upgrade) |
+| Foundation-Sec-8B-Instruct Q4 | Coding/security | See upstream and quantization model-card terms | Detection Engineering (Sigma/YARA drafting) |
+| BGE-M3 | Embeddings option | MIT | Local ChromaDB retrieval without using a generation model |
 | BGE-M3 | Embeddings alt. | MIT | If you want a lighter/well-proven multilingual default |
 
 ## Appendix B File/Module Map for Implementation

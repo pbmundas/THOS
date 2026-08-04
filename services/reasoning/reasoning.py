@@ -16,6 +16,7 @@ _REASONING_REF = re.compile(
     r"^(?:histogram|\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*)$",
     re.IGNORECASE,
 )
+_TECHNIQUE_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$", re.IGNORECASE)
 
 
 class ReasoningResponseError(RuntimeError):
@@ -138,6 +139,8 @@ Write a thorough analysis, not a one-line verdict. Specifically:
 
 OUTPUT DISCIPLINE:
   - Return between 1 and 4 findings, choosing the strongest supported evidence.
+  - Put evidence-backed leads for a different ATT&CK technique in
+    `related_technique_signals`; keep them out when no such lead exists.
   - Keep the complete JSON response under 5,000 characters.
   - Use only exact numeric `_ref` values from the supplied sample, compact
     comma/range syntax, or `histogram`; never add prose to `ref`.
@@ -150,6 +153,13 @@ Respond ONLY with a JSON object with these exact keys:
     {"claim": "<the finding, stated plainly>",
      "evidence": "<the literal field/value that supports it, or 'absent across N records per histogram'>",
      "ref": "<one record _ref index, comma-separated indices, a compact inclusive range such as 4-7, or 'histogram'>",
+     "confidence": "<hard-evidence | circumstantial>"}
+  ],
+  "related_technique_signals": [
+    {"technique_id": "<different ATT&CK technique ID such as T1046>",
+     "technique_name": "<name when known, otherwise empty>",
+     "rationale": "<why the cited evidence may warrant a separate hypothesis>",
+     "evidence_refs": ["<exact supplied numeric _ref or compact range>"],
      "confidence": "<hard-evidence | circumstantial>"}
   ],
   "recommendations": "<specific, actionable bullet-point recommendations as a single string with \\n separators>",
@@ -175,7 +185,7 @@ FINDINGS_SCHEMA = {
         "findings": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 3,
+            "maxItems": 4,
             "items": {
                 "type": "object",
                 "properties": {
@@ -195,6 +205,32 @@ FINDINGS_SCHEMA = {
                 "required": ["claim", "evidence", "ref", "confidence"],
             },
         },
+        "related_technique_signals": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "technique_id": {"type": "string", "maxLength": 12},
+                    "technique_name": {"type": "string", "maxLength": 120},
+                    "rationale": {"type": "string", "maxLength": 300},
+                    "evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 60},
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["hard-evidence", "circumstantial"],
+                    },
+                },
+                "required": [
+                    "technique_id", "technique_name", "rationale",
+                    "evidence_refs", "confidence",
+                ],
+            },
+        },
         "recommendations": {"type": "string", "maxLength": 800},
         "need_more_logs": {"type": "boolean"},
         "follow_up_objective": {"type": "string", "maxLength": 300},
@@ -205,6 +241,7 @@ FINDINGS_SCHEMA = {
     "required": [
         "summary",
         "findings",
+        "related_technique_signals",
         "recommendations",
         "need_more_logs",
         "follow_up_objective",
@@ -432,6 +469,7 @@ def _parse_complete_reasoning(raw: str) -> dict:
 
     summary = parsed.get("summary")
     findings = parsed.get("findings")
+    related_signals = parsed.get("related_technique_signals")
     recommendations = parsed.get("recommendations")
     need_more_logs = parsed.get("need_more_logs")
     follow_up_objective = parsed.get("follow_up_objective")
@@ -442,6 +480,8 @@ def _parse_complete_reasoning(raw: str) -> dict:
         raise ReasoningResponseError("model response had no summary")
     if not isinstance(findings, list) or not findings:
         raise ReasoningResponseError("model response had no findings")
+    if len(findings) > 4:
+        raise ReasoningResponseError("model response exceeded the four-finding limit")
     for index, finding in enumerate(findings, start=1):
         if not isinstance(finding, dict):
             raise ReasoningResponseError(f"finding {index} was not an object")
@@ -452,6 +492,49 @@ def _parse_complete_reasoning(raw: str) -> dict:
             raise ReasoningResponseError(f"finding {index} had a malformed record reference")
         if finding["confidence"] not in {"hard-evidence", "circumstantial"}:
             raise ReasoningResponseError(f"finding {index} had an invalid confidence")
+    if not isinstance(related_signals, list):
+        raise ReasoningResponseError(
+            "model response had no related_technique_signals array"
+        )
+    if len(related_signals) > 4:
+        raise ReasoningResponseError(
+            "model response exceeded the related-technique signal limit"
+        )
+    for index, signal in enumerate(related_signals, start=1):
+        if not isinstance(signal, dict):
+            raise ReasoningResponseError(
+                f"related-technique signal {index} was not an object"
+            )
+        technique_id = signal.get("technique_id")
+        if not isinstance(technique_id, str) or not _TECHNIQUE_ID.fullmatch(
+            technique_id.strip()
+        ):
+            raise ReasoningResponseError(
+                f"related-technique signal {index} had an invalid technique_id"
+            )
+        for field in ("technique_name", "rationale", "confidence"):
+            if not isinstance(signal.get(field), str):
+                raise ReasoningResponseError(
+                    f"related-technique signal {index} had no {field} string"
+                )
+        if not signal["rationale"].strip():
+            raise ReasoningResponseError(
+                f"related-technique signal {index} had no rationale"
+            )
+        if signal["confidence"] not in {"hard-evidence", "circumstantial"}:
+            raise ReasoningResponseError(
+                f"related-technique signal {index} had an invalid confidence"
+            )
+        evidence_refs = signal.get("evidence_refs")
+        if not isinstance(evidence_refs, list) or not evidence_refs:
+            raise ReasoningResponseError(
+                f"related-technique signal {index} had no evidence_refs"
+            )
+        for ref in evidence_refs:
+            if not isinstance(ref, str) or not _REASONING_REF.fullmatch(ref.strip()):
+                raise ReasoningResponseError(
+                    f"related-technique signal {index} had a malformed record reference"
+                )
     if not isinstance(recommendations, str) or not recommendations.strip():
         raise ReasoningResponseError("model response had no recommendations")
     if not isinstance(need_more_logs, bool):
@@ -587,6 +670,7 @@ def _negative_screening_update(state: HuntState, screened: dict) -> dict:
     return {
         "reasoning_summary": screened["summary"],
         "findings": _render_findings(screened["findings"]),
+        "related_technique_signals": [],
         "recommendations": "",
         "need_more_logs": False,
         "follow_up_query": None,
@@ -834,7 +918,7 @@ async def reason_node(state: HuntState) -> dict:
     # is safe: an identical prompt can only come from an identical hunt
     # state, never a stale/different one.
     # Versioned key bypasses historical empty-response cache entries.
-    cache_key = "v4|" + prompt
+    cache_key = "v5|" + prompt
     cached_raw = await asyncio.to_thread(cache.cache_get, "reasoning", cache_key)
     parsed = None
     reasoning_cache_hit = False
@@ -871,6 +955,7 @@ async def reason_node(state: HuntState) -> dict:
         return {
             "reasoning_summary": "",
             "findings": "",
+            "related_technique_signals": [],
             "recommendations": "",
             "need_more_logs": False,
             "follow_up_query": None,
@@ -968,6 +1053,12 @@ async def reason_node(state: HuntState) -> dict:
     return {
         "reasoning_summary": parsed.get("summary", ""),
         "findings": _render_findings(parsed.get("findings", "")),
+        "related_technique_signals": [
+            signal
+            for signal in parsed.get("related_technique_signals", [])
+            if str(signal.get("technique_id") or "").upper()
+            != str(state.get("technique_id") or "").upper()
+        ],
         "recommendations": str(parsed.get("recommendations") or "").strip(),
         "need_more_logs": need_more,
         "follow_up_query": follow_up_query if need_more else None,

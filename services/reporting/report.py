@@ -255,6 +255,30 @@ def _render_mitre_section(technique_id: str) -> str:
     )
 
 
+def _render_related_technique_signals(signals: list[dict] | None) -> str:
+    """Render structured cross-technique leads without promoting them to findings."""
+    if not signals:
+        return "_No evidence-backed cross-technique leads were identified._"
+    lines = [
+        "| Technique | Confidence | Evidence refs | Rationale |",
+        "|---|---|---|---|",
+    ]
+    for signal in signals:
+        technique_id = str(signal.get("technique_id") or "unmapped")
+        technique_name = str(signal.get("technique_name") or "name not supplied")
+        refs = ", ".join(str(value) for value in signal.get("evidence_refs") or [])
+        lines.append(
+            f"| `{_markdown_cell(technique_id)}` - {_markdown_cell(technique_name)} | "
+            f"`{_markdown_cell(signal.get('confidence'))}` | "
+            f"{_markdown_cell(refs)} | {_markdown_cell(signal.get('rationale'))} |"
+        )
+    lines.append(
+        "\n_These are cited leads for analyst triage or a separate hypothesis; "
+        "they are not confirmed technique findings._"
+    )
+    return "\n".join(lines)
+
+
 def _render_sigma_section(sigma_rule_matches, sigma_matched_count: int, records_analyzed: int) -> str:
     if not sigma_rule_matches:
         return (
@@ -310,6 +334,9 @@ REPORT_TEMPLATE = """\
 
 ### MITRE ATT&CK Coverage
 {mitre_section}
+
+### Related ATT&CK Technique Signals
+{related_technique_signals_section}
 
 ### Investigation Requirements
 {investigation_contract_section}
@@ -411,6 +438,7 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
                   retrieval_attempts: list[dict] | None = None,
                   hunt_completeness: dict | None = None,
                   investigation_requirements: dict | None = None,
+                  related_technique_signals: list[dict] | None = None,
                   hunt_started_at=None,
                   hunt_completed_at=None) -> str:
     """Render the markdown report and write it to disk. Returns the file path.
@@ -726,6 +754,9 @@ def write_report(hunt_id: str, title: str, hypothesis: str, technique_id: str,
         log_sample=log_sample or "[]",
         ingestion_diagnostics=ingestion_diagnostics or "(not available for this SIEM type)",
         mitre_section=mitre_section,
+        related_technique_signals_section=_render_related_technique_signals(
+            related_technique_signals
+        ),
         sigma_section=sigma_section,
         proposed_detection_rule=(f"```yaml\n{proposed_detection_rule}```\n\n_Proposal only; validate and promote it through your normal detection change-control process._" if proposed_detection_rule else "_No rule proposal generated for this hunt._"),
         hunt_memory_section=hunt_memory_section,
@@ -844,6 +875,7 @@ async def write_report_node(state: dict) -> dict:
         retrieval_attempts=state.get("retrieval_attempts"),
         hunt_completeness=state.get("hunt_completeness"),
         investigation_requirements=state.get("investigation_requirements"),
+        related_technique_signals=state.get("related_technique_signals"),
         hunt_started_at=state.get("hunt_started_at"),
         hunt_completed_at=hunt_completed_at,
     )

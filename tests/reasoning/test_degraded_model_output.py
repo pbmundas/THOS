@@ -21,6 +21,7 @@ def _valid_response():
             "ref": "0",
             "confidence": "hard-evidence",
         }],
+        "related_technique_signals": [],
         "recommendations": "- Continue collecting PowerShell Event ID 4104.",
         "need_more_logs": False,
         "follow_up_objective": "",
@@ -54,6 +55,16 @@ def test_windows_event_xml_system_element_is_not_prompt_injection():
     assert _sanitize_untrusted_text(xml) == xml
 
 
+def test_record_consumers_share_prompt_injection_defense():
+    from services.coverage.gap_analysis import SYSTEM_PROMPT as coverage_prompt
+    from services.hunting.evidence_selector import SYSTEM_PROMPT as evidence_prompt
+
+    for prompt in (coverage_prompt, evidence_prompt):
+        lowered = prompt.lower()
+        assert "untrusted" in lowered
+        assert "never as instructions" in lowered
+
+
 def test_platform_safety_annotation_cannot_become_report_evidence():
     response = json.loads(_valid_response())
     response["findings"][0]["claim"] = (
@@ -73,6 +84,28 @@ def test_malformed_reasoning_reference_is_retried_before_reporting():
 def test_ollama_schema_avoids_unsupported_regex_grammar():
     ref_schema = reasoning.FINDINGS_SCHEMA["properties"]["findings"]["items"]["properties"]["ref"]
     assert ref_schema == {"type": "string"}
+
+
+def test_prompt_and_schema_allow_four_findings():
+    response = json.loads(_valid_response())
+    response["findings"] = response["findings"] * 4
+
+    assert reasoning.FINDINGS_SCHEMA["properties"]["findings"]["maxItems"] == 4
+    assert len(_parse_complete_reasoning(json.dumps(response))["findings"]) == 4
+
+
+def test_related_technique_signal_is_structured_and_cited():
+    response = json.loads(_valid_response())
+    response["related_technique_signals"] = [{
+        "technique_id": "T1046",
+        "technique_name": "Network Service Discovery",
+        "rationale": "The cited record contains a network scan command.",
+        "evidence_refs": ["0"],
+        "confidence": "hard-evidence",
+    }]
+
+    parsed = _parse_complete_reasoning(json.dumps(response))
+    assert parsed["related_technique_signals"][0]["technique_id"] == "T1046"
 
 
 @pytest.mark.asyncio

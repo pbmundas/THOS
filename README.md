@@ -418,6 +418,19 @@ docker compose logs --tail=100 chat-ui orchestrator mcp
 The safe default source is `folder`. Configure and successfully test a live
 source in **Integrations** before using it for hunts, schedules, or Log Search.
 
+The default local model fleet uses
+`hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M` for security reasoning
+and guard-tier work, and
+`richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M` for fast and query
+tasks. The latter intentionally has reduced model-level refusal behavior, so
+THOS never assigns it to the guard tier; deterministic input validation,
+read-only query enforcement, evidence citation checks, and role authorization
+remain authoritative.
+
+The bounded hunt `coverage_gap` and `reasoning` routes use an 8K context so the
+Foundation-Sec quant can offload efficiently on an 8 GB GPU. Forensic security
+routes retain the 16K cyber profile for larger artifact investigations.
+
 ## Operational configuration
 
 `env.example` documents deploy-time secrets, storage, connector, model, and

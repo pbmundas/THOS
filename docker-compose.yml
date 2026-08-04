@@ -1,7 +1,7 @@
 # =====================================================================
 # THOS :: On-Prem AI Threat Hunting Platform — Phase 1
 # =====================================================================
-# Stack: Ollama (Qwen) + ChromaDB (RAG) + FastMCP (tools) + LangGraph
+# Stack: Ollama (Foundation-Sec + Llama 3.1) + ChromaDB (RAG) + FastMCP (tools) + LangGraph
 #        (orchestrator) + Postgres (audit/state) + Redis (cache) +
 #        React analyst UI + secured FastAPI gateway
 #
@@ -96,8 +96,8 @@ services:
       - thos-net
     environment:
       OLLAMA_HOST: ollama:11434
-      MODEL_NAMES: "${OLLAMA_MODEL:-qwen3:4b} ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}"
-      QUERY_MODEL: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
+      MODEL_NAMES: "${OLLAMA_MODEL:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M} ${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}"
+      QUERY_MODEL: ${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
     deploy:
       resources:
         limits:
@@ -377,10 +377,10 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
-      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}}
-      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
-      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-qwen2.5-coder:1.5b-instruct}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}}
+      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
+      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
       THOS_FAST_GENERATION_TIMEOUT_SECONDS: ${THOS_FAST_GENERATION_TIMEOUT_SECONDS:-60}
       THOS_FAST_GENERATION_RETRIES: ${THOS_FAST_GENERATION_RETRIES:-1}
       THOS_FAST_NUM_CTX: ${THOS_FAST_NUM_CTX:-8192}
@@ -518,17 +518,17 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
-      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-qwen2.5-coder:1.5b-instruct}
-      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
-      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-qwen2.5-coder:1.5b-instruct}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
+      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
+      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
       THOS_FAST_NUM_CTX: ${THOS_FAST_NUM_CTX:-8192}
       THOS_FAST_NUM_PREDICT: ${THOS_FAST_NUM_PREDICT:-1024}
       THOS_QUERY_NUM_CTX: ${THOS_QUERY_NUM_CTX:-8192}
       THOS_QUERY_NUM_PREDICT: ${THOS_QUERY_NUM_PREDICT:-512}
       THOS_GUARD_NUM_CTX: ${THOS_GUARD_NUM_CTX:-8192}
       THOS_GUARD_NUM_PREDICT: ${THOS_GUARD_NUM_PREDICT:-384}
-      THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-qwen3:4b}}
+      THOS_MODEL_REASONING: ${THOS_MODEL_REASONING:-${OLLAMA_MODEL:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}}
       # The evidence prompt and completion share Ollama's context window.
       # 8K can leave only ~1K output tokens, truncating structured JSON at a
       # repeatable character offset before the final braces are emitted.
@@ -673,10 +673,10 @@ services:
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8200
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
-      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-qwen2.5-coder:1.5b-instruct}
-      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-qwen2.5-coder:1.5b-instruct}
-      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-qwen2.5-coder:1.5b-instruct}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
+      THOS_MODEL_FAST: ${THOS_MODEL_FAST:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
+      THOS_MODEL_QUERY: ${THOS_MODEL_QUERY:-richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M}
+      THOS_MODEL_GUARD: ${THOS_MODEL_GUARD:-hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M}
       THOS_SCHEDULED_OLLAMA_HOST: ${THOS_SCHEDULED_OLLAMA_HOST:-http://ollama:11434}
       THOS_OLLAMA_MEMORY_BUDGET_GB: ${THOS_OLLAMA_MEMORY_BUDGET_GB:-8}
       THOS_OLLAMA_MEMORY_OVERHEAD_FACTOR: ${THOS_OLLAMA_MEMORY_OVERHEAD_FACTOR:-4}

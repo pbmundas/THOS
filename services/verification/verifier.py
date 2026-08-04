@@ -29,13 +29,15 @@ def _expand_references(value: str) -> list[int] | None:
 
 async def verify_findings_node(state: HuntState) -> dict:
     findings = state.get("findings") or ""
+    related_signals = state.get("related_technique_signals") or []
     logs = state.get("processed_logs") or []
     log_count = len(logs)
-    invalid_refs, checked = [], 0
+    invalid_refs, checked, finding_citations = [], 0, 0
     for ref in _REF.findall(findings):
         ref = ref.strip()
         if ref.lower() == "histogram":
             checked += 1
+            finding_citations += 1
             continue
         numbers = _expand_references(ref)
         if numbers is None:
@@ -43,9 +45,27 @@ async def verify_findings_node(state: HuntState) -> dict:
             continue
         for number in numbers:
             checked += 1
+            finding_citations += 1
             if number < 0 or number >= log_count:
                 invalid_refs.append(str(number))
-    no_citation = bool(findings.strip()) and checked == 0
+    for signal in related_signals:
+        if not isinstance(signal, dict):
+            invalid_refs.append("related-technique-signal")
+            continue
+        for ref in signal.get("evidence_refs") or []:
+            ref = str(ref).strip()
+            if ref.lower() == "histogram":
+                checked += 1
+                continue
+            numbers = _expand_references(ref)
+            if numbers is None:
+                invalid_refs.append(ref or "empty-related-technique-ref")
+                continue
+            for number in numbers:
+                checked += 1
+                if number < 0 or number >= log_count:
+                    invalid_refs.append(str(number))
+    no_citation = bool(findings.strip()) and finding_citations == 0
     failed = bool(invalid_refs or no_citation)
     result = {
         "status": "failed" if failed else "passed",

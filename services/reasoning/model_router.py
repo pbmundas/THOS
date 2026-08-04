@@ -23,7 +23,9 @@ class ModelTarget:
 
 
 _DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
-_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+_DEFAULT_MODEL = os.environ.get(
+    "OLLAMA_MODEL", "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M"
+)
 
 _WORKLOAD_CLASS: ContextVar[str] = ContextVar(
     "thos_model_workload_class", default="interactive"

@@ -61,7 +61,7 @@ def test_chat_memory_preserves_specialist_agent_metadata():
             "agent_id": "forensic_investigation_specialist",
             "agent_name": "Digital Forensic Specialist Agent",
             "model_tier": "reasoning",
-            "model_name": "qwen3:4b",
+            "model_name": "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M",
             "duration_ms": 1234,
             "ignored": "must not persist",
         }],
@@ -71,7 +71,7 @@ def test_chat_memory_preserves_specialist_agent_metadata():
         "agent_id": "forensic_investigation_specialist",
         "agent_name": "Digital Forensic Specialist Agent",
         "model_tier": "reasoning",
-        "model_name": "qwen3:4b",
+        "model_name": "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M",
         "duration_ms": 1234,
     }]
 
@@ -99,7 +99,7 @@ def test_ask_thos_delegates_authorized_investigation_question(monkeypatch):
                 "agent_id": "hunt_investigation_specialist",
                 "agent_name": "Hunt Investigation Specialist Agent",
                 "model_tier": "reasoning",
-                "model_name": "qwen3:4b",
+                "model_name": "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M",
                 "duration_ms": 42,
             },
             "assessment": {"findings": ["record-7"]},

@@ -5,10 +5,12 @@ def test_capability_recommendations_separate_fast_and_quality_routes(monkeypatch
     monkeypatch.setenv("THOS_OLLAMA_MEMORY_BUDGET_GB", "12")
     resources = resource_snapshot([])
     models = [
-        {"name": "fast:1.5b", "size": 1_000_000_000,
-         "details": {"parameter_size": "1.5B", "family": "qwen"}},
-        {"name": "cyber:7b", "size": 4_500_000_000,
-         "details": {"parameter_size": "7B", "family": "qwen"}},
+        {"name": "richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M",
+         "size": 4_900_000_000,
+         "details": {"parameter_size": "8B", "family": "llama"}},
+        {"name": "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M",
+         "size": 5_000_000_000,
+         "details": {"parameter_size": "8.1B", "family": "foundation-sec"}},
         {"name": "nomic-embed-text", "size": 300_000_000,
          "details": {"parameter_size": "0.3B", "family": "nomic-bert"}},
     ]
@@ -19,6 +21,10 @@ def test_capability_recommendations_separate_fast_and_quality_routes(monkeypatch
         resources,
     )
 
-    assert result["evidence_selector"]["model"] == "fast:1.5b"
-    assert result["reasoning"]["model"] == "cyber:7b"
+    assert result["evidence_selector"]["model"] == (
+        "richardyoung/llama-3.1-8b-instruct-abliterated:Q4_K_M"
+    )
+    assert result["reasoning"]["model"] == (
+        "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M"
+    )
     assert all("embed" not in item["model"] for item in result.values())

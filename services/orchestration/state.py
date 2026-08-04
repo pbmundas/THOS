@@ -120,6 +120,7 @@ class HuntState(TypedDict, total=False):
     # Set by reasoning node
     reasoning_summary: Optional[str]
     findings: Optional[str]
+    related_technique_signals: List[Dict[str, Any]]
     recommendations: Optional[str]
     reasoning_cache_hit: bool
     reasoning_failed: bool

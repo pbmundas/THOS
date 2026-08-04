@@ -5,7 +5,9 @@ from services.observability.retry import async_retry
 from services.reasoning.model_router import target_for
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+OLLAMA_MODEL = os.environ.get(
+    "OLLAMA_MODEL", "hf.co/mradermacher/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M"
+)
 
 
 async def generate(
@@ -27,9 +29,9 @@ async def generate(
         "model": target.model,
         "prompt": prompt,
         "stream": False,
-        # Qwen3 enables a hidden reasoning mode by default in some Ollama
-        # versions. THOS needs the final structured answer, not an empty
-        # visible response after an internal thinking pass.
+        # THOS needs the final structured answer rather than a provider-specific
+        # hidden reasoning trace. Ollama safely ignores this for non-thinking
+        # models.
         "think": False,
         # Without an explicit num_ctx, Ollama falls back to a small
         # default context window (often 2048), which silently truncates
