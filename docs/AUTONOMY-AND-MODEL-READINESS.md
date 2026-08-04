@@ -41,11 +41,12 @@ and should not be delegated to a probabilistic model.
 5. Telemetry normalization is vendor-specific and partly fingerprint-based.
    New integrations require validated schemas, field mappings, and realistic
    connector tests before an agent can hunt them reliably.
-6. There is no persistent cross-source entity graph linking hosts, users,
-   processes, sessions, files, indicators, and prior investigations.
-7. There is no learned environment baseline for peer groups, seasonality, or
-   user/entity behavior. The model can reason about supplied aggregates but
-   cannot infer a trustworthy anomaly without a measured baseline.
+6. THOS now persists deterministic user, host, source-IP, and user-to-host
+   activity windows, but it does not yet provide a complete cross-source graph
+   linking processes, sessions, files, indicators, and prior investigations.
+7. The initial measured baseline covers robust activity spikes and new
+   user-to-host relationships. Peer-group comparison, seasonality, longer-term
+   drift, and richer behavioral sequences are not yet implemented.
 8. Endpoint collection and network session/packet pivots are not yet
    first-class agent tools. A SIEM can only return what it received.
 9. Static fallback hypotheses and a generated required-gap catalog still

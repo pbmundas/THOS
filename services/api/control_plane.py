@@ -74,6 +74,7 @@ _scheduled_yara_slot = asyncio.Semaphore(max(
 _schedule_state_lock = asyncio.Lock()
 _schedule_run_tasks: set[asyncio.Task] = set()
 _schema_refresh_task: asyncio.Task | None = None
+_anomaly_monitor_task: asyncio.Task | None = None
 _ioc_refresh_lock = asyncio.Lock()
 if hasattr(time_module, "tzset"):
     time_module.tzset()
@@ -2916,8 +2917,71 @@ async def _run_schema_refresh() -> None:
     write_config(config)
 
 
+def _anomaly_monitor_is_due(config: dict[str, Any], now: datetime) -> bool:
+    settings = config.get("anomaly_monitoring", {}) or {}
+    if not settings.get("enabled", True):
+        return False
+    live_ids = {
+        item["id"] for item in telemetry_sources(config)["items"]
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}
+    }
+    requested = {str(item).strip().lower() for item in settings.get("sources", []) if str(item).strip()}
+    if not (live_ids & requested if requested else live_ids):
+        return False
+    interval = max(5, min(1440, int(settings.get("interval_minutes", 15))))
+    absolute_minute = now.toordinal() * 1440 + now.hour * 60 + now.minute
+    run_key = str(absolute_minute // interval)
+    return str(settings.get("last_run_key") or "") != run_key
+
+
+async def _run_anomaly_monitoring() -> None:
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    config = read_config()
+    settings = config.get("anomaly_monitoring", {}) or {}
+    live_ids = [
+        item["id"] for item in telemetry_sources(config)["items"]
+        if item["id"] in {"wazuh", "splunk", "qradar", "logrhythm", "elasticsearch"}
+    ]
+    requested = {str(item).strip().lower() for item in settings.get("sources", []) if str(item).strip()}
+    sources = [item for item in live_ids if not requested or item in requested]
+    for source in sources:
+        try:
+            result = await _upstream(
+                "POST",
+                "/anomalies/evaluate",
+                timeout=httpx.Timeout(180.0, connect=10.0),
+                json={
+                    "source": source,
+                    "lookback_minutes": max(1, min(1440, int(settings.get("lookback_minutes", 15)))),
+                    "limit": max(1, min(5000, int(settings.get("limit", 2000)))),
+                },
+            )
+            results.append({
+                "source": source,
+                "status": result.get("status", "completed"),
+                "records_analyzed": result.get("records_analyzed", 0),
+                "lead_count": result.get("lead_count", 0),
+                "baseline_bucket_count": result.get("baseline_bucket_count", 0),
+                "minimum_baseline_buckets": result.get("minimum_baseline_buckets", 24),
+                "warming": bool(result.get("warming", False)),
+            })
+        except Exception as exc:  # noqa: BLE001 - isolate source failures
+            errors.append(f"{source}: {exc}")
+            logger.exception("continuous anomaly evaluation failed for %s", source)
+    config = read_config()
+    current = config.setdefault("anomaly_monitoring", {})
+    current.update({
+        "last_completed_at": datetime.now().astimezone().isoformat(),
+        "last_status": "completed" if not errors else ("partial" if results else "failed"),
+        "last_error": "; ".join(errors)[:4000],
+        "last_results": results,
+    })
+    write_config(config)
+
+
 async def _scheduler_loop() -> None:
-    global _schema_refresh_task
+    global _schema_refresh_task, _anomaly_monitor_task
     # Compose can start this API a few seconds before the orchestrator has
     # finished accepting connections.  Scheduled work should not be marked as
     # failed merely because its dependency is still in that startup window.
@@ -2948,6 +3012,12 @@ async def _scheduler_loop() -> None:
                 reconciled = True
     if reconciled:
         write_config(config)
+    if config.get("anomaly_monitoring", {}).get("last_status") == "running":
+        config["anomaly_monitoring"].update({
+            "last_status": "interrupted",
+            "last_error": "Service restarted; continuous monitoring will resume on the next interval.",
+        })
+        write_config(config)
     while True:
         try:
             now = datetime.now().astimezone()
@@ -2957,6 +3027,10 @@ async def _scheduler_loop() -> None:
             maintenance_due = (
                 (_schema_refresh_task is None or _schema_refresh_task.done())
                 and _schema_refresh_is_due(config, now)
+            )
+            anomaly_due = (
+                (_anomaly_monitor_task is None or _anomaly_monitor_task.done())
+                and _anomaly_monitor_is_due(config, now)
             )
             for kind in ("hypothesis", "sigma", "yara"):
                 for item in _schedule_collection(config, kind):
@@ -2982,7 +3056,17 @@ async def _scheduler_loop() -> None:
                     "schema_refresh_last_status": "running",
                     "schema_refresh_last_error": "",
                 })
-            if due or due_ioc_sources or maintenance_due:
+            if anomaly_due:
+                anomaly = config.setdefault("anomaly_monitoring", {})
+                interval = max(5, min(1440, int(anomaly.get("interval_minutes", 15))))
+                absolute_minute = now.toordinal() * 1440 + now.hour * 60 + now.minute
+                anomaly.update({
+                    "last_run_key": str(absolute_minute // interval),
+                    "last_started_at": now.isoformat(),
+                    "last_status": "running",
+                    "last_error": "",
+                })
+            if due or due_ioc_sources or maintenance_due or anomaly_due:
                 write_config(config)
                 for item in due:
                     task = asyncio.create_task(
@@ -3002,6 +3086,11 @@ async def _scheduler_loop() -> None:
                         _run_schema_refresh(),
                         name="weekly-siem-schema-refresh",
                     )
+                if anomaly_due:
+                    _anomaly_monitor_task = asyncio.create_task(
+                        _run_anomaly_monitoring(),
+                        name="continuous-anomaly-monitoring",
+                    )
         except Exception:  # noqa: BLE001
             logger.exception("settings scheduler tick failed")
         await asyncio.sleep(20)
@@ -3014,7 +3103,7 @@ def start_scheduler() -> None:
 
 
 async def stop_scheduler() -> None:
-    global _scheduler_task, _schema_refresh_task
+    global _scheduler_task, _schema_refresh_task, _anomaly_monitor_task
     if _scheduler_task:
         _scheduler_task.cancel()
         try:
@@ -3034,3 +3123,10 @@ async def stop_scheduler() -> None:
         except asyncio.CancelledError:
             pass
         _schema_refresh_task = None
+    if _anomaly_monitor_task:
+        _anomaly_monitor_task.cancel()
+        try:
+            await _anomaly_monitor_task
+        except asyncio.CancelledError:
+            pass
+        _anomaly_monitor_task = None

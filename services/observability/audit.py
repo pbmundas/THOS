@@ -236,9 +236,204 @@ async def ensure_agentic_schema() -> None:
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS compiled_query TEXT",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS query_backend TEXT",
         "ALTER TABLE scheduled_sigma_detections ADD COLUMN IF NOT EXISTS case_id UUID REFERENCES cases(case_id) ON DELETE SET NULL",
+        """CREATE TABLE IF NOT EXISTS anomaly_runs (run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', lookback_minutes INTEGER NOT NULL, records_analyzed INTEGER NOT NULL DEFAULT 0, observation_count INTEGER NOT NULL DEFAULT 0, lead_count INTEGER NOT NULL DEFAULT 0, error_msg TEXT, started_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ)""",
+        """CREATE TABLE IF NOT EXISTS anomaly_observations (source TEXT NOT NULL, bucket_start TIMESTAMPTZ NOT NULL, detector_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_name TEXT NOT NULL, metric TEXT NOT NULL, value DOUBLE PRECISION NOT NULL, evidence JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (source, bucket_start, detector_id, entity_type, entity_name, metric))""",
+        """CREATE TABLE IF NOT EXISTS anomaly_leads (lead_id TEXT PRIMARY KEY, source TEXT NOT NULL, detector_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', entity_type TEXT NOT NULL, entity_name TEXT NOT NULL, metric TEXT NOT NULL, title TEXT NOT NULL, reason TEXT NOT NULL, observed DOUBLE PRECISION NOT NULL, expected DOUBLE PRECISION NOT NULL, score DOUBLE PRECISION NOT NULL, severity TEXT NOT NULL, baseline JSONB NOT NULL DEFAULT '{}'::jsonb, evidence JSONB NOT NULL DEFAULT '[]'::jsonb, hypothesis_text TEXT NOT NULL, hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL, first_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_evaluated TIMESTAMPTZ NOT NULL DEFAULT now(), occurrence_count INTEGER NOT NULL DEFAULT 1, resolution_note TEXT, resolved_by TEXT, resolved_at TIMESTAMPTZ)""",
+        """CREATE INDEX IF NOT EXISTS idx_anomaly_observations_history ON anomaly_observations (source, bucket_start DESC)""",
+        """CREATE INDEX IF NOT EXISTS idx_anomaly_leads_active ON anomaly_leads (status, last_seen DESC)""",
+        """CREATE INDEX IF NOT EXISTS idx_anomaly_runs_source ON anomaly_runs (source, started_at DESC)""",
     )
     for statement in statements:
         await asyncio.to_thread(_execute, statement, ())
+
+
+async def start_anomaly_run(source: str, lookback_minutes: int) -> dict:
+    rows = await asyncio.to_thread(_fetch, """
+        INSERT INTO anomaly_runs (source, lookback_minutes)
+        VALUES (%s, %s)
+        RETURNING *
+    """, (source[:80], lookback_minutes))
+    return rows[0]
+
+
+async def complete_anomaly_run(
+    run_id: str,
+    status: str,
+    *,
+    records_analyzed: int = 0,
+    observation_count: int = 0,
+    lead_count: int = 0,
+    error_msg: str = "",
+) -> None:
+    await asyncio.to_thread(_execute, """
+        UPDATE anomaly_runs
+        SET status = %s, records_analyzed = %s, observation_count = %s,
+            lead_count = %s, error_msg = NULLIF(%s, ''), completed_at = now()
+        WHERE run_id = %s
+    """, (
+        status, records_analyzed, observation_count, lead_count,
+        error_msg[:4000], run_id,
+    ))
+
+
+async def list_anomaly_observations(
+    source: str,
+    since: datetime.datetime,
+    *,
+    before: datetime.datetime | None = None,
+) -> list[dict]:
+    if before is None:
+        return await asyncio.to_thread(_fetch, """
+            SELECT source, bucket_start, detector_id, entity_type, entity_name,
+                   metric, value, evidence
+            FROM anomaly_observations
+            WHERE source = %s AND bucket_start >= %s
+            ORDER BY bucket_start ASC
+        """, (source, since))
+    return await asyncio.to_thread(_fetch, """
+        SELECT source, bucket_start, detector_id, entity_type, entity_name,
+               metric, value, evidence
+        FROM anomaly_observations
+        WHERE source = %s AND bucket_start >= %s AND bucket_start < %s
+        ORDER BY bucket_start ASC
+    """, (source, since, before))
+
+
+async def upsert_anomaly_observations(observations: list[dict]) -> None:
+    for item in observations:
+        await asyncio.to_thread(_execute, """
+            INSERT INTO anomaly_observations (
+                source, bucket_start, detector_id, entity_type, entity_name,
+                metric, value, evidence
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (
+                source, bucket_start, detector_id, entity_type, entity_name, metric
+            ) DO UPDATE SET value = EXCLUDED.value, evidence = EXCLUDED.evidence
+        """, (
+            item["source"], item["bucket_start"], item["detector_id"],
+            item["entity_type"], item["entity_name"], item["metric"],
+            item["value"], json.dumps(item.get("evidence") or [], default=str),
+        ))
+
+
+async def upsert_anomaly_leads(leads: list[dict]) -> None:
+    for item in leads:
+        await asyncio.to_thread(_execute, """
+            INSERT INTO anomaly_leads (
+                lead_id, source, detector_id, entity_type, entity_name, metric,
+                title, reason, observed, expected, score, severity, baseline,
+                evidence, hypothesis_text
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (lead_id) DO UPDATE SET
+                status = CASE WHEN anomaly_leads.status = 'suppressed'
+                              THEN 'suppressed' ELSE 'active' END,
+                title = EXCLUDED.title, reason = EXCLUDED.reason,
+                observed = EXCLUDED.observed, expected = EXCLUDED.expected,
+                score = EXCLUDED.score, severity = EXCLUDED.severity,
+                baseline = EXCLUDED.baseline, evidence = EXCLUDED.evidence,
+                hypothesis_text = EXCLUDED.hypothesis_text,
+                last_seen = now(), last_evaluated = now(),
+                occurrence_count = anomaly_leads.occurrence_count + 1,
+                resolution_note = CASE WHEN anomaly_leads.status = 'suppressed'
+                                       THEN anomaly_leads.resolution_note ELSE NULL END,
+                resolved_by = CASE WHEN anomaly_leads.status = 'suppressed'
+                                   THEN anomaly_leads.resolved_by ELSE NULL END,
+                resolved_at = CASE WHEN anomaly_leads.status = 'suppressed'
+                                   THEN anomaly_leads.resolved_at ELSE NULL END
+        """, (
+            item["lead_id"], item["source"], item["detector_id"],
+            item["entity_type"], item["entity_name"], item["metric"],
+            item["title"], item["reason"], item["observed"], item["expected"],
+            item["score"], item["severity"],
+            json.dumps(item.get("baseline") or {}, default=str),
+            json.dumps(item.get("evidence") or [], default=str),
+            item["hypothesis_text"],
+        ))
+
+
+async def list_anomaly_leads(
+    status: str = "active",
+    limit: int = 100,
+    entity_type: str = "",
+    entity_name: str = "",
+) -> list[dict]:
+    clauses = []
+    params: list[object] = []
+    if status and status != "all":
+        clauses.append("status = %s")
+        params.append(status)
+    if entity_type:
+        clauses.append("entity_type = %s")
+        params.append(entity_type)
+    if entity_name:
+        clauses.append("entity_name ILIKE %s")
+        params.append(f"%{entity_name[:240]}%")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(max(1, min(limit, 1000)))
+    return await asyncio.to_thread(_fetch, f"""
+        SELECT * FROM anomaly_leads {where}
+        ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3
+                 WHEN 'medium' THEN 2 ELSE 1 END DESC, score DESC, last_seen DESC
+        LIMIT %s
+    """, tuple(params))
+
+
+async def update_anomaly_lead_status(
+    lead_id: str,
+    status: str,
+    actor: str,
+    note: str = "",
+) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        UPDATE anomaly_leads
+        SET status = %s, resolution_note = NULLIF(%s, ''), resolved_by = %s,
+            resolved_at = CASE WHEN %s = 'active' THEN NULL ELSE now() END,
+            last_evaluated = now()
+        WHERE lead_id = %s
+        RETURNING *
+    """, (status, note[:1000], actor[:160], status, lead_id))
+    return rows[0] if rows else None
+
+
+async def link_anomaly_lead_hunt(lead_id: str, hunt_id: str) -> dict | None:
+    rows = await asyncio.to_thread(_fetch, """
+        UPDATE anomaly_leads SET hunt_id = %s, last_evaluated = now()
+        WHERE lead_id = %s RETURNING *
+    """, (hunt_id, lead_id))
+    return rows[0] if rows else None
+
+
+async def close_stale_anomaly_leads(source: str, cutoff: datetime.datetime) -> int:
+    rows = await asyncio.to_thread(_fetch, """
+        UPDATE anomaly_leads
+        SET status = 'closed', resolution_note = 'Automatically closed after the anomaly stopped recurring',
+            resolved_by = 'continuous-monitor', resolved_at = now(), last_evaluated = now()
+        WHERE source = %s AND status = 'active' AND last_seen < %s
+        RETURNING lead_id
+    """, (source, cutoff))
+    return len(rows)
+
+
+async def anomaly_monitor_status() -> dict:
+    runs = await asyncio.to_thread(_fetch, """
+        SELECT DISTINCT ON (source) source, run_id, status, lookback_minutes,
+               records_analyzed, observation_count, lead_count, error_msg,
+               started_at, completed_at
+        FROM anomaly_runs ORDER BY source, started_at DESC
+    """, ())
+    counts = await asyncio.to_thread(_fetch, """
+        SELECT status, count(*)::int AS count FROM anomaly_leads GROUP BY status
+    """, ())
+    buckets = await asyncio.to_thread(_fetch, """
+        SELECT source, count(DISTINCT bucket_start)::int AS bucket_count,
+               min(bucket_start) AS oldest_bucket, max(bucket_start) AS newest_bucket
+        FROM anomaly_observations GROUP BY source
+    """, ())
+    return {
+        "runs": runs,
+        "lead_counts": {row["status"]: row["count"] for row in counts},
+        "baselines": {row["source"]: row for row in buckets},
+    }
 
 
 async def get_risk_snapshot(snapshot_key: str = "current") -> dict | None:

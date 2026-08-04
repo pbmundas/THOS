@@ -177,3 +177,41 @@ CREATE TABLE IF NOT EXISTS case_events (
 
 ALTER TABLE scheduled_sigma_detections
     ADD COLUMN IF NOT EXISTS case_id UUID REFERENCES cases(case_id) ON DELETE SET NULL;
+
+-- Durable anomaly/entity baselines and hunt leads. Detection is deterministic;
+-- these tables preserve recurrence, evidence, analyst decisions, and hunt links.
+CREATE TABLE IF NOT EXISTS anomaly_runs (
+    run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running', lookback_minutes INTEGER NOT NULL,
+    records_analyzed INTEGER NOT NULL DEFAULT 0, observation_count INTEGER NOT NULL DEFAULT 0,
+    lead_count INTEGER NOT NULL DEFAULT 0, error_msg TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS anomaly_observations (
+    source TEXT NOT NULL, bucket_start TIMESTAMPTZ NOT NULL, detector_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL, entity_name TEXT NOT NULL, metric TEXT NOT NULL,
+    value DOUBLE PRECISION NOT NULL, evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (source, bucket_start, detector_id, entity_type, entity_name, metric)
+);
+
+CREATE TABLE IF NOT EXISTS anomaly_leads (
+    lead_id TEXT PRIMARY KEY, source TEXT NOT NULL, detector_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active', entity_type TEXT NOT NULL,
+    entity_name TEXT NOT NULL, metric TEXT NOT NULL, title TEXT NOT NULL,
+    reason TEXT NOT NULL, observed DOUBLE PRECISION NOT NULL, expected DOUBLE PRECISION NOT NULL,
+    score DOUBLE PRECISION NOT NULL, severity TEXT NOT NULL,
+    baseline JSONB NOT NULL DEFAULT '{}'::jsonb, evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    hypothesis_text TEXT NOT NULL, hunt_id UUID REFERENCES hunts(hunt_id) ON DELETE SET NULL,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_evaluated TIMESTAMPTZ NOT NULL DEFAULT now(), occurrence_count INTEGER NOT NULL DEFAULT 1,
+    resolution_note TEXT, resolved_by TEXT, resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_anomaly_observations_history
+    ON anomaly_observations (source, bucket_start DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_leads_active
+    ON anomaly_leads (status, last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_runs_source
+    ON anomaly_runs (source, started_at DESC);

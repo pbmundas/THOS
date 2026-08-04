@@ -25,7 +25,7 @@ and auditable platform state shown in the diagram.
 | Workspace | What analysts can do |
 |---|---|
 | **Overview** | Monitor security-impact KPIs, operating efficiency, service health, workload status, and recent activity for a selected period. |
-| **Hunt Board** | Search HEARTH and locally authored hypotheses, inspect ATT&CK mappings and run history, launch hunts, and follow timestamped agent progress. |
+| **Hunt Board** | Continuously review anomaly/entity hunt leads, search HEARTH and locally authored hypotheses, launch evidence-verifying hunts, and follow timestamped agent progress. |
 | **Forensic** | Upload and preserve evidence, examine logs and artifacts, run file or memory analysis, build timelines, and generate evidence-backed forensic reports. |
 | **Reports** | Search hunt and forensic reports, filter by age, preview the investigation, and download Markdown or styled PDF. |
 | **Risks** | Review automatically materialized risks, filter by period or state, inspect evidence and affected entities, export results, and resolve risks as an Admin or SME. |
@@ -41,6 +41,9 @@ delegate bounded work to hunt and forensic specialists.
 ## Core capabilities
 
 - Evidence-first, hypothesis-driven hunts mapped to MITRE ATT&CK.
+- Continuous deterministic anomaly and entity monitoring for activity spikes
+  and new user-to-host relationships, with durable lead status and exact
+  contributing-record samples.
 - Automatic SIEM field discovery, normalized field mappings, safe query
   generation, bounded retrieval, and record-reference validation.
 - A SIEM-neutral manual Log Search workspace with background translation and
@@ -58,6 +61,28 @@ delegate bounded work to hunt and forensic specialists.
   and timestamped audit events.
 - Local Ollama model routing for fast, reasoning, verification, coding, and
   guard tasks; no cloud model API is required.
+
+## Continuous anomaly and entity hunt leads
+
+THOS evaluates each connected live SIEM every 15 minutes by default. It builds
+per-user, per-host, and source-IP activity buckets and compares current values
+with persisted historical windows using median/MAD scoring. It also identifies
+new user-to-host relationships only after the entity has enough prior history.
+
+The Hunt Board polls active leads every 30 seconds, so no analyst refresh is
+required. Each lead has a stable `ANOM-...` identifier: recurrence refreshes
+the same lead, increments its occurrence count, updates its evidence and
+last-seen time, and keeps it highlighted. Admin and SME users can close or
+suppress a lead; a closed lead reopens if the anomaly returns, while a
+suppressed lead remains suppressed. Leads that stop recurring automatically
+close after the configured period.
+
+The first 24 comparable windows are a deliberate warm-up period. THOS displays
+that state instead of generating weak cold-start anomalies. A lead is not a
+risk or a verdict. Selecting **Investigate** launches the normal governed hunt,
+which must retrieve supporting evidence, cite exact records, and consider
+benign explanations before any finding can reach the evidence-backed risk
+lifecycle.
 
 ## Application routes
 
@@ -309,22 +334,24 @@ certificate; otherwise mount and configure the trusted CA bundle.
 1. The analyst uses the React workspace through the FastAPI UI gateway.
 2. The gateway validates the signed session, role, feature permission, route,
    identifier, and request.
-3. The LangGraph orchestrator coordinates specialist agents, governed tools,
-   source retrieval, local knowledge, and Ollama model tiers.
+3. The LangGraph orchestrator coordinates specialist agents, continuous
+   anomaly/entity evaluation, governed tools, source retrieval, local
+   knowledge, and Ollama model tiers.
 4. Connectors retrieve bounded evidence from active sources. Records are
    normalized, deduplicated, guarded, correlated, and verified.
-5. PostgreSQL persists operational, risk-resolution, and audit state; Redis
-   provides caching and coordination; ChromaDB provides local semantic
-   retrieval; managed directories preserve evidence and reports.
+5. PostgreSQL persists operational state, anomaly baselines and leads,
+   risk-resolution state, and audit history; Redis provides caching and
+   coordination; ChromaDB provides local semantic retrieval; managed
+   directories preserve evidence and reports.
 
 | Service | Responsibility |
 |---|---|
 | `chat-ui` | React application, signed sessions, protected routes, API gateway, report rendering, and export |
-| `orchestrator` | Hunt execution, scheduling, Log Search, risk analysis, forensics, and Ask THOS |
+| `orchestrator` | Hunt execution, continuous anomaly/entity evaluation, scheduling, Log Search, risk analysis, forensics, and Ask THOS |
 | `mcp` | Governed security tools, parsing, correlation, knowledge operations, and report access |
 | `ollama` | Local model inference with task-specific routing |
 | `chromadb` | Local product, ATT&CK, HEARTH, SIEM, and private-knowledge retrieval |
-| `postgres` | Hunts, reports, detections, risks, cases, feedback, and audit state |
+| `postgres` | Hunts, anomaly observations and leads, reports, detections, risks, cases, feedback, and audit state |
 | `redis` | Cache, locks, rate limits, schema cache, and scheduler coordination |
 | initializer services | Detection-rule and YARA corpus validation and preparation |
 

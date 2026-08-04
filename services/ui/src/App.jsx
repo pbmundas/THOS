@@ -412,6 +412,10 @@ function App() {
   const [hypotheses, setHypotheses] = useState([]);
   const [hypothesisError, setHypothesisError] = useState("");
   const [loadingHypotheses, setLoadingHypotheses] = useState(true);
+  const [anomalyLeads, setAnomalyLeads] = useState([]);
+  const [anomalyStatus, setAnomalyStatus] = useState(null);
+  const [anomalyError, setAnomalyError] = useState("");
+  const [loadingAnomalies, setLoadingAnomalies] = useState(false);
   const [query, setQuery] = useState("");
   const [tactic, setTactic] = useState("All tactics");
   const [severity, setSeverity] = useState("all");
@@ -482,6 +486,23 @@ function App() {
       setActiveSources([{ id: "folder", label: "Local folder" }]);
       setDefaultTelemetrySource("folder");
       setSiemType("folder");
+    }
+  }, []);
+
+  const loadAnomalyLeads = useCallback(async () => {
+    setLoadingAnomalies(true);
+    try {
+      const [leads, status] = await Promise.all([
+        api("/api/anomaly-leads?status=active&limit=100"),
+        api("/api/anomaly-status"),
+      ]);
+      setAnomalyLeads(Array.isArray(leads?.items) ? leads.items : []);
+      setAnomalyStatus(status || null);
+      setAnomalyError("");
+    } catch (error) {
+      setAnomalyError(error.message);
+    } finally {
+      setLoadingAnomalies(false);
     }
   }, []);
 
@@ -579,13 +600,20 @@ function App() {
       loadHypotheses();
       loadTelemetrySources();
       loadHuntStatus();
+      loadAnomalyLeads();
     }
-  }, [authStatus, session, loadHypotheses, loadTelemetrySources, loadHuntStatus]);
+  }, [authStatus, session, loadHypotheses, loadTelemetrySources, loadHuntStatus, loadAnomalyLeads]);
   useEffect(() => {
     if (authStatus !== "authenticated" || !(["Admin", "SME"].includes(session.role) || session.permissions?.includes("hunts"))) return undefined;
     const timer = window.setInterval(loadHuntStatus, 3000);
     return () => window.clearInterval(timer);
   }, [authStatus, session, loadHuntStatus]);
+  useEffect(() => {
+    if (authStatus !== "authenticated" || page !== "hunts" || !(["Admin", "SME"].includes(session.role) || session.permissions?.includes("hunts"))) return undefined;
+    loadAnomalyLeads();
+    const timer = window.setInterval(loadAnomalyLeads, 30000);
+    return () => window.clearInterval(timer);
+  }, [authStatus, page, session, loadAnomalyLeads]);
   useEffect(() => { if (authStatus === "authenticated" && page === "reports") loadReports(); }, [authStatus, page, loadReports]);
   useEffect(() => {
     if (authStatus !== "authenticated") return;
@@ -687,12 +715,12 @@ function App() {
     });
   }, [reports, reportQuery, reportType, reportAgeUnit, reportAgeValue]);
 
-  const runHunt = useCallback(async ({ hypothesisId = null, hypothesisText = null, hypothesisTactic = "", hypothesisTechnique = "", title }) => {
+  const runHunt = useCallback(async ({ hypothesisId = null, hypothesisText = null, hypothesisTactic = "", hypothesisTechnique = "", title, anomalyLeadId = "", telemetrySource = siemType }) => {
     if (running || platformHuntActive) {
       setHuntError("A hunt is already running. Wait for it to complete before starting another hypothesis.");
       return;
     }
-    setLastRun({ hypothesisId, hypothesisText, hypothesisTactic, hypothesisTechnique, title });
+    setLastRun({ hypothesisId, hypothesisText, hypothesisTactic, hypothesisTechnique, title, anomalyLeadId, telemetrySource });
     setRunning(true);
     setPlatformHuntActive(true);
     setHuntId("");
@@ -714,9 +742,9 @@ function App() {
           hypothesis_text: hypothesisText,
           hypothesis_tactic: hypothesisTactic,
           hypothesis_technique: hypothesisTechnique,
-          siem_type: siemType,
-          siem_types: [siemType],
-          log_source_path: siemType === "folder" ? folderPath : null,
+          siem_type: telemetrySource,
+          siem_types: [telemetrySource],
+          log_source_path: telemetrySource === "folder" ? folderPath : null,
           cover_style: coverStyle,
         }),
       });
@@ -736,6 +764,9 @@ function App() {
           if (event.event === "hunt_started") {
             setHuntId(event.hunt_id);
             window.localStorage.setItem("thos:active-hunt", event.hunt_id);
+            if (anomalyLeadId) {
+              api(`/api/anomaly-leads/${encodeURIComponent(anomalyLeadId)}/link/${event.hunt_id}`, { method: "POST" }).catch(() => {});
+            }
           }
           if (event.event === "node_started") {
             setActiveNode(event.node || "");
@@ -768,9 +799,39 @@ function App() {
       setHuntError(error.message);
     } finally {
       setRunning(false);
-      await Promise.all([loadHuntStatus(), loadHypotheses()]);
+      await Promise.all([loadHuntStatus(), loadHypotheses(), loadAnomalyLeads()]);
     }
-  }, [coverStyle, folderPath, running, platformHuntActive, siemType, loadHuntStatus, loadHypotheses]);
+  }, [coverStyle, folderPath, running, platformHuntActive, siemType, loadHuntStatus, loadHypotheses, loadAnomalyLeads]);
+
+  const updateAnomalyLead = async (leadId, status) => {
+    try {
+      await api(`/api/anomaly-leads/${encodeURIComponent(leadId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, note: status === "suppressed" ? "Suppressed from the Hunt Board by analyst" : "Closed by analyst" }),
+      });
+      await loadAnomalyLeads();
+    } catch (error) {
+      setAnomalyError(error.message);
+    }
+  };
+
+  const evaluateAnomaliesNow = async () => {
+    if (siemType === "folder") return;
+    setLoadingAnomalies(true);
+    try {
+      await api("/api/anomaly-leads/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: siemType }),
+      });
+      await loadAnomalyLeads();
+    } catch (error) {
+      setAnomalyError(error.message);
+    } finally {
+      setLoadingAnomalies(false);
+    }
+  };
 
   const openReport = useCallback(async (filename, updateUrl = true) => {
     if (!SAFE_REPORT_NAME.test(String(filename || ""))) {
@@ -946,6 +1007,60 @@ function App() {
                   <ArrowPathIcon className={loadingHypotheses ? "spinning" : ""} /> Refresh catalog
                 </button>
               </div>
+            </section>
+
+            <section className="anomaly-lead-board panel" aria-live="polite">
+              <header className="anomaly-lead-header">
+                <div className="anomaly-lead-title">
+                  <span className="anomaly-pulse"><FingerPrintIcon /></span>
+                  <div>
+                    <span>Continuous anomaly and entity monitoring</span>
+                    <h2>Active hunt leads <em>{anomalyLeads.length}</em></h2>
+                    <p>THOS re-evaluates connected SIEM telemetry every {anomalyStatus?.interval_minutes || 15} minutes and keeps recurring leads highlighted under a stable ID.</p>
+                  </div>
+                </div>
+                <div className="anomaly-lead-actions">
+                  <span className={`monitor-state monitor-${anomalyStatus?.scheduler?.status || "never"}`}>
+                    <span />{anomalyStatus?.enabled === false ? "Disabled" : anomalyStatus?.scheduler?.status === "running" ? "Evaluating" : "Monitoring"}
+                  </span>
+                  {["Admin", "SME"].includes(session.role) && <button className="secondary-button" onClick={evaluateAnomaliesNow} disabled={loadingAnomalies || siemType === "folder"} title={siemType === "folder" ? "Select a connected live SIEM to evaluate now" : `Evaluate ${siemType} now`}>
+                    <ArrowPathIcon className={loadingAnomalies ? "spinning" : ""} /> Evaluate now
+                  </button>}
+                  <button className="secondary-button" onClick={loadAnomalyLeads} disabled={loadingAnomalies}><ArrowPathIcon className={loadingAnomalies ? "spinning" : ""} /> Refresh</button>
+                </div>
+              </header>
+              {anomalyError && <div className="alert error-alert"><ExclamationTriangleIcon />{anomalyError}</div>}
+              {anomalyStatus?.scheduler?.last_error && <div className="anomaly-monitor-warning"><ExclamationTriangleIcon />{anomalyStatus.scheduler.last_error}</div>}
+              {!anomalyLeads.length ? (
+                <div className="anomaly-empty">
+                  <ChartBarSquareIcon />
+                  <div><strong>{loadingAnomalies ? "Checking current telemetry…" : "No active anomaly leads"}</strong><p>{Object.values(anomalyStatus?.baselines || {}).some((item) => Number(item.bucket_count || 0) < Number(anomalyStatus?.minimum_baseline_buckets || 24)) ? `Baseline warming is in progress. THOS needs ${anomalyStatus?.minimum_baseline_buckets || 24} comparable windows before highlighting statistically supported leads.` : "Monitoring remains active. New or recurring leads will appear here automatically without an analyst refreshing the page."}</p></div>
+                </div>
+              ) : <div className="anomaly-lead-list">
+                {anomalyLeads.map((lead) => <article className={`anomaly-lead severity-${lead.severity || "medium"}`} key={lead.lead_id}>
+                  <div className="anomaly-lead-main">
+                    <div className="anomaly-lead-badges"><span className={`detection-level level-${lead.severity || "medium"}`}>{lead.severity || "medium"}</span><code>{lead.lead_id}</code><span>{lead.source}</span></div>
+                    <h3>{lead.title}</h3>
+                    <p>{lead.reason}</p>
+                    <div className="anomaly-entity"><FingerPrintIcon /><strong>{lead.entity_type}</strong><span>{lead.entity_name}</span><small>{lead.metric}</small></div>
+                  </div>
+                  <div className="anomaly-measures">
+                    <span><small>Observed</small><strong>{Number(lead.observed || 0).toLocaleString()}</strong></span>
+                    <span><small>Expected</small><strong>{Number(lead.expected || 0).toLocaleString()}</strong></span>
+                    <span><small>Anomaly score</small><strong>{Number(lead.score || 0).toFixed(1)}</strong></span>
+                    <span><small>Recurrences</small><strong>{Number(lead.occurrence_count || 1)}</strong></span>
+                  </div>
+                  <div className="anomaly-lead-footer">
+                    <small><ClockIcon />Last seen {lead.last_seen ? new Date(lead.last_seen).toLocaleString() : "now"} · {Number(lead.baseline?.bucket_count || lead.baseline?.entity_bucket_count || 0)} baseline windows</small>
+                    <div>
+                      {["Admin", "SME"].includes(session.role) && <button className="lead-dismiss" onClick={() => updateAnomalyLead(lead.lead_id, "closed")}><XMarkIcon /> Close</button>}
+                      {["Admin", "SME"].includes(session.role) && <button className="lead-dismiss" onClick={() => updateAnomalyLead(lead.lead_id, "suppressed")}><EyeIcon /> Suppress</button>}
+                      <button className="primary-button" disabled={huntLocked} onClick={() => runHunt({ hypothesisText: lead.hypothesis_text, title: `${lead.lead_id} · ${lead.title}`, anomalyLeadId: lead.lead_id, telemetrySource: lead.source })}><PlayIcon /> Investigate</button>
+                    </div>
+                  </div>
+                </article>)}
+              </div>}
+              <footer className="anomaly-safety-note"><ShieldCheckIcon /><span><strong>Lead, not verdict:</strong> statistical rarity never creates a risk by itself. “Investigate” launches the normal evidence-citation, benign-alternative, and reasoning workflow.</span></footer>
             </section>
 
             <section className="control-deck panel">

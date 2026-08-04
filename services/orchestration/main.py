@@ -59,6 +59,7 @@ from services.risk.risk_agent import (
 )
 from services.detection.detection_analysis_agent import analyze_detection
 from services.security.configuration import required_secret
+from services.anomaly.service import evaluate_source as evaluate_anomaly_source
 
 # As early as possible: attaches one stdout JSON handler to the root
 # logger so every logger.*() call in this process (this module, graph
@@ -461,6 +462,23 @@ class LogSearchRunRequest(LogSearchTranslateRequest):
     log_source_path: str | None = Field(default=None, max_length=4_096)
 
 
+class AnomalyEvaluateRequest(BaseModel):
+    source: str = Field(pattern="^(mock|folder|wazuh|logrhythm|splunk|qradar|elasticsearch)$")
+    lookback_minutes: int | None = Field(default=None, ge=1, le=1440)
+    limit: int | None = Field(default=None, ge=1, le=5000)
+    log_source_path: str = Field(default="", max_length=4096)
+
+
+class AnomalyLeadUpdateRequest(BaseModel):
+    status: str = Field(pattern="^(active|closed|suppressed)$")
+    actor: str = Field(min_length=1, max_length=160)
+    note: str = Field(default="", max_length=1000)
+
+
+class AnomalyLeadLinkRequest(BaseModel):
+    hunt_id: str = Field(pattern=r"^[0-9a-fA-F-]{36}$")
+
+
 def _initial_state(hunt_id: str, req: HuntRequest) -> HuntState:
     sources = list(dict.fromkeys(
         str(source).strip().lower()
@@ -737,6 +755,68 @@ async def run_log_search(request: LogSearchRunRequest):
         "duration_ms": int((time.perf_counter() - started) * 1000),
         "executed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
+
+
+@app.post("/anomalies/evaluate", dependencies=[Depends(require_api_key)])
+async def evaluate_anomalies(request: AnomalyEvaluateRequest):
+    try:
+        return await evaluate_anomaly_source(
+            request.source,
+            lookback_minutes=request.lookback_minutes,
+            limit=request.limit,
+            log_source_path=request.log_source_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("continuous anomaly evaluation failed for %s", request.source)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/anomalies/leads", dependencies=[Depends(require_api_key)])
+async def anomaly_leads(
+    status: str = "active",
+    limit: int = 100,
+    entity_type: str = "",
+    entity_name: str = "",
+):
+    if status not in {"active", "closed", "suppressed", "all"}:
+        raise HTTPException(status_code=422, detail="Invalid anomaly lead status")
+    return {
+        "items": await audit.list_anomaly_leads(
+            status=status,
+            limit=max(1, min(limit, 1000)),
+            entity_type=entity_type[:40],
+            entity_name=entity_name[:240],
+        )
+    }
+
+
+@app.get("/anomalies/status", dependencies=[Depends(require_api_key)])
+async def anomaly_status():
+    return await audit.anomaly_monitor_status()
+
+
+@app.patch("/anomalies/leads/{lead_id}", dependencies=[Depends(require_api_key)])
+async def update_anomaly_lead(lead_id: str, request: AnomalyLeadUpdateRequest):
+    if not re.fullmatch(r"ANOM-[A-F0-9]{20}", lead_id):
+        raise HTTPException(status_code=422, detail="Invalid anomaly lead identifier")
+    result = await audit.update_anomaly_lead_status(
+        lead_id, request.status, request.actor, request.note,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Anomaly lead not found")
+    return result
+
+
+@app.post("/anomalies/leads/{lead_id}/link", dependencies=[Depends(require_api_key)])
+async def link_anomaly_hunt(lead_id: str, request: AnomalyLeadLinkRequest):
+    if not re.fullmatch(r"ANOM-[A-F0-9]{20}", lead_id):
+        raise HTTPException(status_code=422, detail="Invalid anomaly lead identifier")
+    result = await audit.link_anomaly_lead_hunt(lead_id, request.hunt_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Anomaly lead not found")
+    return result
 
 
 @app.get("/audit/logs", dependencies=[Depends(require_api_key)])

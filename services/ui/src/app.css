@@ -694,3 +694,45 @@ body { font-size: var(--soc-body-size); line-height: 1.55; }
 }
 .hypothesis-risk p { margin: 6px 0; }
 .hypothesis-risk small { color: #4338ca; line-height: 1.5; }
+
+.anomaly-lead-board { margin-bottom: 18px; overflow: hidden; border-color: #c7d2fe; background: linear-gradient(145deg, #fff 0%, #f8faff 100%); }
+.anomaly-lead-header { padding: 18px; display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; border-bottom: 1px solid #e4e7ec; }
+.anomaly-lead-title { min-width: 0; display: flex; gap: 13px; }
+.anomaly-pulse { flex: 0 0 42px; width: 42px; height: 42px; padding: 10px; display: grid; place-items: center; color: #4338ca; border-radius: 12px; background: #eef2ff; box-shadow: 0 0 0 5px rgb(99 102 241 / 7%); }
+.anomaly-pulse svg { width: 22px; }
+.anomaly-lead-title > div > span { color: #6366f1; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.anomaly-lead-title h2 { margin: 4px 0 3px; color: #101828; font-size: 18px; }
+.anomaly-lead-title h2 em { min-width: 24px; margin-left: 6px; padding: 2px 7px; display: inline-block; color: white; border-radius: 999px; background: #4f46e5; font-size: 10px; font-style: normal; text-align: center; vertical-align: 2px; }
+.anomaly-lead-title p { max-width: 760px; margin: 0; color: #667085; font-size: 10px; line-height: 1.55; }
+.anomaly-lead-actions { display: flex; align-items: center; gap: 8px; }
+.monitor-state { padding: 6px 9px; display: inline-flex; align-items: center; gap: 6px; color: #027a48; border: 1px solid #abefc6; border-radius: 999px; background: #ecfdf3; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.monitor-state > span { width: 7px; height: 7px; border-radius: 50%; background: #12b76a; box-shadow: 0 0 0 3px rgb(18 183 106 / 12%); }
+.monitor-state.monitor-failed, .monitor-state.monitor-partial { color: #b54708; border-color: #fedf89; background: #fffaeb; }
+.monitor-state.monitor-failed > span, .monitor-state.monitor-partial > span { background: #f79009; }
+.anomaly-monitor-warning { margin: 12px 18px 0; padding: 9px 11px; display: flex; gap: 7px; align-items: center; color: #b54708; border: 1px solid #fedf89; border-radius: 8px; background: #fffaeb; font-size: 10px; }
+.anomaly-monitor-warning svg { flex: 0 0 16px; width: 16px; }
+.anomaly-empty { min-height: 105px; padding: 22px; display: flex; align-items: center; justify-content: center; gap: 13px; color: #98a2b3; }
+.anomaly-empty > svg { width: 30px; }
+.anomaly-empty strong { display: block; color: #475467; font-size: 12px; }
+.anomaly-empty p { max-width: 720px; margin: 4px 0 0; font-size: 10px; line-height: 1.55; }
+.anomaly-lead-list { padding: 14px; display: grid; gap: 10px; }
+.anomaly-lead { padding: 14px; display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(320px, .9fr); gap: 14px; border: 1px solid #e4e7ec; border-left: 4px solid #f79009; border-radius: 11px; background: white; box-shadow: 0 3px 10px rgb(16 24 40 / 4%); }
+.anomaly-lead.severity-critical { border-left-color: #d92d20; }.anomaly-lead.severity-high { border-left-color: #f04438; }.anomaly-lead.severity-medium { border-left-color: #f79009; }.anomaly-lead.severity-low { border-left-color: #12b76a; }
+.anomaly-lead-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.anomaly-lead-badges code, .anomaly-lead-badges > span:last-child { color: #475467; font-size: 8.5px; }
+.anomaly-lead-badges > span:last-child { padding: 3px 6px; border-radius: 5px; background: #f2f4f7; font-weight: 700; text-transform: uppercase; }
+.anomaly-lead-main h3 { margin: 9px 0 4px; color: #101828; font-size: 13px; }
+.anomaly-lead-main > p { margin: 0; color: #667085; font-size: 10px; line-height: 1.5; }
+.anomaly-entity { margin-top: 9px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: #475467; font-size: 9px; }
+.anomaly-entity svg { width: 14px; color: #6366f1; }.anomaly-entity strong { text-transform: uppercase; }.anomaly-entity small { padding-left: 7px; color: #98a2b3; border-left: 1px solid #d0d5dd; }
+.anomaly-measures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; align-content: start; }
+.anomaly-measures > span { padding: 9px; border: 1px solid #eaecf0; border-radius: 8px; background: #f9fafb; }
+.anomaly-measures small, .anomaly-measures strong { display: block; }.anomaly-measures small { color: #667085; font-size: 8px; }.anomaly-measures strong { margin-top: 4px; color: #101828; font-size: 15px; }
+.anomaly-lead-footer { grid-column: 1 / -1; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid #f2f4f7; }
+.anomaly-lead-footer > small { display: flex; align-items: center; gap: 5px; color: #667085; font-size: 8.5px; }.anomaly-lead-footer > small svg { width: 13px; }
+.anomaly-lead-footer > div { display: flex; gap: 7px; }.anomaly-lead-footer .primary-button { padding: 7px 10px; }
+.lead-dismiss { padding: 7px 8px; display: inline-flex; align-items: center; gap: 4px; color: #667085; border: 1px solid #d0d5dd; border-radius: 7px; background: white; font-size: 9px; font-weight: 700; cursor: pointer; }.lead-dismiss:hover { color: #344054; background: #f9fafb; }.lead-dismiss svg { width: 13px; }
+.anomaly-safety-note { padding: 10px 18px; display: flex; align-items: center; gap: 8px; color: #475467; border-top: 1px solid #e4e7ec; background: #f8f9fc; font-size: 9px; line-height: 1.5; }.anomaly-safety-note svg { flex: 0 0 16px; width: 16px; color: #027a48; }
+
+@media (max-width: 980px) { .anomaly-lead-header, .anomaly-lead-footer { align-items: stretch; flex-direction: column; }.anomaly-lead-actions { flex-wrap: wrap; }.anomaly-lead { grid-template-columns: 1fr; }.anomaly-measures, .anomaly-lead-footer { grid-column: auto; } }
+@media (max-width: 640px) { .anomaly-lead-actions, .anomaly-lead-actions button, .anomaly-lead-footer > div, .anomaly-lead-footer > div button { width: 100%; }.anomaly-lead-actions button, .anomaly-lead-footer > div button { justify-content: center; }.anomaly-lead-footer > div { flex-direction: column; }.anomaly-measures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

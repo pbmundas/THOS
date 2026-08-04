@@ -306,6 +306,16 @@ class RiskResolutionRequest(BaseModel):
     note: str = Field(default="", max_length=1000)
 
 
+class AnomalyLeadUpdateRequest(BaseModel):
+    status: str = Field(pattern="^(active|closed|suppressed)$")
+    note: str = Field(default="", max_length=1000)
+
+
+class AnomalyEvaluateRequest(BaseModel):
+    source: str = Field(pattern="^(wazuh|logrhythm|splunk|qradar|elasticsearch)$")
+    lookback_minutes: int | None = Field(default=None, ge=1, le=1440)
+
+
 def _excel_safe_value(value):
     if value is None or isinstance(value, (bool, int, float)):
         return value
@@ -610,6 +620,98 @@ async def resolve_actionable_risk(
             "role": request.state.role,
             "note": payload.note,
         },
+    )
+
+
+@app.get("/api/anomaly-leads")
+async def anomaly_leads(
+    request: Request,
+    status: str = "active",
+    limit: int = 100,
+    entity_type: str = "",
+    entity_name: str = "",
+):
+    control_plane.require_feature(request, "hunts")
+    return await _upstream_json(
+        "GET",
+        "/anomalies/leads",
+        params={
+            "status": status,
+            "limit": max(1, min(limit, 1000)),
+            "entity_type": entity_type[:40],
+            "entity_name": entity_name[:240],
+        },
+    )
+
+
+@app.get("/api/anomaly-status")
+async def anomaly_monitor_status(request: Request):
+    control_plane.require_feature(request, "hunts")
+    payload = await _upstream_json("GET", "/anomalies/status")
+    settings = read_config().get("anomaly_monitoring", {}) or {}
+    return {
+        **payload,
+        "enabled": bool(settings.get("enabled", True)),
+        "interval_minutes": int(settings.get("interval_minutes", 15)),
+        "minimum_baseline_buckets": int(settings.get("minimum_baseline_buckets", 24)),
+        "scheduler": {
+            "status": settings.get("last_status", "never"),
+            "last_started_at": settings.get("last_started_at", ""),
+            "last_completed_at": settings.get("last_completed_at", ""),
+            "last_error": settings.get("last_error", ""),
+            "results": settings.get("last_results", []),
+        },
+    }
+
+
+@app.post("/api/anomaly-leads/evaluate")
+async def evaluate_anomaly_leads(payload: AnomalyEvaluateRequest, request: Request):
+    control_plane.require_feature(request, "hunts")
+    if request.state.role not in {"Admin", "SME"}:
+        raise HTTPException(status_code=403, detail="Only Admin and SME users can run anomaly evaluation")
+    if not control_plane.is_active_telemetry_source(payload.source):
+        raise HTTPException(status_code=422, detail="The selected telemetry source is not connected")
+    return await _upstream_json(
+        "POST",
+        "/anomalies/evaluate",
+        upstream_timeout=httpx.Timeout(180.0, connect=10.0),
+        json=payload.model_dump(exclude_none=True),
+    )
+
+
+@app.patch("/api/anomaly-leads/{lead_id}")
+async def update_anomaly_lead(
+    lead_id: str,
+    payload: AnomalyLeadUpdateRequest,
+    request: Request,
+):
+    control_plane.require_feature(request, "hunts")
+    if request.state.role not in {"Admin", "SME"}:
+        raise HTTPException(status_code=403, detail="Only Admin and SME users can manage anomaly leads")
+    if not re.fullmatch(r"ANOM-[A-F0-9]{20}", lead_id):
+        raise HTTPException(status_code=422, detail="Invalid anomaly lead identifier")
+    return await _upstream_json(
+        "PATCH",
+        f"/anomalies/leads/{lead_id}",
+        json={
+            "status": payload.status,
+            "actor": request.state.analyst,
+            "note": payload.note,
+        },
+    )
+
+
+@app.post("/api/anomaly-leads/{lead_id}/link/{hunt_id}")
+async def link_anomaly_lead_hunt(lead_id: str, hunt_id: str, request: Request):
+    control_plane.require_feature(request, "hunts")
+    if not re.fullmatch(r"ANOM-[A-F0-9]{20}", lead_id):
+        raise HTTPException(status_code=422, detail="Invalid anomaly lead identifier")
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", hunt_id):
+        raise HTTPException(status_code=422, detail="Invalid hunt identifier")
+    return await _upstream_json(
+        "POST",
+        f"/anomalies/leads/{lead_id}/link",
+        json={"hunt_id": hunt_id},
     )
 
 
